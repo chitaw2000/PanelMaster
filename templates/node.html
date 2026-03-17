@@ -1,0 +1,133 @@
+<!DOCTYPE html><html><head><title>Node Details</title><script src="https://cdn.tailwindcss.com"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"></head>
+<body class="bg-[#f4f7f6] p-4 md:p-8 font-sans"><div class="max-w-7xl mx-auto"><div class="flex justify-between items-center mb-8">
+<div class="flex items-center gap-4"><a href="/" class="bg-white border border-slate-200 w-10 h-10 flex items-center justify-center rounded-full text-slate-400 hover:text-slate-800 hover:bg-slate-50 transition"><i class="fa-solid fa-arrow-left"></i></a>
+<h1 class="text-2xl font-black text-slate-800">Node: <span class="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-500 uppercase mr-3">{{ node_name }}</span></h1>
+<form action="/toggle_node/{{ node_name }}" method="POST" class="inline m-0 p-0">
+    {% if config.disabled_nodes and node_name in config.disabled_nodes %}<button class="bg-red-100 text-red-600 border border-red-200 px-4 py-2 rounded-full font-bold shadow-sm hover:bg-red-200 transition text-xs uppercase tracking-widest"><i class="fa-solid fa-lock mr-2"></i>Disabled (Click to Enable)</button>
+    {% else %}<button class="bg-emerald-100 text-emerald-600 border border-emerald-200 px-4 py-2 rounded-full font-bold shadow-sm hover:bg-emerald-200 transition text-xs uppercase tracking-widest"><i class="fa-solid fa-lock-open mr-2"></i>Active (Click to Disable)</button>{% endif %}
+</form></div>
+<div class="flex gap-2 items-center">
+<div class="bg-white border border-slate-200 rounded-full px-4 py-2 flex items-center gap-2 mr-2 shadow-sm">
+    <label class="relative inline-flex items-center cursor-pointer" title="Enable Live Speed">
+        <input type="checkbox" id="speedToggle" class="sr-only peer" onchange="toggleSpeedMonitor()">
+        <div class="w-8 h-4 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-500 shadow-inner"></div>
+    </label>
+    <span class="text-[10px] font-black text-slate-500 uppercase tracking-widest"><i class="fa-solid fa-gauge-high mr-1"></i> Live Speed</span>
+</div>
+<button id="delSelectedBtn" form="bulkForm" class="hidden bg-red-500 hover:bg-red-600 text-white px-6 py-2.5 rounded-full font-bold shadow-lg shadow-red-500/30 transition"><i class="fa-solid fa-trash-can mr-2"></i>Delete Selected</button>
+<button onclick="document.getElementById('addUserModal').classList.remove('hidden')" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-full font-bold shadow-lg shadow-blue-500/30 transition"><i class="fa-solid fa-plus mr-2"></i> Create Key(s)</button></div></div>
+
+<form id="bulkForm" action="/bulk_delete" method="POST" onsubmit="return confirm('Are you sure you want to permanently delete the selected keys?');"><input type="hidden" name="node_name" value="{{ node_name }}">
+<div class="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-x-auto"><table class="w-full text-left whitespace-nowrap">
+<thead><tr class="bg-slate-50 border-b border-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-400">
+<th class="p-6 rounded-tl-3xl w-10 text-center"><input type="checkbox" id="selectAll" class="w-4 h-4 cursor-pointer accent-blue-600" onclick="const cb = document.querySelectorAll('input[name=\\'usernames\\']'); cb.forEach(c => c.checked = this.checked); toggleDelBtn();"></th>
+<th class="p-6">No.</th><th class="p-6">User Profile</th><th class="p-6">Traffic Usage</th><th class="p-6">Expiry</th><th class="p-6 text-center">VPN Key</th><th class="p-6 text-center rounded-tr-3xl">Actions</th></tr></thead>
+<tbody class="divide-y divide-slate-50">
+{% for u in users %}<tr class="hover:bg-slate-50/50 transition-colors {% if u.is_blocked %}opacity-60 bg-red-50/20{% endif %}">
+<td class="p-6 text-center"><input type="checkbox" name="usernames" value="{{ u.username }}" class="w-4 h-4 cursor-pointer accent-blue-600" onchange="toggleDelBtn()"></td>
+<td class="p-6 text-slate-400 font-mono text-sm">{{ loop.index }}</td>
+<td class="p-6"><div class="flex items-center gap-3">
+    {% if u.is_blocked %}<div class="relative flex items-center justify-center w-10 h-10 rounded-full bg-red-100 border border-red-200 text-red-600"><i class="fa-solid fa-ban"></i></div>
+    {% elif u.is_active %}<div class="relative flex items-center justify-center w-10 h-10 rounded-full bg-emerald-100 border border-emerald-200 text-emerald-600 shadow-inner"><i class="fa-solid fa-bolt"></i><span class="absolute top-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full"></span></div>
+    {% elif u.used_bytes == 0 %}<div class="relative flex items-center justify-center w-10 h-10 rounded-full bg-amber-100 border border-amber-200 text-amber-600"><i class="fa-solid fa-hourglass-half"></i></div>
+    {% else %}<div class="relative flex items-center justify-center w-10 h-10 rounded-full bg-slate-100 border border-slate-200 text-slate-400"><i class="fa-solid fa-user"></i></div>{% endif %}
+    <div><div class="flex items-center gap-2"><p class="font-black text-slate-800 {% if u.is_blocked %}line-through{% endif %}">{{ u.username }}</p><span id="speed_{{ u.username }}" class="live-speed-tag hidden bg-blue-50 text-blue-500 border border-blue-100 px-2 py-0.5 rounded text-[10px] font-black">0 KB/s</span></div>
+        {% if u.is_blocked %}<p class="text-[10px] font-bold text-red-500 uppercase tracking-widest">🚫 Blocked</p>
+        {% elif u.is_active %}<p class="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">🟢 Online</p>
+        {% elif u.used_bytes == 0 %}<p class="text-[10px] font-bold text-amber-500 uppercase tracking-widest">🟡 Pending</p>
+        {% else %}<p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">⚪ Offline</p>{% endif %}
+    </div></div>
+</td>
+<td class="p-6"><div class="flex flex-col"><span class="font-black text-slate-700 text-sm">{{ u.used_gb_str }} <span class="text-slate-400 text-xs">/ {{ u.total_gb }} GB</span></span>
+<div class="w-24 h-1.5 bg-slate-100 rounded-full mt-2 overflow-hidden"><div class="h-full bg-blue-500 rounded-full" style="width: {{ (u.used_bytes / (u.total_gb * 1024**3) * 100) if u.total_gb > 0 else 0 }}%"></div></div></div></td>
+<td class="p-6 font-mono text-xs font-bold text-slate-500">{{ u.expire_date }}</td>
+<td class="p-6 text-center"><textarea id="k_{{ loop.index }}" class="hidden">{{ u.actual_key }}</textarea><button type="button" onclick="copyK('k_{{ loop.index }}')" class="bg-slate-800 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition shadow-md hover:shadow-lg" {% if u.is_blocked %}disabled{% endif %}><i class="fa-solid fa-key mr-1.5"></i> Copy</button></td>
+<td class="p-6 flex justify-center gap-4 items-center">
+<label class="relative inline-flex items-center cursor-pointer" title="{% if u.is_blocked %}Unblock User{% else %}Block User{% endif %}">
+    <input type="checkbox" class="sr-only peer" {% if not u.is_blocked %}checked{% endif %} onchange="submitToggle('{{ u.username }}')">
+    <div class="w-10 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500 shadow-inner"></div>
+</label>
+<button type="button" onclick="openRenew('{{ u.username }}')" class="text-emerald-500 hover:text-emerald-700 transition text-lg" title="Renew"><i class="fa-solid fa-rotate"></i></button>
+<button type="button" onclick="openM('{{ u.username }}', '{{ u.total_gb }}', '{{ u.expire_date }}')" class="text-blue-500 hover:text-blue-700 transition text-lg" title="Edit"><i class="fa-solid fa-pen"></i></button>
+<button type="button" onclick="if(confirm('Delete {{ u.username }}?')) { submitDelete('{{ u.username }}'); }" class="text-red-400 hover:text-red-600 transition text-lg" title="Delete"><i class="fa-solid fa-trash"></i></button></td></tr>{% endfor %}
+</tbody></table></div></form></div>
+
+<form id="actionToggleForm" action="" method="POST" class="hidden"></form><form id="actionDeleteForm" action="" method="POST" class="hidden"></form>
+<div id="addUserModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-[420px] shadow-2xl border border-slate-100"><h2 class="text-lg font-black mb-6 text-slate-800">Generate Keys</h2>
+<form action="/add_user_manual" method="POST"><input type="hidden" name="node_name" value="{{ node_name }}">
+<label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Creation Mode</label><select id="creation_mode" name="creation_mode" onchange="toggleMode()" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold text-slate-700"><option value="single">Single Key (1 User)</option><option value="list">Bulk List (Multiple Users)</option><option value="pattern">Auto-Number (e.g. ab1, ab2...)</option></select>
+<div id="mode_single" class="block mb-4"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Username</label><input type="text" name="single_username" placeholder="e.g. aung123" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"></div><div id="mode_list" class="hidden mb-4"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Usernames (Comma or newline separated)</label><textarea name="list_usernames" rows="3" placeholder="user1, user2&#10;user3" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"></textarea></div><div id="mode_pattern" class="hidden mb-4 grid grid-cols-3 gap-2"><div class="col-span-1"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Prefix</label><input type="text" name="base_name" placeholder="ab" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"></div><div class="col-span-1"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Start No.</label><input type="number" name="start_num" value="1" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"></div><div class="col-span-1"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Quantity</label><input type="number" name="qty" value="5" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"></div></div>
+<label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Protocol</label><select name="protocol" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none text-sm"><option value="v2">VLESS</option><option value="out">Shadowsocks</option></select><div class="flex gap-3 mb-8"><div class="flex-1"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Total GB</label><input type="number" step="0.1" name="total_gb" value="50" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none"></div><div class="flex-1"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Expiry Date</label><input type="date" name="expire_date" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none" required></div></div><div class="flex justify-end gap-3"><button type="button" onclick="document.getElementById('addUserModal').classList.add('hidden')" class="px-5 py-3 font-bold text-slate-400 hover:text-slate-600">Cancel</button><button class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition">Generate</button></div></form></div></div>
+<div id="m" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100"><h2 class="text-lg font-black mb-6 text-slate-800" id="mu"></h2><form id="ef" method="POST"><input type="hidden" name="node_name" value="{{ node_name }}"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Total Limit (GB)</label><input type="number" step="0.1" name="total_gb" id="mg" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Expiry Date</label><input type="text" name="expire_date" id="md" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-8 focus:ring-2 focus:ring-blue-500 outline-none"><div class="flex justify-end gap-3"><button type="button" onclick="closeM()" class="px-5 py-3 font-bold text-slate-400 hover:text-slate-600">Cancel</button><button class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition">Save</button></div></form></div></div>
+<div id="rm" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100"><h2 class="text-lg font-black mb-6 text-emerald-600">Renew: <span id="ru"></span></h2><form id="rf" method="POST"><input type="hidden" name="node_name" value="{{ node_name }}"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">New Data (GB)</label><input type="number" step="0.1" name="add_gb" value="50" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-4 focus:ring-2 focus:ring-emerald-500 outline-none"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Add Duration (Days)</label><input type="number" name="add_days" value="30" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-8 focus:ring-2 focus:ring-emerald-500 outline-none"><div class="flex justify-end gap-3"><button type="button" onclick="closeRenew()" class="px-5 py-3 font-bold text-slate-400 hover:text-slate-600">Cancel</button><button class="bg-emerald-500 hover:bg-emerald-400 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-emerald-500/30 transition">Renew</button></div></form></div></div>
+
+<script>
+let speedInterval = null;
+let lastStats = {};
+let lastTime = 0;
+
+// 🔥 LocalStorage ကို သုံးပြီး Speed Toggle အခြေအနေကို မှတ်သားခြင်း
+document.addEventListener('DOMContentLoaded', () => {
+    const savedState = localStorage.getItem('speedToggleState_{{ node_name }}');
+    if (savedState === 'true') {
+        document.getElementById('speedToggle').checked = true;
+        toggleSpeedMonitor();
+    }
+});
+
+function toggleSpeedMonitor() {
+    const isEnabled = document.getElementById('speedToggle').checked;
+    localStorage.setItem('speedToggleState_{{ node_name }}', isEnabled);
+    
+    const speedTags = document.querySelectorAll('.live-speed-tag');
+    if(isEnabled) {
+        speedTags.forEach(el => el.classList.remove('hidden'));
+        lastTime = Date.now();
+        fetchStats();
+        speedInterval = setInterval(fetchStats, 2000);
+    } else {
+        speedTags.forEach(el => el.classList.add('hidden'));
+        clearInterval(speedInterval);
+        lastStats = {};
+    }
+}
+
+async function fetchStats() {
+    try {
+        const res = await fetch('/api/stats/{{ node_name }}');
+        const json = await res.json();
+        if(json.status === 'ok') {
+            const now = Date.now();
+            const timeDiff = (now - lastTime) / 1000;
+            const currentStats = json.data;
+            for(const user in currentStats) {
+                if(lastStats[user] !== undefined) {
+                    const bytesDiff = currentStats[user] - lastStats[user];
+                    let speed = 0;
+                    if(bytesDiff > 0 && timeDiff > 0) speed = bytesDiff / timeDiff;
+                    
+                    let speedStr = "0 B/s";
+                    if(speed > 1024*1024) speedStr = (speed / (1024*1024)).toFixed(2) + " MB/s";
+                    else if(speed > 1024) speedStr = (speed / 1024).toFixed(2) + " KB/s";
+                    else if(speed > 0) speedStr = speed.toFixed(0) + " B/s";
+                    
+                    const el = document.getElementById('speed_' + user);
+                    if(el) { el.innerText = speedStr; el.classList.add('animate-pulse'); setTimeout(() => el.classList.remove('animate-pulse'), 500); }
+                }
+            }
+            lastStats = currentStats;
+            lastTime = now;
+        }
+    } catch(e) {}
+}
+
+function copyK(id){ var t = document.getElementById(id); if(!t.value || t.value==='No Key Found') { alert("❌ Key Not Found in Database!"); return; } var dummy = document.createElement("textarea"); document.body.appendChild(dummy); dummy.value = t.value; dummy.select(); document.execCommand("copy"); document.body.removeChild(dummy); alert("✅ Key Copied Successfully!"); }
+function openM(u,g,d){ document.getElementById('mu').innerText="Edit: "+u; document.getElementById('mg').value=g; document.getElementById('md').value=d; document.getElementById('ef').action="/edit_user/"+u; document.getElementById('m').classList.remove('hidden'); }
+function closeM(){ document.getElementById('m').classList.add('hidden'); }
+function openRenew(u){ document.getElementById('ru').innerText=u; document.getElementById('rf').action="/renew_user/"+u; document.getElementById('rm').classList.remove('hidden'); }
+function closeRenew(){ document.getElementById('rm').classList.add('hidden'); }
+function toggleMode() { let mode = document.getElementById('creation_mode').value; document.getElementById('mode_single').classList.toggle('hidden', mode !== 'single'); document.getElementById('mode_list').classList.toggle('hidden', mode !== 'list'); document.getElementById('mode_pattern').classList.toggle('hidden', mode !== 'pattern'); }
+function toggleDelBtn() { const anyChecked = document.querySelectorAll('input[name="usernames"]:checked').length > 0; document.getElementById('delSelectedBtn').classList.toggle('hidden', !anyChecked); }
+function submitToggle(u) { let f = document.getElementById('actionToggleForm'); f.action = '/toggle_user/' + u; f.submit(); }
+function submitDelete(u) { let f = document.getElementById('actionDeleteForm'); f.action = '/delete_user/' + u; f.submit(); }
+</script></body></html>
