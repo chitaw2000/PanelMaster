@@ -2,20 +2,33 @@
 <body class="bg-[#f4f7f6] p-4 md:p-8 font-sans"><div class="max-w-7xl mx-auto"><div class="flex justify-between items-center mb-8">
 <div class="flex items-center gap-4"><a href="/" class="bg-white border border-slate-200 w-10 h-10 flex items-center justify-center rounded-full text-slate-400 hover:text-slate-800 hover:bg-slate-50 transition"><i class="fa-solid fa-arrow-left"></i></a>
 <h1 class="text-2xl font-black text-slate-800">Node: <span class="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-500 uppercase mr-3">{{ node_name }}</span></h1>
-<form action="/toggle_node/{{ node_name }}" method="POST" class="inline m-0 p-0">
-    {% if config.disabled_nodes and node_name in config.disabled_nodes %}<button class="bg-red-100 text-red-600 border border-red-200 px-4 py-2 rounded-full font-bold shadow-sm hover:bg-red-200 transition text-xs uppercase tracking-widest"><i class="fa-solid fa-lock mr-2"></i>Disabled (Click to Enable)</button>
-    {% else %}<button class="bg-emerald-100 text-emerald-600 border border-emerald-200 px-4 py-2 rounded-full font-bold shadow-sm hover:bg-emerald-200 transition text-xs uppercase tracking-widest"><i class="fa-solid fa-lock-open mr-2"></i>Active (Click to Disable)</button>{% endif %}
-</form></div>
+
 <div class="flex gap-2 items-center">
-<div class="bg-white border border-slate-200 rounded-full px-4 py-2 flex items-center gap-2 mr-2 shadow-sm">
-    <label class="relative inline-flex items-center cursor-pointer" title="Enable Live Speed">
-        <input type="checkbox" id="speedToggle" class="sr-only peer" onchange="toggleSpeedMonitor()">
-        <div class="w-8 h-4 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-500 shadow-inner"></div>
-    </label>
-    <span class="text-[10px] font-black text-slate-500 uppercase tracking-widest"><i class="fa-solid fa-gauge-high mr-1"></i> Live Speed</span>
+    <form action="/toggle_node/{{ node_name }}" method="POST" class="inline m-0 p-0">
+        {% if config.disabled_nodes and node_name in config.disabled_nodes %}<button class="bg-red-100 text-red-600 border border-red-200 px-4 py-2 rounded-full font-bold shadow-sm hover:bg-red-200 transition text-xs uppercase tracking-widest"><i class="fa-solid fa-lock mr-2"></i>Disabled (Click to Enable)</button>
+        {% else %}<button class="bg-emerald-100 text-emerald-600 border border-emerald-200 px-4 py-2 rounded-full font-bold shadow-sm hover:bg-emerald-200 transition text-xs uppercase tracking-widest"><i class="fa-solid fa-lock-open mr-2"></i>Active (Click to Disable)</button>{% endif %}
+    </form>
+    <form action="/delete_node/{{ node_name }}" method="POST" class="inline m-0 p-0" onsubmit="return confirm('⚠️ WARNING: Are you sure you want to completely DELETE this node?');">
+        <button class="bg-slate-100 text-red-500 border border-slate-200 px-4 py-2 rounded-full font-bold shadow-sm hover:bg-red-50 hover:text-red-600 transition text-xs uppercase tracking-widest"><i class="fa-solid fa-trash mr-1"></i> Delete Node</button>
+    </form>
 </div>
-<button id="delSelectedBtn" form="bulkForm" class="hidden bg-red-500 hover:bg-red-600 text-white px-6 py-2.5 rounded-full font-bold shadow-lg shadow-red-500/30 transition"><i class="fa-solid fa-trash-can mr-2"></i>Delete Selected</button>
-<button onclick="document.getElementById('addUserModal').classList.remove('hidden')" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-full font-bold shadow-lg shadow-blue-500/30 transition"><i class="fa-solid fa-plus mr-2"></i> Create Key(s)</button></div></div>
+</div>
+
+<div class="flex gap-4 items-center mb-6 justify-end">
+    <span id="xrayStatusBadge" class="bg-slate-100 text-slate-500 border border-slate-200 px-4 py-2 rounded-full font-bold shadow-sm text-xs uppercase tracking-widest flex items-center gap-2">
+        <i class="fa-solid fa-circle-notch fa-spin"></i> Checking Xray...
+    </span>
+
+    <div class="bg-white border border-slate-200 rounded-full px-4 py-2 flex items-center gap-2 shadow-sm">
+        <label class="relative inline-flex items-center cursor-pointer" title="Enable Live Speed">
+            <input type="checkbox" id="speedToggle" class="sr-only peer" onchange="toggleSpeedMonitor()">
+            <div class="w-8 h-4 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-500 shadow-inner"></div>
+        </label>
+        <span class="text-[10px] font-black text-slate-500 uppercase tracking-widest"><i class="fa-solid fa-gauge-high mr-1"></i> Live Speed</span>
+    </div>
+    <button id="delSelectedBtn" form="bulkForm" class="hidden bg-red-500 hover:bg-red-600 text-white px-6 py-2.5 rounded-full font-bold shadow-lg shadow-red-500/30 transition"><i class="fa-solid fa-trash-can mr-2"></i>Delete Selected</button>
+    <button onclick="document.getElementById('addUserModal').classList.remove('hidden')" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-full font-bold shadow-lg shadow-blue-500/30 transition"><i class="fa-solid fa-plus mr-2"></i> Create Key(s)</button>
+</div>
 
 <form id="bulkForm" action="/bulk_delete" method="POST" onsubmit="return confirm('Are you sure you want to permanently delete the selected keys?');"><input type="hidden" name="node_name" value="{{ node_name }}">
 <div class="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-x-auto"><table class="w-full text-left whitespace-nowrap">
@@ -62,18 +75,31 @@
 <div id="rm" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100"><h2 class="text-lg font-black mb-6 text-emerald-600">Renew: <span id="ru"></span></h2><form id="rf" method="POST"><input type="hidden" name="node_name" value="{{ node_name }}"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">New Data (GB)</label><input type="number" step="0.1" name="add_gb" value="50" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-4 focus:ring-2 focus:ring-emerald-500 outline-none"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Add Duration (Days)</label><input type="number" name="add_days" value="30" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-8 focus:ring-2 focus:ring-emerald-500 outline-none"><div class="flex justify-end gap-3"><button type="button" onclick="closeRenew()" class="px-5 py-3 font-bold text-slate-400 hover:text-slate-600">Cancel</button><button class="bg-emerald-500 hover:bg-emerald-400 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-emerald-500/30 transition">Renew</button></div></form></div></div>
 
 <div id="installPromptModal" class="hidden fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
-    <div class="bg-white rounded-3xl p-8 w-[400px] shadow-2xl border border-slate-100 text-center animate-bounce-in">
-        <div class="w-20 h-20 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner">
-            <i class="fa-solid fa-server text-4xl"></i>
-        </div>
-        <h2 class="text-2xl font-black mb-2 text-slate-800">Node Added Successfully!</h2>
-        <p class="text-slate-500 text-sm font-bold mb-8">Do you want to install Xray-Core and setup this node now? (It will take about 30 seconds)</p>
+    <div class="bg-white rounded-3xl p-8 w-[450px] shadow-2xl border border-slate-100 text-center animate-bounce-in">
+        <h2 class="text-2xl font-black mb-2 text-slate-800">Node Added!</h2>
+        <p class="text-slate-500 text-sm font-bold mb-6">Let's setup Xray-Core automatically.</p>
         
-        <form action="/install_node/{{ node_name }}" method="POST" id="installForm" onsubmit="document.getElementById('installBtn').innerHTML = '<i class=\'fa-solid fa-spinner fa-spin mr-2\'></i> Installing...'; document.getElementById('installBtn').classList.add('opacity-70', 'cursor-not-allowed');">
+        <div id="sshCheckArea" class="mb-6 p-4 rounded-xl bg-slate-50 border border-slate-200 text-sm transition-all">
+            <p id="sshStatusText" class="font-bold text-slate-600"><i class="fa-solid fa-spinner fa-spin mr-2"></i> Checking SSH Connection...</p>
+            
+            <div id="sshInstructions" class="hidden mt-2 text-left">
+                <p class="text-red-500 font-bold text-sm mb-2"><i class="fa-solid fa-triangle-exclamation mr-1"></i> SSH Not Connected!</p>
+                <p class="text-slate-500 text-xs mb-3">Please run this exact command in your <b>Master Server's Terminal</b> to allow automatic installation:</p>
+                <div class="bg-black text-green-400 p-3 rounded-lg text-xs font-mono break-all flex justify-between items-center">
+                    <span id="sshCmdText">ssh-copy-id root@{{ node_ip }}</span>
+                    <button type="button" onclick="copySSHCmd()" class="text-white hover:text-blue-400 ml-2"><i class="fa-solid fa-copy"></i></button>
+                </div>
+                <div class="mt-4 text-center">
+                    <button type="button" onclick="checkSSH()" class="bg-slate-800 hover:bg-black text-white px-6 py-2 rounded-xl text-xs font-bold transition shadow-md">I have run it, Check Again</button>
+                </div>
+            </div>
+        </div>
+        
+        <form action="/install_node/{{ node_name }}" method="POST" id="installForm" onsubmit="document.getElementById('installBtn').innerHTML = '<i class=\'fa-solid fa-spinner fa-spin mr-2\'></i> Installing... Wait ~30s'; document.getElementById('installBtn').classList.add('opacity-50', 'cursor-not-allowed');">
             <div class="flex gap-3 justify-center">
-                <button type="button" onclick="document.getElementById('installPromptModal').classList.add('hidden')" class="px-6 py-3 font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 rounded-xl transition">Not Now</button>
-                <button type="submit" id="installBtn" class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition flex items-center">
-                    <i class="fa-solid fa-rocket mr-2"></i> Install Node
+                <button type="button" onclick="document.getElementById('installPromptModal').classList.add('hidden')" class="px-6 py-3 font-bold text-slate-500 hover:text-slate-700 transition">Not Now</button>
+                <button type="submit" id="installBtn" disabled class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition flex items-center opacity-50 cursor-not-allowed">
+                    <i class="fa-solid fa-rocket mr-2"></i> Install Xray
                 </button>
             </div>
         </form>
@@ -86,19 +112,80 @@ let lastStats = {};
 let lastTime = 0;
 
 document.addEventListener('DOMContentLoaded', () => {
+    // Speed Toggle Restore
     const savedState = localStorage.getItem('speedToggleState_{{ node_name }}');
     if (savedState === 'true') {
         document.getElementById('speedToggle').checked = true;
         toggleSpeedMonitor();
     }
     
+    // Check Xray Status immediately on load
+    checkXrayStatus();
+
     // Auto-show install modal if newly added
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('newly_added') === 'yes') {
         document.getElementById('installPromptModal').classList.remove('hidden');
         window.history.replaceState({}, document.title, window.location.pathname);
+        checkSSH();
     }
 });
+
+// --- API Xray Status Check ---
+async function checkXrayStatus() {
+    const badge = document.getElementById('xrayStatusBadge');
+    try {
+        const res = await fetch('/api/check_xray/{{ node_name }}');
+        const json = await res.json();
+        if(json.status === 'active') {
+            badge.className = "bg-emerald-100 text-emerald-600 border border-emerald-200 px-4 py-2 rounded-full font-bold shadow-sm text-xs uppercase tracking-widest flex items-center gap-2";
+            badge.innerHTML = '<i class="fa-solid fa-circle-check"></i> Xray: Active';
+        } else {
+            badge.className = "bg-red-100 text-red-600 border border-red-200 px-4 py-2 rounded-full font-bold shadow-sm text-xs uppercase tracking-widest flex items-center gap-2";
+            badge.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> Xray: Inactive';
+        }
+    } catch(e) {
+        badge.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Check Failed';
+    }
+}
+
+// --- API SSH Connection Check ---
+async function checkSSH() {
+    const statusText = document.getElementById('sshStatusText');
+    const instructions = document.getElementById('sshInstructions');
+    const btn = document.getElementById('installBtn');
+    const checkArea = document.getElementById('sshCheckArea');
+    
+    statusText.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Checking SSH Connection...';
+    statusText.classList.remove('hidden');
+    instructions.classList.add('hidden');
+    btn.disabled = true;
+    btn.classList.add('opacity-50', 'cursor-not-allowed');
+
+    try {
+        const res = await fetch('/api/check_ssh/{{ node_name }}');
+        const json = await res.json();
+        if(json.status === 'success') {
+            checkArea.classList.replace('bg-slate-50', 'bg-emerald-50');
+            checkArea.classList.replace('border-slate-200', 'border-emerald-200');
+            statusText.innerHTML = '<span class="text-emerald-600"><i class="fa-solid fa-check-circle mr-2"></i> SSH Connected Successfully! Ready to install.</span>';
+            btn.disabled = false;
+            btn.classList.remove('opacity-50', 'cursor-not-allowed');
+        } else {
+            statusText.classList.add('hidden');
+            instructions.classList.remove('hidden');
+        }
+    } catch(e) {
+        statusText.classList.add('hidden');
+        instructions.classList.remove('hidden');
+    }
+}
+
+function copySSHCmd() {
+    const text = document.getElementById('sshCmdText').innerText;
+    navigator.clipboard.writeText(text);
+    alert('✅ SSH Command Copied! Run it in your Master VPS terminal.');
+}
 
 function toggleSpeedMonitor() {
     const isEnabled = document.getElementById('speedToggle').checked;
