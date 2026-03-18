@@ -133,20 +133,29 @@ def dashboard():
     active_users = check_live_status(db)
     
     node_stats = []
+    all_users = [] # HTML Error မတက်စေရန် ပြန်ထည့်ပေးထားသည်
+    
     for nid, info in nodes.items():
-        total_count = sum(1 for u, i in db.items() if i.get('node') == nid)
-        live_count = sum(1 for u, i in db.items() if i.get('node') == nid and u in active_users and not i.get('is_blocked'))
+        total_count = 0
+        live_count = 0
+        for uname, i in db.items():
+            if i.get('node') == nid:
+                total_count += 1
+                if uname in active_users and not i.get('is_blocked'):
+                    live_count += 1
+                all_users.append({'username': uname, 'node': nid, 'key': i.get('key', 'No Key')})
+                
         node_stats.append({
             "id": nid, 
             "name": info.get('name', nid), 
             "ip": info.get('ip', ''), 
             "total": total_count, 
             "live": live_count, 
-            # Error မတက်စေရန် .get ဖြင့် ကာကွယ်ထားသည်
             "disabled": nid in config.get('disabled_nodes', [])
         })
         
-    return render_template('dashboard.html', nodes=node_stats, backups=get_node_backups())
+    # config နှင့် all_users ကိုပါ ပြန်ထည့်ပေးထားသည်
+    return render_template('dashboard.html', nodes=node_stats, all_users=all_users, config=config, backups=get_node_backups())
 
 @app.route('/node/<node_id>')
 def node_view(node_id):
@@ -176,7 +185,9 @@ def node_view(node_id):
             info['is_blocked'] = info.get('is_blocked', False)
             users.append(info)
             
-    return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, backups=get_node_backups(), config=config)
+    other_nodes = [nid for nid in nodes.keys() if nid != node_id]
+            
+    return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, backups=get_node_backups(), config=config)
 
 @app.route('/add_node', methods=['POST'])
 def add_node():
