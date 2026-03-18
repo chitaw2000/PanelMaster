@@ -1,3 +1,4 @@
+cat << 'EOF_MAIN' > /root/PanelMaster/main.py
 from flask import Flask, render_template, request, redirect, session, url_for, send_file, jsonify
 import json, os, subprocess, uuid, base64, re
 from datetime import datetime, timedelta
@@ -116,10 +117,22 @@ def toggle_node(node_name):
 
 @app.route('/add_node', methods=['POST'])
 def add_node():
-    n_name = request.form.get('node_name'); n_ip = request.form.get('node_ip')
+    n_name = request.form.get('node_name')
+    n_ip = request.form.get('node_ip')
     if n_name and n_ip:
         with open(NODES_LIST, 'a') as f: f.write(f"\n{n_name} {n_ip}")
-    return redirect(url_for('dashboard'))
+    return redirect(url_for('node_view', node_name=n_name) + "?newly_added=yes")
+
+@app.route('/install_node/<node_name>', methods=['POST'])
+def install_node_action(node_name):
+    nodes = get_nodes()
+    node_ip = nodes.get(node_name)
+    if node_ip:
+        script_path = "/root/PanelMaster/install_node.sh"
+        if os.path.exists(script_path):
+            cmd = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} 'bash -s' < {script_path}"
+            subprocess.run(cmd, shell=True)
+    return redirect(f'/node/{node_name}')
 
 @app.route('/add_user_manual', methods=['POST'])
 def add_user_manual():
@@ -294,3 +307,4 @@ def config_action():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8888)
+EOF_MAIN
