@@ -13,7 +13,7 @@ BACKUP_DIR = "/root/PanelMaster/backups"
 if not os.path.exists(BACKUP_DIR): os.makedirs(BACKUP_DIR)
 
 # =========================================================
-# 🚀 BACKGROUND TRAFFIC MONITOR (100% Reliable Auto-Block)
+# 🚀 BACKGROUND TRAFFIC MONITOR (100% Reliable & Thread-Safe)
 # =========================================================
 def background_traffic_monitor():
     while True:
@@ -21,11 +21,9 @@ def background_traffic_monitor():
         try:
             nodes = get_nodes()
             if not nodes: continue
-            with db_lock:
-                if not os.path.exists(USERS_DB): continue
-                with open(USERS_DB, 'r') as f: db = json.load(f)
-            if not db: continue
-            db_changed = False
+            
+            # အဆင့် ၁: Database ကို မကိုင်သေးဘဲ Node အားလုံးဆီမှ Data အရင်စုမည်
+            gathered_stats = {}
             for node_id, info in nodes.items():
                 node_ip = info.get('ip')
                 if not node_ip: continue
@@ -40,34 +38,54 @@ def background_traffic_monitor():
                             if len(parts) >= 4:
                                 if parts[0] == "user": user_bytes[parts[1]] = user_bytes.get(parts[1], 0) + val
                                 elif parts[0] == "inbound" and parts[1].startswith("out-"): user_bytes[parts[1][4:]] = user_bytes.get(parts[1][4:], 0) + val
-                    
-                    for uname, uinfo in db.items():
-                        if uinfo.get("node") == node_id:
-                            val = user_bytes.get(uname, uinfo.get('last_raw_bytes', 0))
-                            last_raw = uinfo.get('last_raw_bytes', 0)
-                            
-                            if val > last_raw: uinfo['is_online'] = True
-                            else: uinfo['is_online'] = False
-                                
-                            if val < last_raw: uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + val
-                            else: uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + (val - last_raw)
-                            
-                            uinfo['last_raw_bytes'] = val; db_changed = True
-                            
-                            tot_gb = float(uinfo.get('total_gb', 0))
-                            if tot_gb > 0:
-                                max_bytes = tot_gb * (1024**3)
-                                if float(uinfo['used_bytes']) >= max_bytes and not uinfo.get('is_blocked', False):
-                                    uinfo['is_blocked'] = True
-                                    uinfo['is_online'] = False
-                                    safe_cmd = get_safe_delete_cmd(uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443'))
-                                    
-                                    # ⚠️ မူလ အလုပ်လုပ်သော Code အဟောင်းအတိုင်း အတိအကျ ပြန်ထားသည်
-                                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\" &")
+                    gathered_stats[node_id] = user_bytes
                 except Exception: pass
-            if db_changed:
-                with db_lock:
+            
+            if not gathered_stats: continue
+            
+            # အဆင့် ၂: Data စုပြီးမှသာ Database ကို ဖွင့်၍ အမြန် Update လုပ်မည် (Race Condition မဖြစ်စေရန်)
+            db_changed = False
+            users_to_block = [] # Block ရမည့်သူများကို သီးသန့်ထုတ်ထားမည်
+            
+            with db_lock:
+                if not os.path.exists(USERS_DB): continue
+                with open(USERS_DB, 'r') as f: db = json.load(f)
+                
+                for uname, uinfo in db.items():
+                    node_id = uinfo.get("node")
+                    if node_id in gathered_stats:
+                        user_bytes = gathered_stats[node_id]
+                        val = user_bytes.get(uname, uinfo.get('last_raw_bytes', 0))
+                        last_raw = uinfo.get('last_raw_bytes', 0)
+                        
+                        if val > last_raw: uinfo['is_online'] = True
+                        else: uinfo['is_online'] = False
+                        
+                        if val < last_raw: uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + val
+                        else: uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + (val - last_raw)
+                        
+                        uinfo['last_raw_bytes'] = val
+                        db_changed = True
+                        
+                        tot_gb = float(uinfo.get('total_gb', 0))
+                        if tot_gb > 0:
+                            max_bytes = tot_gb * (1024**3)
+                            if float(uinfo['used_bytes']) >= max_bytes and not uinfo.get('is_blocked', False):
+                                uinfo['is_blocked'] = True
+                                uinfo['is_online'] = False
+                                node_ip = nodes[node_id].get('ip')
+                                if node_ip:
+                                    users_to_block.append((node_ip, uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443')))
+                                    
+                if db_changed:
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
+                    
+            # အဆင့် ၃: Database Lock လွှတ်ပြီးမှသာ SSH လှမ်းပိတ်မည် (Thread မထစ်စေရန်)
+            for node_ip, uname, proto, port in users_to_block:
+                safe_cmd = get_safe_delete_cmd(uname, proto, port)
+                subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd}\"", shell=True)
+                subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"systemctl restart xray\"", shell=True)
+                
         except Exception: pass
 
 threading.Thread(target=background_traffic_monitor, daemon=True).start()
@@ -156,7 +174,7 @@ def delete_node(node_id):
     nodes = get_nodes()
     if node_id in nodes:
         node_ip = nodes[node_id].get('ip')
-        if node_ip: os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl stop xray' &")
+        if node_ip: subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl stop xray'", shell=True)
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f: lines = f.readlines()
         with open(NODES_LIST, 'w') as f:
@@ -194,7 +212,8 @@ def replace_id(current_id):
                         else: commands.append(f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
             with open(USERS_DB, 'w') as f: json.dump(db, f)
     if commands and current_ip:
-        os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{current_ip} \"{' ; '.join(commands)} ; systemctl restart xray\" &")
+        subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{current_ip} \"{' ; '.join(commands)}\"", shell=True)
+        subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{current_ip} \"systemctl restart xray\"", shell=True)
     return redirect(f'/node/{old_id}')
 
 @app.route('/create_node_backup/<node_id>', methods=['POST'])
@@ -276,7 +295,7 @@ def api_stats(node_id):
 def install_node_action(node_id):
     ip = get_nodes().get(node_id, {}).get('ip')
     if ip and os.path.exists("/root/PanelMaster/install_node.sh"):
-        os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} 'bash -s' < /root/PanelMaster/install_node.sh")
+        subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} 'bash -s' < /root/PanelMaster/install_node.sh", shell=True)
     return redirect(f'/node/{node_id}')
 
 @app.route('/toggle_node/<node_id>', methods=['POST'])
@@ -286,10 +305,10 @@ def toggle_node(node_id):
     ip = get_nodes().get(node_id, {}).get('ip')
     if node_id in config['disabled_nodes']:
         config['disabled_nodes'].remove(node_id)
-        if ip: os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'systemctl start xray' &")
+        if ip: subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} 'systemctl start xray'", shell=True)
     else:
         config['disabled_nodes'].append(node_id)
-        if ip: os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'systemctl stop xray' &")
+        if ip: subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} 'systemctl stop xray'", shell=True)
     save_config(config); return redirect(f'/node/{node_id}')
 
 @app.route('/add_user_manual', methods=['POST'])
@@ -329,8 +348,8 @@ def add_user_manual():
     if cmds:
         with db_lock:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
-        # ⚠️ မူလ အလုပ်လုပ်သော Code အဟောင်းအတိုင်း ပြန်လည်ထားရှိသည်
-        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{nip} \"{' ; '.join(cmds)} ; systemctl restart xray\" &")
+        subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{nip} \"{' ; '.join(cmds)}\"", shell=True)
+        subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{nip} \"systemctl restart xray\"", shell=True)
     return redirect(f'/node/{nid}')
 
 @app.route('/toggle_user/<username>', methods=['POST'])
@@ -349,8 +368,8 @@ def toggle_user(username):
                         uid = user['uuid']
                         if user['protocol'] == 'v2': cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
                         else: cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
-                    # ⚠️ မူလ အလုပ်လုပ်သော Code အဟောင်းအတိုင်း ပြန်လည်ထားရှိသည်
-                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\" &")
+                    subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\"", shell=True)
+                    subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"systemctl restart xray\"", shell=True)
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
 
@@ -387,8 +406,8 @@ def delete_user(username):
                 info = db[username]; ip = get_nodes().get(info.get('node'), {}).get('ip')
                 if ip:
                     cmd = get_safe_delete_cmd(username, info.get('protocol', 'v2'), info.get('port', '443'))
-                    # ⚠️ မူလ အလုပ်လုပ်သော Code အဟောင်းအတိုင်း ပြန်လည်ထားရှိသည်
-                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\" &")
+                    subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\"", shell=True)
+                    subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"systemctl restart xray\"", shell=True)
                 del db[username]
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
@@ -405,7 +424,8 @@ def bulk_delete():
                     ip = nodes.get(db[uname].get('node'), {}).get('ip')
                     if ip:
                         cmd = get_safe_delete_cmd(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
-                        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\" &")
+                        subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\"", shell=True)
+                        subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"systemctl restart xray\"", shell=True)
                     del db[uname]
             with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
