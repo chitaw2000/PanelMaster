@@ -15,32 +15,37 @@ def load_auto_groups():
 def save_auto_groups(data):
     with open(AUTO_GROUPS_FILE, 'w') as f: json.dump(data, f, indent=4)
 
-def find_available_node(group_id, required_qty):
+# 🚀 Migration လုပ်ရာတွင် Database အခြေအနေကို ချက်ချင်းသိနိုင်ရန် current_db ထည့်သွင်းထားသည်
+def find_available_node(group_id, required_qty, current_db=None):
     groups = load_auto_groups()
     if group_id not in groups: return None, None
-    
     group = groups[group_id]
-    limit = int(group.get("limit", 30))
-    nodes = group.get("nodes", {}) # {"auto_01": "1.1.1.1", "auto_02": "2.2.2.2"}
-    
+    nodes = group.get("nodes", {})
     if not nodes: return None, None
 
-    # Database ထဲမှ လက်ရှိသုံးနေသော Key အရေအတွက်ကို ရေတွက်မည်
-    with db_lock:
-        if os.path.exists(USERS_DB):
-            with open(USERS_DB, 'r') as f: db = json.load(f)
-        else:
-            db = {}
+    if current_db is not None:
+        db = current_db
+    else:
+        with db_lock:
+            if os.path.exists(USERS_DB):
+                with open(USERS_DB, 'r') as f: db = json.load(f)
+            else: db = {}
 
     counts = {nid: 0 for nid in nodes.keys()}
     for uname, uinfo in db.items():
         nid = uinfo.get("node")
         if nid in counts: counts[nid] += 1
 
-    # 🚀 အစဉ်လိုက် (Sequential) နေရာလွတ်ရှာခြင်း
-    # ဥပမာ auto_01 မှာ နေရာလွတ်ရင် အရင်ထည့်မည်၊ ပြည့်သွားမှ auto_02 သို့ဆက်သွားမည်
     for nid in sorted(nodes.keys()):
+        ndata = nodes[nid]
+        if isinstance(ndata, dict):
+            limit = int(ndata.get("limit", group.get("limit", 30)))
+            nip = str(ndata.get("ip")).strip()
+        else:
+            limit = int(group.get("limit", 30))
+            nip = str(ndata).strip()
+            
         if counts[nid] + required_qty <= limit:
-            return nid, nodes[nid] # ပြည့်မနေသော Node ID နှင့် IP ကို ပြန်ပေးမည်
-
-    return None, None # နေရာလွတ်မရှိပါ
+            return nid, nip
+            
+    return None, None
