@@ -14,6 +14,8 @@
             {% endif %}
         </form>
         
+        <button onclick="document.getElementById('editIpModal').classList.remove('hidden')" class="bg-slate-100 text-blue-500 border border-slate-200 px-3 py-1.5 rounded-full font-bold shadow-sm hover:bg-blue-50 hover:text-blue-600 transition text-[10px] uppercase tracking-widest"><i class="fa-solid fa-pen mr-1"></i> Edit IP</button>
+
         <form action="/delete_node/{{ node_name }}" method="POST" class="inline m-0 p-0" onsubmit="return confirm('⚠️ WARNING: Are you sure you want to completely DELETE this node?');">
             <button class="bg-slate-100 text-red-500 border border-slate-200 px-3 py-1.5 rounded-full font-bold shadow-sm hover:bg-red-50 hover:text-red-600 transition text-[10px] uppercase tracking-widest"><i class="fa-solid fa-trash mr-1"></i> Delete Node</button>
         </form>
@@ -29,9 +31,14 @@
                 <input type="checkbox" id="speedToggle" class="sr-only peer" onchange="toggleSpeedMonitor()">
                 <div class="w-7 h-3.5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-blue-500 shadow-inner"></div>
             </label>
-            <span class="text-[10px] font-black text-slate-500 uppercase tracking-widest"><i class="fa-solid fa-gauge-high mr-1"></i> Speed</span>
+            <span class="text-[10px] font-black text-slate-500 uppercase tracking-widest"><i class="fa-solid fa-gauge-high mr-1"></i> Live Stats</span>
         </div>
         <button id="delSelectedBtn" form="bulkForm" class="hidden bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-full text-xs font-bold shadow-lg shadow-red-500/30 transition"><i class="fa-solid fa-trash-can mr-1"></i>Del Selected</button>
+        
+        <form action="/sync_node/{{ node_name }}" method="POST" class="inline m-0 p-0" onsubmit="return confirm('🚀 Do you want to RESTORE all Active Keys to this Node? (Use this if you just changed the server IP and re-installed Xray)');">
+            <button class="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-full text-xs font-bold shadow-lg shadow-amber-500/30 transition"><i class="fa-solid fa-rotate mr-1"></i> Sync Keys</button>
+        </form>
+
         <button onclick="document.getElementById('addUserModal').classList.remove('hidden')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full text-xs font-bold shadow-lg shadow-blue-500/30 transition"><i class="fa-solid fa-plus mr-1"></i> Create Key(s)</button>
     </div>
 </div>
@@ -72,6 +79,21 @@
 </tbody></table></div></form></div>
 
 <form id="actionToggleForm" action="" method="POST" class="hidden"></form><form id="actionDeleteForm" action="" method="POST" class="hidden"></form>
+
+<div id="editIpModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100">
+        <h2 class="text-lg font-black mb-6 text-slate-800">Edit Node IP</h2>
+        <form action="/edit_node_ip/{{ node_name }}" method="POST">
+            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">New IP Address</label>
+            <input type="text" name="new_ip" value="{{ node_ip }}" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-8 focus:ring-2 focus:ring-blue-500 outline-none" required>
+            <div class="flex justify-end gap-3">
+                <button type="button" onclick="document.getElementById('editIpModal').classList.add('hidden')" class="px-5 py-3 font-bold text-slate-400 hover:text-slate-600">Cancel</button>
+                <button class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition">Save IP</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <div id="addUserModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-[420px] shadow-2xl border border-slate-100"><h2 class="text-lg font-black mb-6 text-slate-800">Generate Keys</h2>
 <form action="/add_user_manual" method="POST"><input type="hidden" name="node_name" value="{{ node_name }}">
 <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Creation Mode</label><select id="creation_mode" name="creation_mode" onchange="toggleMode()" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold text-slate-700"><option value="single">Single Key (1 User)</option><option value="list">Bulk List (Multiple Users)</option><option value="pattern">Auto-Number (e.g. ab1, ab2...)</option></select>
