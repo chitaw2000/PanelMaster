@@ -25,7 +25,7 @@
         </div>
         <div class="flex gap-2">
             <button onclick="document.getElementById('addAutoGroupModal').classList.remove('hidden')" class="bg-purple-600 hover:bg-purple-500 text-white px-5 py-3 rounded-xl text-xs font-bold shadow-sm transition flex items-center">
-                <i class="fa-solid fa-layer-group mr-2"></i> Create Auto Group
+                <i class="fa-solid fa-layer-group mr-2"></i> Create Auto Server Group
             </button>
             <button onclick="document.getElementById('addNodeModal').classList.remove('hidden')" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-3 rounded-xl text-xs font-bold shadow-sm transition flex items-center">
                 <i class="fa-solid fa-plus mr-2"></i> Add Custom Node
@@ -64,7 +64,7 @@
                 <div class="text-right"><span class="bg-white text-purple-600 border border-purple-200 px-2 py-1 rounded text-[10px] font-black uppercase font-mono shadow-sm">GROUP: {{ g.id }}</span></div>
             </div>
             <h2 class="text-xl font-black text-slate-800 mb-1 truncate">{{ g.name }}</h2>
-            <p class="text-xs font-bold text-slate-500 mb-6"><i class="fa-solid fa-server mr-1"></i> {{ g.node_count }} Servers <span class="mx-2">|</span> <i class="fa-solid fa-key mr-1"></i> Limit: {{ g.limit }}/server</p>
+            <p class="text-xs font-bold text-slate-500 mb-6"><i class="fa-solid fa-server mr-1"></i> {{ g.node_count }} Node Servers <span class="mx-2">|</span> <i class="fa-solid fa-key mr-1"></i> Max {{ g.limit }} keys per server</p>
             <div class="flex items-center justify-between border-t border-purple-100 pt-4">
                 <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Keys Generated</p><p class="text-lg font-black text-slate-700">{{ g.total_keys }}</p></div>
             </div>
@@ -136,8 +136,8 @@
         <form action="/add_auto_group" method="POST">
             <input type="text" name="group_id" placeholder="Group ID (e.g. auto_sg)" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-4 font-mono text-sm" required>
             <input type="text" name="group_name" placeholder="Group Name" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-4 text-sm font-bold" required>
-            <input type="number" name="limit" value="30" placeholder="Limit per server" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-8 font-mono text-sm" required>
-            <div class="flex justify-end gap-3"><button type="button" onclick="document.getElementById('addAutoGroupModal').classList.add('hidden')" class="px-4 py-2 font-bold text-slate-400">Cancel</button><button type="submit" class="bg-purple-600 text-white px-4 py-2 rounded-xl font-bold">Create</button></div>
+            <input type="number" name="limit" value="30" placeholder="Limit keys per server" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-8 font-mono text-sm" required>
+            <div class="flex justify-end gap-3"><button type="button" onclick="document.getElementById('addAutoGroupModal').classList.add('hidden')" class="px-4 py-2 font-bold text-slate-400">Cancel</button><button type="submit" class="bg-purple-600 text-white px-4 py-2 rounded-xl font-bold">Create Group</button></div>
         </form>
     </div>
 </div>
