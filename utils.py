@@ -1,8 +1,12 @@
 import os, base64, threading
 
-NODES_LIST = "/root/PanelMaster/nodes_list.txt"
-AUTO_GROUPS_FILE = "/root/PanelMaster/auto_groups.json"
+try:
+    from config import NODES_LIST
+except ImportError:
+    NODES_LIST = "/root/PanelMaster/nodes_list.txt"
+
 db_lock = threading.Lock()
+AUTO_GROUPS_FILE = "/root/PanelMaster/auto_groups.json"
 
 def get_nodes():
     nodes = {}
@@ -11,11 +15,16 @@ def get_nodes():
             for line in f:
                 line = line.strip()
                 if not line: continue
-                parts = line.split()
-                if len(parts) >= 3:
-                    nodes[parts[0]] = {"name": " ".join(parts[1:-1]).replace("_", " "), "ip": parts[-1]}
-                elif len(parts) == 2:
-                    nodes[parts[0]] = {"name": parts[0], "ip": parts[1]}
+                # 🚀 Format အသစ်: ID | Name | IP
+                if '|' in line:
+                    parts = line.split('|')
+                    if len(parts) >= 3:
+                        nodes[parts[0]] = {"name": parts[1], "ip": parts[2]}
+                else:
+                    # 🚀 Format အဟောင်း (Space ပါသည်ဖြစ်စေ မပါသည်ဖြစ်စေ အလိုအလျောက် မှန်ကန်စွာဖတ်မည်)
+                    parts = line.rsplit(' ', 1)
+                    if len(parts) == 2:
+                        nodes[parts[0]] = {"name": parts[0], "ip": parts[1]}
     return nodes
 
 def get_all_servers():
