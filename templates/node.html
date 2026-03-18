@@ -1,43 +1,40 @@
 <!DOCTYPE html><html><head><title>Node Details</title><script src="https://cdn.tailwindcss.com"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"></head>
-<body class="bg-[#f4f7f6] p-4 md:p-8 font-sans"><div class="max-w-7xl mx-auto">
+<body class="bg-[#f4f7f6] font-sans">
 
+<nav class="bg-white shadow-sm border-b border-slate-200 mb-8">
+    <div class="max-w-7xl mx-auto px-4 md:px-8 py-4 flex justify-between items-center">
+        <div class="text-xl font-black text-slate-800"><i class="fa-solid fa-bolt text-blue-600 mr-2"></i> PanelMaster</div>
+        <div class="flex gap-6 items-center">
+            <a href="/" class="text-sm font-bold text-slate-500 hover:text-blue-600 transition"><i class="fa-solid fa-chart-pie mr-1"></i> Dashboard</a>
+            <a href="/backups" class="text-sm font-bold text-slate-500 hover:text-blue-600 transition"><i class="fa-solid fa-database mr-1"></i> Backups</a>
+            <a href="/logout" class="text-sm font-bold text-red-400 hover:text-red-600 transition ml-4"><i class="fa-solid fa-right-from-bracket mr-1"></i> Logout</a>
+        </div>
+    </div>
+</nav>
+
+<div class="max-w-7xl mx-auto px-4 md:px-8 pb-12">
 <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
     <div class="flex items-center gap-3 flex-wrap">
         <a href="/" class="bg-white border border-slate-200 w-10 h-10 flex items-center justify-center rounded-full text-slate-400 hover:text-slate-800 hover:bg-slate-50 transition"><i class="fa-solid fa-arrow-left"></i></a>
         <h1 class="text-2xl font-black text-slate-800">Node: <span class="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-500 uppercase mr-2">{{ node_name }}</span></h1>
         
         <form action="/toggle_node/{{ node_name }}" method="POST" class="inline m-0 p-0">
-            {% if config.disabled_nodes and node_name in config.disabled_nodes %}
-                <button class="bg-red-100 text-red-600 border border-red-200 px-3 py-1.5 rounded-full font-bold shadow-sm hover:bg-red-200 transition text-[10px] uppercase tracking-widest"><i class="fa-solid fa-lock mr-1"></i>Disabled</button>
-            {% else %}
-                <button class="bg-emerald-100 text-emerald-600 border border-emerald-200 px-3 py-1.5 rounded-full font-bold shadow-sm hover:bg-emerald-200 transition text-[10px] uppercase tracking-widest"><i class="fa-solid fa-lock-open mr-1"></i>Active</button>
-            {% endif %}
+            {% if config.disabled_nodes and node_name in config.disabled_nodes %}<button class="bg-red-100 text-red-600 border border-red-200 px-3 py-1.5 rounded-full font-bold shadow-sm hover:bg-red-200 transition text-[10px] uppercase tracking-widest"><i class="fa-solid fa-lock mr-1"></i>Disabled</button>
+            {% else %}<button class="bg-emerald-100 text-emerald-600 border border-emerald-200 px-3 py-1.5 rounded-full font-bold shadow-sm hover:bg-emerald-200 transition text-[10px] uppercase tracking-widest"><i class="fa-solid fa-lock-open mr-1"></i>Active</button>{% endif %}
         </form>
         
         <button onclick="document.getElementById('editIpModal').classList.remove('hidden')" class="bg-slate-100 text-blue-500 border border-slate-200 px-3 py-1.5 rounded-full font-bold shadow-sm hover:bg-blue-50 hover:text-blue-600 transition text-[10px] uppercase tracking-widest"><i class="fa-solid fa-pen mr-1"></i> Edit IP</button>
-
-        <form action="/delete_node/{{ node_name }}" method="POST" class="inline m-0 p-0" onsubmit="return confirm('⚠️ WARNING: Are you sure you want to completely DELETE this node?');">
-            <button class="bg-slate-100 text-red-500 border border-slate-200 px-3 py-1.5 rounded-full font-bold shadow-sm hover:bg-red-50 hover:text-red-600 transition text-[10px] uppercase tracking-widest"><i class="fa-solid fa-trash mr-1"></i> Delete Node</button>
-        </form>
+        <form action="/delete_node/{{ node_name }}" method="POST" class="inline m-0 p-0" onsubmit="return confirm('⚠️ WARNING: Are you sure you want to completely DELETE this node?');"><button class="bg-slate-100 text-red-500 border border-slate-200 px-3 py-1.5 rounded-full font-bold shadow-sm hover:bg-red-50 hover:text-red-600 transition text-[10px] uppercase tracking-widest"><i class="fa-solid fa-trash mr-1"></i> Delete Node</button></form>
     </div>
 
     <div class="flex gap-2 items-center flex-wrap justify-end">
-        <span id="xrayStatusBadge" class="bg-slate-100 text-slate-500 border border-slate-200 px-3 py-2 rounded-full font-bold shadow-sm text-[10px] uppercase tracking-widest flex items-center gap-1.5">
-            <i class="fa-solid fa-circle-notch fa-spin"></i> Checking Xray...
-        </span>
-
+        <span id="xrayStatusBadge" class="bg-slate-100 text-slate-500 border border-slate-200 px-3 py-2 rounded-full font-bold shadow-sm text-[10px] uppercase tracking-widest flex items-center gap-1.5"><i class="fa-solid fa-circle-notch fa-spin"></i> Checking Xray...</span>
         <div class="bg-white border border-slate-200 rounded-full px-3 py-2 flex items-center gap-2 shadow-sm">
-            <label class="relative inline-flex items-center cursor-pointer" title="Enable Live Speed">
-                <input type="checkbox" id="speedToggle" class="sr-only peer" onchange="toggleSpeedMonitor()">
-                <div class="w-7 h-3.5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-blue-500 shadow-inner"></div>
-            </label>
+            <label class="relative inline-flex items-center cursor-pointer" title="Enable Live Speed"><input type="checkbox" id="speedToggle" class="sr-only peer" onchange="toggleSpeedMonitor()"><div class="w-7 h-3.5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-blue-500 shadow-inner"></div></label>
             <span class="text-[10px] font-black text-slate-500 uppercase tracking-widest"><i class="fa-solid fa-gauge-high mr-1"></i> Speed</span>
         </div>
-        <button id="delSelectedBtn" form="bulkForm" class="hidden bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-full text-xs font-bold shadow-lg shadow-red-500/30 transition"><i class="fa-solid fa-trash-can mr-1"></i>Del Selected</button>
         
-        <form action="/sync_node/{{ node_name }}" method="POST" class="inline m-0 p-0" onsubmit="return confirm('🚀 Do you want to RESTORE all Active Keys to this Node? (Use this if you just changed the server IP and re-installed Xray)');">
-            <button class="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-full text-xs font-bold shadow-lg shadow-amber-500/30 transition"><i class="fa-solid fa-rotate mr-1"></i> Sync Keys</button>
-        </form>
+        <button onclick="document.getElementById('migrateModal').classList.remove('hidden')" class="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-full text-xs font-bold shadow-lg shadow-purple-500/30 transition"><i class="fa-solid fa-right-left mr-1"></i> Migrate Data</button>
 
         <button onclick="document.getElementById('addUserModal').classList.remove('hidden')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full text-xs font-bold shadow-lg shadow-blue-500/30 transition"><i class="fa-solid fa-plus mr-1"></i> Create Key(s)</button>
     </div>
@@ -46,11 +43,11 @@
 <form id="bulkForm" action="/bulk_delete" method="POST" onsubmit="return confirm('Are you sure you want to permanently delete the selected keys?');"><input type="hidden" name="node_name" value="{{ node_name }}">
 <div class="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-x-auto"><table class="w-full text-left whitespace-nowrap">
 <thead><tr class="bg-slate-50 border-b border-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-400">
-<th class="p-6 rounded-tl-3xl w-10 text-center"><input type="checkbox" id="selectAll" class="w-4 h-4 cursor-pointer accent-blue-600" onclick="const cb = document.querySelectorAll('input[name=\\'usernames\\']'); cb.forEach(c => c.checked = this.checked); toggleDelBtn();"></th>
-<th class="p-6">No.</th><th class="p-6">User Profile</th><th class="p-6">Traffic Usage</th><th class="p-6">Expiry</th><th class="p-6 text-center">VPN Key</th><th class="p-6 text-center rounded-tr-3xl">Actions</th></tr></thead>
+<th class="p-6 rounded-tl-3xl w-10 text-center"><input type="checkbox" id="selectAll" class="w-4 h-4 cursor-pointer accent-blue-600" onclick="const cb = document.querySelectorAll('input[name=\\'usernames\\']'); cb.forEach(c => c.checked = this.checked); document.getElementById('delSelectedBtn').classList.toggle('hidden', document.querySelectorAll('input[name=\\'usernames\\']:checked').length === 0);"></th>
+<th class="p-6">No.</th><th class="p-6">User Profile</th><th class="p-6">Traffic Usage</th><th class="p-6">Expiry</th><th class="p-6 text-center">VPN Key</th><th class="p-6 text-center rounded-tr-3xl">Actions <button type="submit" id="delSelectedBtn" class="hidden ml-2 bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded text-xs font-bold transition"><i class="fa-solid fa-trash-can"></i> Del</button></th></tr></thead>
 <tbody class="divide-y divide-slate-50">
 {% for u in users %}<tr class="hover:bg-slate-50/50 transition-colors {% if u.is_blocked %}opacity-60 bg-red-50/20{% endif %}">
-<td class="p-6 text-center"><input type="checkbox" name="usernames" value="{{ u.username }}" class="w-4 h-4 cursor-pointer accent-blue-600" onchange="toggleDelBtn()"></td>
+<td class="p-6 text-center"><input type="checkbox" name="usernames" value="{{ u.username }}" class="w-4 h-4 cursor-pointer accent-blue-600" onchange="document.getElementById('delSelectedBtn').classList.toggle('hidden', document.querySelectorAll('input[name=\\'usernames\\']:checked').length === 0)"></td>
 <td class="p-6 text-slate-400 font-mono text-sm">{{ loop.index }}</td>
 <td class="p-6"><div class="flex items-center gap-3">
     {% if u.is_blocked %}<div class="relative flex items-center justify-center w-10 h-10 rounded-full bg-red-100 border border-red-200 text-red-600"><i class="fa-solid fa-ban"></i></div>
@@ -62,8 +59,7 @@
         {% elif u.is_active %}<p class="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">🟢 Online</p>
         {% elif u.used_bytes == 0 %}<p class="text-[10px] font-bold text-amber-500 uppercase tracking-widest">🟡 Pending</p>
         {% else %}<p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">⚪ Offline</p>{% endif %}
-    </div></div>
-</td>
+    </div></div></td>
 <td class="p-6"><div class="flex flex-col"><span class="font-black text-slate-700 text-sm">{{ u.used_gb_str }} <span class="text-slate-400 text-xs">/ {{ u.total_gb }} GB</span></span>
 <div class="w-24 h-1.5 bg-slate-100 rounded-full mt-2 overflow-hidden"><div class="h-full bg-blue-500 rounded-full" style="width: {{ (u.used_bytes / (u.total_gb * 1024**3) * 100) if u.total_gb > 0 else 0 }}%"></div></div></div></td>
 <td class="p-6 font-mono text-xs font-bold text-slate-500">{{ u.expire_date }}</td>
@@ -80,185 +76,87 @@
 
 <form id="actionToggleForm" action="" method="POST" class="hidden"></form><form id="actionDeleteForm" action="" method="POST" class="hidden"></form>
 
-<div id="editIpModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-    <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100">
-        <h2 class="text-lg font-black mb-6 text-slate-800">Edit Node IP</h2>
-        <form action="/edit_node_ip/{{ node_name }}" method="POST">
-            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">New IP Address</label>
-            <input type="text" name="new_ip" value="{{ node_ip }}" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-8 focus:ring-2 focus:ring-blue-500 outline-none" required>
+<div id="migrateModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-3xl p-8 w-[400px] shadow-2xl border border-slate-100">
+        <h2 class="text-xl font-black mb-2 text-slate-800"><i class="fa-solid fa-right-left text-purple-600 mr-2"></i> Migrate Data</h2>
+        <p class="text-xs text-slate-500 mb-6 font-bold leading-relaxed">Select the OLD Node ID to pull data from. Keys will be updated to this new server's IP.</p>
+        <form action="/migrate_node/{{ node_name }}" method="POST">
+            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Select Old Node ID</label>
+            <select name="source_node" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-8 focus:ring-2 focus:ring-purple-500 outline-none text-sm font-bold text-slate-700" required>
+                <option value="" disabled selected>-- Choose Old Node --</option>
+                {% for n in other_nodes %}
+                <option value="{{ n }}">{{ n }}</option>
+                {% endfor %}
+            </select>
             <div class="flex justify-end gap-3">
-                <button type="button" onclick="document.getElementById('editIpModal').classList.add('hidden')" class="px-5 py-3 font-bold text-slate-400 hover:text-slate-600">Cancel</button>
-                <button class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition">Save IP</button>
+                <button type="button" onclick="document.getElementById('migrateModal').classList.add('hidden')" class="px-5 py-3 font-bold text-slate-400 hover:text-slate-600">Cancel</button>
+                <button class="bg-purple-600 hover:bg-purple-500 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-purple-500/30 transition">Start Migration</button>
             </div>
         </form>
     </div>
 </div>
 
-<div id="addUserModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-[420px] shadow-2xl border border-slate-100"><h2 class="text-lg font-black mb-6 text-slate-800">Generate Keys</h2>
-<form action="/add_user_manual" method="POST"><input type="hidden" name="node_name" value="{{ node_name }}">
-<label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Creation Mode</label><select id="creation_mode" name="creation_mode" onchange="toggleMode()" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold text-slate-700"><option value="single">Single Key (1 User)</option><option value="list">Bulk List (Multiple Users)</option><option value="pattern">Auto-Number (e.g. ab1, ab2...)</option></select>
-<div id="mode_single" class="block mb-4"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Username</label><input type="text" name="single_username" placeholder="e.g. aung123" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"></div><div id="mode_list" class="hidden mb-4"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Usernames (Comma or newline separated)</label><textarea name="list_usernames" rows="3" placeholder="user1, user2&#10;user3" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"></textarea></div><div id="mode_pattern" class="hidden mb-4 grid grid-cols-3 gap-2"><div class="col-span-1"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Prefix</label><input type="text" name="base_name" placeholder="ab" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"></div><div class="col-span-1"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Start No.</label><input type="number" name="start_num" value="1" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"></div><div class="col-span-1"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Quantity</label><input type="number" name="qty" value="5" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"></div></div>
-<label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Protocol</label><select name="protocol" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none text-sm"><option value="v2">VLESS</option><option value="out">Shadowsocks</option></select><div class="flex gap-3 mb-8"><div class="flex-1"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Total GB</label><input type="number" step="0.1" name="total_gb" value="50" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none"></div>
-<div class="flex-1"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Duration (Days)</label><input type="number" name="expire_days" value="30" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none" required></div></div><div class="flex justify-end gap-3"><button type="button" onclick="document.getElementById('addUserModal').classList.add('hidden')" class="px-5 py-3 font-bold text-slate-400 hover:text-slate-600">Cancel</button><button class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition">Generate</button></div></form></div></div>
+<div id="editIpModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100"><h2 class="text-lg font-black mb-6 text-slate-800">Edit Node IP/DNS</h2><form action="/edit_node_ip/{{ node_name }}" method="POST"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">IP or Domain</label><input type="text" name="new_ip" value="{{ node_ip }}" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-8 focus:ring-2 focus:ring-blue-500 outline-none" required><div class="flex justify-end gap-3"><button type="button" onclick="document.getElementById('editIpModal').classList.add('hidden')" class="px-5 py-3 font-bold text-slate-400 hover:text-slate-600">Cancel</button><button class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition">Save IP</button></div></form></div></div>
+
+<div id="addUserModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-[420px] shadow-2xl border border-slate-100"><h2 class="text-lg font-black mb-6 text-slate-800">Generate Keys</h2><form action="/add_user_manual" method="POST"><input type="hidden" name="node_name" value="{{ node_name }}"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Creation Mode</label><select id="creation_mode" name="creation_mode" onchange="toggleMode()" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold text-slate-700"><option value="single">Single Key (1 User)</option><option value="list">Bulk List (Multiple Users)</option><option value="pattern">Auto-Number (e.g. ab1, ab2...)</option></select><div id="mode_single" class="block mb-4"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Username</label><input type="text" name="single_username" placeholder="e.g. aung123" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"></div><div id="mode_list" class="hidden mb-4"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Usernames (Comma or newline separated)</label><textarea name="list_usernames" rows="3" placeholder="user1, user2&#10;user3" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"></textarea></div><div id="mode_pattern" class="hidden mb-4 grid grid-cols-3 gap-2"><div class="col-span-1"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Prefix</label><input type="text" name="base_name" placeholder="ab" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"></div><div class="col-span-1"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Start No.</label><input type="number" name="start_num" value="1" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"></div><div class="col-span-1"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Quantity</label><input type="number" name="qty" value="5" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"></div></div><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Protocol</label><select name="protocol" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none text-sm"><option value="v2">VLESS</option><option value="out">Shadowsocks</option></select><div class="flex gap-3 mb-8"><div class="flex-1"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Total GB</label><input type="number" step="0.1" name="total_gb" value="50" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none"></div><div class="flex-1"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Duration (Days)</label><input type="number" name="expire_days" value="30" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none" required></div></div><div class="flex justify-end gap-3"><button type="button" onclick="document.getElementById('addUserModal').classList.add('hidden')" class="px-5 py-3 font-bold text-slate-400 hover:text-slate-600">Cancel</button><button class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition">Generate</button></div></form></div></div>
+
 <div id="m" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100"><h2 class="text-lg font-black mb-6 text-slate-800" id="mu"></h2><form id="ef" method="POST"><input type="hidden" name="node_name" value="{{ node_name }}"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Total Limit (GB)</label><input type="number" step="0.1" name="total_gb" id="mg" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Expiry Date</label><input type="text" name="expire_date" id="md" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-8 focus:ring-2 focus:ring-blue-500 outline-none"><div class="flex justify-end gap-3"><button type="button" onclick="closeM()" class="px-5 py-3 font-bold text-slate-400 hover:text-slate-600">Cancel</button><button class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition">Save</button></div></form></div></div>
 <div id="rm" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100"><h2 class="text-lg font-black mb-6 text-emerald-600">Renew: <span id="ru"></span></h2><form id="rf" method="POST"><input type="hidden" name="node_name" value="{{ node_name }}"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">New Data (GB)</label><input type="number" step="0.1" name="add_gb" value="50" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-4 focus:ring-2 focus:ring-emerald-500 outline-none"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Add Duration (Days)</label><input type="number" name="add_days" value="30" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-8 focus:ring-2 focus:ring-emerald-500 outline-none"><div class="flex justify-end gap-3"><button type="button" onclick="closeRenew()" class="px-5 py-3 font-bold text-slate-400 hover:text-slate-600">Cancel</button><button class="bg-emerald-500 hover:bg-emerald-400 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-emerald-500/30 transition">Renew</button></div></form></div></div>
 
-<div id="installPromptModal" class="hidden fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
-    <div class="bg-white rounded-3xl p-8 w-[450px] shadow-2xl border border-slate-100 text-center animate-bounce-in">
-        <h2 class="text-2xl font-black mb-2 text-slate-800">Node Added!</h2>
-        <p class="text-slate-500 text-sm font-bold mb-6">Let's setup Xray-Core automatically.</p>
-        
-        <div id="sshCheckArea" class="mb-6 p-4 rounded-xl bg-slate-50 border border-slate-200 text-sm transition-all">
-            <p id="sshStatusText" class="font-bold text-slate-600"><i class="fa-solid fa-spinner fa-spin mr-2"></i> Checking SSH Connection...</p>
-            
-            <div id="sshInstructions" class="hidden mt-2 text-left">
-                <p class="text-red-500 font-bold text-sm mb-2"><i class="fa-solid fa-triangle-exclamation mr-1"></i> SSH Not Connected!</p>
-                <p class="text-slate-500 text-xs leading-relaxed">Please make sure you have manually added this <b>Master Server's SSH Public Key</b> <code>(~/.ssh/id_rsa.pub)</code> into the Node Server's <code>~/.ssh/authorized_keys</code> file.</p>
-                <div class="mt-4 text-center">
-                    <button type="button" onclick="checkSSH()" class="bg-slate-800 hover:bg-black text-white px-6 py-2 rounded-xl text-xs font-bold transition shadow-md"><i class="fa-solid fa-rotate-right mr-1"></i> Check Again</button>
-                </div>
-            </div>
-        </div>
-        
-        <form action="/install_node/{{ node_name }}" method="POST" id="installForm" onsubmit="document.getElementById('installBtn').innerHTML = '<i class=\'fa-solid fa-spinner fa-spin mr-2\'></i> Installing... Wait ~30s'; document.getElementById('installBtn').classList.add('opacity-50', 'cursor-not-allowed');">
-            <div class="flex gap-3 justify-center">
-                <button type="button" onclick="document.getElementById('installPromptModal').classList.add('hidden')" class="px-6 py-3 font-bold text-slate-500 hover:text-slate-700 transition">Not Now</button>
-                <button type="submit" id="installBtn" disabled class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition flex items-center opacity-50 cursor-not-allowed">
-                    <i class="fa-solid fa-rocket mr-2"></i> Install Xray
-                </button>
-            </div>
-        </form>
-    </div>
-</div>
+<div id="installPromptModal" class="hidden fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-[60]"><div class="bg-white rounded-3xl p-8 w-[450px] shadow-2xl border border-slate-100 text-center"><h2 class="text-2xl font-black mb-2 text-slate-800">Node Added!</h2><p class="text-slate-500 text-sm font-bold mb-6">Let's setup Xray-Core automatically.</p><div id="sshCheckArea" class="mb-6 p-4 rounded-xl bg-slate-50 border border-slate-200 text-sm transition-all"><p id="sshStatusText" class="font-bold text-slate-600"><i class="fa-solid fa-spinner fa-spin mr-2"></i> Checking SSH Connection...</p><div id="sshInstructions" class="hidden mt-2 text-left"><p class="text-red-500 font-bold text-sm mb-2"><i class="fa-solid fa-triangle-exclamation mr-1"></i> SSH Not Connected!</p><p class="text-slate-500 text-xs leading-relaxed">Please make sure you have manually added this <b>Master Server's SSH Public Key</b> <code>(~/.ssh/id_rsa.pub)</code> into the Node Server's <code>~/.ssh/authorized_keys</code> file.</p><div class="mt-4 text-center"><button type="button" onclick="checkSSH()" class="bg-slate-800 hover:bg-black text-white px-6 py-2 rounded-xl text-xs font-bold transition shadow-md"><i class="fa-solid fa-rotate-right mr-1"></i> Check Again</button></div></div></div><form action="/install_node/{{ node_name }}" method="POST" id="installForm" onsubmit="document.getElementById('installBtn').innerHTML = '<i class=\'fa-solid fa-spinner fa-spin mr-2\'></i> Installing... Wait ~30s'; document.getElementById('installBtn').classList.add('opacity-50', 'cursor-not-allowed');"><div class="flex gap-3 justify-center"><button type="button" onclick="document.getElementById('installPromptModal').classList.add('hidden')" class="px-6 py-3 font-bold text-slate-500 hover:text-slate-700 transition">Not Now</button><button type="submit" id="installBtn" disabled class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition flex items-center opacity-50 cursor-not-allowed"><i class="fa-solid fa-rocket mr-2"></i> Install Xray</button></div></form></div></div>
 
 <script>
-let speedInterval = null;
-let lastStats = {};
-let lastTime = 0;
-
+let speedInterval = null; let lastStats = {}; let lastTime = 0;
 document.addEventListener('DOMContentLoaded', () => {
-    // Speed Toggle Restore
-    const savedState = localStorage.getItem('speedToggleState_{{ node_name }}');
-    if (savedState === 'true') {
-        document.getElementById('speedToggle').checked = true;
-        toggleSpeedMonitor();
-    }
-    
-    // Check Xray Status immediately on load
+    if (localStorage.getItem('speedToggleState_{{ node_name }}') === 'true') { document.getElementById('speedToggle').checked = true; toggleSpeedMonitor(); }
     checkXrayStatus();
-
-    // Auto-show install modal if newly added
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('newly_added') === 'yes') {
-        document.getElementById('installPromptModal').classList.remove('hidden');
-        window.history.replaceState({}, document.title, window.location.pathname);
-        checkSSH();
-    }
+    if (new URLSearchParams(window.location.search).get('newly_added') === 'yes') { document.getElementById('installPromptModal').classList.remove('hidden'); window.history.replaceState({}, document.title, window.location.pathname); checkSSH(); }
 });
-
-// --- API Xray Status Check ---
 async function checkXrayStatus() {
     const badge = document.getElementById('xrayStatusBadge');
     try {
-        const res = await fetch('/api/check_xray/{{ node_name }}');
-        const json = await res.json();
-        if(json.status === 'active') {
-            badge.className = "bg-emerald-100 text-emerald-600 border border-emerald-200 px-3 py-2 rounded-full font-bold shadow-sm text-[10px] uppercase tracking-widest flex items-center gap-1.5";
-            badge.innerHTML = '<i class="fa-solid fa-circle-check"></i> Xray Active';
-        } else {
-            badge.className = "bg-red-100 text-red-600 border border-red-200 px-3 py-2 rounded-full font-bold shadow-sm text-[10px] uppercase tracking-widest flex items-center gap-1.5";
-            badge.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> Xray Inactive';
-        }
-    } catch(e) {
-        badge.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Error';
-    }
+        const res = await fetch('/api/check_xray/{{ node_name }}'); const json = await res.json();
+        if(json.status === 'active') { badge.className = "bg-emerald-100 text-emerald-600 border border-emerald-200 px-3 py-2 rounded-full font-bold shadow-sm text-[10px] uppercase tracking-widest flex items-center gap-1.5"; badge.innerHTML = '<i class="fa-solid fa-circle-check"></i> Xray Active'; }
+        else { badge.className = "bg-red-100 text-red-600 border border-red-200 px-3 py-2 rounded-full font-bold shadow-sm text-[10px] uppercase tracking-widest flex items-center gap-1.5"; badge.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> Xray Inactive'; }
+    } catch(e) { badge.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Error'; }
 }
-
-// --- API SSH Connection Check ---
 async function checkSSH() {
-    const statusText = document.getElementById('sshStatusText');
-    const instructions = document.getElementById('sshInstructions');
-    const btn = document.getElementById('installBtn');
-    const checkArea = document.getElementById('sshCheckArea');
-    
-    statusText.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Checking SSH Connection...';
-    statusText.classList.remove('hidden');
-    instructions.classList.add('hidden');
-    btn.disabled = true;
-    btn.classList.add('opacity-50', 'cursor-not-allowed');
-
+    const statusText = document.getElementById('sshStatusText'); const instructions = document.getElementById('sshInstructions'); const btn = document.getElementById('installBtn'); const checkArea = document.getElementById('sshCheckArea');
+    statusText.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Checking SSH Connection...'; statusText.classList.remove('hidden'); instructions.classList.add('hidden'); btn.disabled = true; btn.classList.add('opacity-50', 'cursor-not-allowed');
     try {
-        const res = await fetch('/api/check_ssh/{{ node_name }}');
-        const json = await res.json();
-        if(json.status === 'success') {
-            checkArea.classList.replace('bg-slate-50', 'bg-emerald-50');
-            checkArea.classList.replace('border-slate-200', 'border-emerald-200');
-            statusText.innerHTML = '<span class="text-emerald-600"><i class="fa-solid fa-check-circle mr-2"></i> SSH Connected Successfully! Ready to install.</span>';
-            btn.disabled = false;
-            btn.classList.remove('opacity-50', 'cursor-not-allowed');
-        } else {
-            statusText.classList.add('hidden');
-            instructions.classList.remove('hidden');
-        }
-    } catch(e) {
-        statusText.classList.add('hidden');
-        instructions.classList.remove('hidden');
-    }
+        const res = await fetch('/api/check_ssh/{{ node_name }}'); const json = await res.json();
+        if(json.status === 'success') { checkArea.classList.replace('bg-slate-50', 'bg-emerald-50'); checkArea.classList.replace('border-slate-200', 'border-emerald-200'); statusText.innerHTML = '<span class="text-emerald-600"><i class="fa-solid fa-check-circle mr-2"></i> SSH Connected Successfully! Ready to install.</span>'; btn.disabled = false; btn.classList.remove('opacity-50', 'cursor-not-allowed'); }
+        else { statusText.classList.add('hidden'); instructions.classList.remove('hidden'); }
+    } catch(e) { statusText.classList.add('hidden'); instructions.classList.remove('hidden'); }
 }
-
 function toggleSpeedMonitor() {
-    const isEnabled = document.getElementById('speedToggle').checked;
-    localStorage.setItem('speedToggleState_{{ node_name }}', isEnabled);
-    
+    const isEnabled = document.getElementById('speedToggle').checked; localStorage.setItem('speedToggleState_{{ node_name }}', isEnabled);
     const speedTags = document.querySelectorAll('.live-speed-tag');
-    if(isEnabled) {
-        speedTags.forEach(el => el.classList.remove('hidden'));
-        lastTime = Date.now();
-        fetchStats();
-        speedInterval = setInterval(fetchStats, 2000);
-    } else {
-        speedTags.forEach(el => el.classList.add('hidden'));
-        clearInterval(speedInterval);
-        lastStats = {};
-    }
+    if(isEnabled) { speedTags.forEach(el => el.classList.remove('hidden')); lastTime = Date.now(); fetchStats(); speedInterval = setInterval(fetchStats, 2000); }
+    else { speedTags.forEach(el => el.classList.add('hidden')); clearInterval(speedInterval); lastStats = {}; }
 }
-
 async function fetchStats() {
     try {
-        const res = await fetch('/api/stats/{{ node_name }}');
-        const json = await res.json();
+        const res = await fetch('/api/stats/{{ node_name }}'); const json = await res.json();
         if(json.status === 'ok') {
-            const now = Date.now();
-            const timeDiff = (now - lastTime) / 1000;
-            const currentStats = json.data;
+            const now = Date.now(); const timeDiff = (now - lastTime) / 1000; const currentStats = json.data;
             for(const user in currentStats) {
                 if(lastStats[user] !== undefined) {
-                    const bytesDiff = currentStats[user] - lastStats[user];
-                    let speed = 0;
-                    if(bytesDiff > 0 && timeDiff > 0) speed = bytesDiff / timeDiff;
-                    
-                    let speedStr = "0 B/s";
-                    if(speed > 1024*1024) speedStr = (speed / (1024*1024)).toFixed(2) + " MB/s";
-                    else if(speed > 1024) speedStr = (speed / 1024).toFixed(2) + " KB/s";
-                    else if(speed > 0) speedStr = speed.toFixed(0) + " B/s";
-                    
-                    const el = document.getElementById('speed_' + user);
-                    if(el) { el.innerText = speedStr; el.classList.add('animate-pulse'); setTimeout(() => el.classList.remove('animate-pulse'), 500); }
+                    const bytesDiff = currentStats[user] - lastStats[user]; let speed = 0; if(bytesDiff > 0 && timeDiff > 0) speed = bytesDiff / timeDiff;
+                    let speedStr = "0 B/s"; if(speed > 1024*1024) speedStr = (speed / (1024*1024)).toFixed(2) + " MB/s"; else if(speed > 1024) speedStr = (speed / 1024).toFixed(2) + " KB/s"; else if(speed > 0) speedStr = speed.toFixed(0) + " B/s";
+                    const el = document.getElementById('speed_' + user); if(el) { el.innerText = speedStr; el.classList.add('animate-pulse'); setTimeout(() => el.classList.remove('animate-pulse'), 500); }
                 }
             }
-            lastStats = currentStats;
-            lastTime = now;
+            lastStats = currentStats; lastTime = now;
         }
     } catch(e) {}
 }
-
 function copyK(id){ var t = document.getElementById(id); if(!t.value || t.value==='No Key Found') { alert("❌ Key Not Found in Database!"); return; } var dummy = document.createElement("textarea"); document.body.appendChild(dummy); dummy.value = t.value; dummy.select(); document.execCommand("copy"); document.body.removeChild(dummy); alert("✅ Key Copied Successfully!"); }
 function openM(u,g,d){ document.getElementById('mu').innerText="Edit: "+u; document.getElementById('mg').value=g; document.getElementById('md').value=d; document.getElementById('ef').action="/edit_user/"+u; document.getElementById('m').classList.remove('hidden'); }
 function closeM(){ document.getElementById('m').classList.add('hidden'); }
 function openRenew(u){ document.getElementById('ru').innerText=u; document.getElementById('rf').action="/renew_user/"+u; document.getElementById('rm').classList.remove('hidden'); }
 function closeRenew(){ document.getElementById('rm').classList.add('hidden'); }
 function toggleMode() { let mode = document.getElementById('creation_mode').value; document.getElementById('mode_single').classList.toggle('hidden', mode !== 'single'); document.getElementById('mode_list').classList.toggle('hidden', mode !== 'list'); document.getElementById('mode_pattern').classList.toggle('hidden', mode !== 'pattern'); }
-function toggleDelBtn() { const anyChecked = document.querySelectorAll('input[name="usernames"]:checked').length > 0; document.getElementById('delSelectedBtn').classList.toggle('hidden', !anyChecked); }
 function submitToggle(u) { let f = document.getElementById('actionToggleForm'); f.action = '/toggle_user/' + u; f.submit(); }
 function submitDelete(u) { let f = document.getElementById('actionDeleteForm'); f.action = '/delete_user/' + u; f.submit(); }
 </script></body></html>
