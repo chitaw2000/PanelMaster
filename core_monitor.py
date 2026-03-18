@@ -1,20 +1,14 @@
 import time, json, subprocess, os, threading
 from utils import get_all_servers, db_lock, get_safe_delete_cmd
-
-try:
-    from config import USERS_DB
-except ImportError:
-    USERS_DB = "/root/PanelMaster/users_db.json"
+USERS_DB = "/root/PanelMaster/users_db.json"
 
 def start_background_monitor():
     def background_traffic_monitor():
         while True:
             time.sleep(30)
             try:
-                # 🚀 Custom ရော Auto ပါ Server အားလုံးကို ဆွဲယူပြီး Monitor လုပ်မည်
                 nodes = get_all_servers()
                 if not nodes: continue
-                
                 gathered_stats = {}
                 for node_id, info in nodes.items():
                     node_ip = info.get('ip')
@@ -34,14 +28,12 @@ def start_background_monitor():
                     except Exception: pass
                 
                 if not gathered_stats: continue
-                
                 db_changed = False
                 users_to_block = []
                 
                 with db_lock:
                     if not os.path.exists(USERS_DB): continue
                     with open(USERS_DB, 'r') as f: db = json.load(f)
-                    
                     for uname, uinfo in db.items():
                         node_id = uinfo.get("node")
                         if node_id in gathered_stats:
@@ -61,19 +53,15 @@ def start_background_monitor():
                             if tot_gb > 0:
                                 max_bytes = tot_gb * (1024**3)
                                 if float(uinfo['used_bytes']) >= max_bytes and not uinfo.get('is_blocked', False):
-                                    uinfo['is_blocked'] = True
-                                    uinfo['is_online'] = False
+                                    uinfo['is_blocked'] = True; uinfo['is_online'] = False
                                     node_ip = nodes[node_id].get('ip')
                                     if node_ip: users_to_block.append((node_ip, uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443')))
-                                        
                     if db_changed:
                         with open(USERS_DB, 'w') as f: json.dump(db, f)
                         
-                # 🚀 Data အကုန်သိမ်းပြီးမှ Block လုပ်ခြင်းကို Synchronous ဖြင့် သေချာပေါက် ပိတ်ချမည်
                 for node_ip, uname, proto, port in users_to_block:
                     safe_cmd = get_safe_delete_cmd(uname, proto, port)
                     subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd}\"", shell=True)
                     subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"systemctl restart xray\"", shell=True)
             except Exception: pass
-
     threading.Thread(target=background_traffic_monitor, daemon=True).start()
