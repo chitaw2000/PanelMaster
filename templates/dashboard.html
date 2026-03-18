@@ -21,20 +21,22 @@
     <div class="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-4">
         <div>
             <h1 class="text-3xl font-black text-slate-800 mb-2">Network Overview</h1>
-            <p class="text-sm font-bold text-slate-500">Manage nodes, backups, and user traffic.</p>
+            <p class="text-sm font-bold text-slate-500">Manage custom nodes, auto-groups, and user traffic.</p>
         </div>
-        <button onclick="document.getElementById('addNodeModal').classList.remove('hidden')" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl text-sm font-bold shadow-lg shadow-blue-500/30 transition flex items-center">
-            <i class="fa-solid fa-plus mr-2"></i> Add New Node
-        </button>
+        <div class="flex gap-2">
+            <button onclick="document.getElementById('addAutoGroupModal').classList.remove('hidden')" class="bg-purple-600 hover:bg-purple-500 text-white px-5 py-3 rounded-xl text-xs font-bold shadow-sm transition flex items-center">
+                <i class="fa-solid fa-layer-group mr-2"></i> Create Auto Group
+            </button>
+            <button onclick="document.getElementById('addNodeModal').classList.remove('hidden')" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-3 rounded-xl text-xs font-bold shadow-sm transition flex items-center">
+                <i class="fa-solid fa-plus mr-2"></i> Add Custom Node
+            </button>
+        </div>
     </div>
 
     <div class="border-b border-slate-200 mb-8 flex gap-8 overflow-x-auto whitespace-nowrap">
-        <button id="tabBtn-nodes" onclick="switchTab('nodes')" class="pb-4 px-2 text-sm font-black text-blue-600 border-b-2 border-blue-600 transition tracking-widest uppercase">
-            <i class="fa-solid fa-server mr-1"></i> Server Nodes
-        </button>
-        <button id="tabBtn-backups" onclick="switchTab('backups')" class="pb-4 px-2 text-sm font-black text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition tracking-widest uppercase">
-            <i class="fa-solid fa-folder-tree mr-1"></i> Data & Backups
-        </button>
+        <button id="tabBtn-nodes" onclick="switchTab('nodes')" class="pb-4 px-2 text-sm font-black text-blue-600 border-b-2 border-blue-600 transition tracking-widest uppercase"><i class="fa-solid fa-server mr-1"></i> Custom Nodes</button>
+        <button id="tabBtn-auto" onclick="switchTab('auto')" class="pb-4 px-2 text-sm font-black text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition tracking-widest uppercase"><i class="fa-solid fa-network-wired mr-1"></i> Auto Server Groups</button>
+        <button id="tabBtn-backups" onclick="switchTab('backups')" class="pb-4 px-2 text-sm font-black text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition tracking-widest uppercase"><i class="fa-solid fa-folder-tree mr-1"></i> Data & Backups</button>
     </div>
 
     <div id="tab-nodes" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -42,9 +44,7 @@
         <a href="/node/{{ node.id }}" class="block bg-white rounded-3xl p-6 shadow-sm border border-slate-100 hover:shadow-xl hover:-translate-y-1 hover:border-blue-100 transition-all group">
             <div class="flex justify-between items-start mb-4">
                 <div class="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl group-hover:scale-110 transition-transform shadow-inner"><i class="fa-solid fa-server"></i></div>
-                <div class="text-right">
-                    <span class="bg-slate-100 text-slate-500 border border-slate-200 px-2 py-1 rounded text-[10px] font-black uppercase font-mono shadow-sm">ID: {{ node.id }}</span>
-                </div>
+                <div class="text-right"><span class="bg-slate-100 text-slate-500 border border-slate-200 px-2 py-1 rounded text-[10px] font-black uppercase font-mono shadow-sm">ID: {{ node.id }}</span></div>
             </div>
             <h2 class="text-xl font-black text-slate-800 mb-1 truncate">{{ node.name }}</h2>
             <p class="text-xs font-mono font-bold text-slate-400 mb-6 truncate"><i class="fa-solid fa-globe mr-1"></i> {{ node.ip }}</p>
@@ -56,50 +56,55 @@
         {% endfor %}
     </div>
 
+    <div id="tab-auto" class="hidden grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {% for g in groups %}
+        <a href="/group/{{ g.id }}" class="block bg-gradient-to-br from-purple-50 to-white rounded-3xl p-6 shadow-sm border border-purple-100 hover:shadow-xl hover:-translate-y-1 hover:border-purple-300 transition-all group">
+            <div class="flex justify-between items-start mb-4">
+                <div class="w-12 h-12 rounded-2xl bg-purple-600 text-white flex items-center justify-center text-xl group-hover:scale-110 transition-transform shadow-md"><i class="fa-solid fa-network-wired"></i></div>
+                <div class="text-right"><span class="bg-white text-purple-600 border border-purple-200 px-2 py-1 rounded text-[10px] font-black uppercase font-mono shadow-sm">GROUP: {{ g.id }}</span></div>
+            </div>
+            <h2 class="text-xl font-black text-slate-800 mb-1 truncate">{{ g.name }}</h2>
+            <p class="text-xs font-bold text-slate-500 mb-6"><i class="fa-solid fa-server mr-1"></i> {{ g.node_count }} Servers <span class="mx-2">|</span> <i class="fa-solid fa-key mr-1"></i> Limit: {{ g.limit }}/server</p>
+            <div class="flex items-center justify-between border-t border-purple-100 pt-4">
+                <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Keys Generated</p><p class="text-lg font-black text-slate-700">{{ g.total_keys }}</p></div>
+            </div>
+        </a>
+        {% endfor %}
+    </div>
+
     <div id="tab-backups" class="hidden space-y-4">
         {% for nid, files in backups.items() %}
-        <div class="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm hover:shadow-md transition">
-            <div class="px-6 py-5 cursor-pointer bg-gradient-to-r hover:from-slate-50 hover:to-transparent transition flex justify-between items-center" onclick="document.getElementById('backup_{{nid}}').classList.toggle('hidden')">
+        <div class="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm transition">
+            <div class="px-6 py-5 cursor-pointer bg-slate-50 hover:bg-slate-100 transition flex justify-between items-center" onclick="document.getElementById('backup_{{nid}}').classList.toggle('hidden')">
                 <div class="flex items-center gap-4">
-                    <div class="w-14 h-14 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center text-2xl shadow-inner">
-                        <i class="fa-solid fa-folder-tree"></i>
-                    </div>
-                    <div>
-                        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">NODE ID</p>
-                        <h3 class="text-xl font-black text-slate-800 font-mono">{{ nid }}</h3>
-                    </div>
+                    <div class="w-12 h-12 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center text-xl shadow-inner"><i class="fa-solid fa-folder-tree"></i></div>
+                    <div><p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">NODE ID</p><h3 class="text-lg font-black text-slate-800 font-mono">{{ nid }}</h3></div>
                 </div>
                 <div class="flex items-center gap-4">
-                    <span class="bg-slate-100 text-slate-600 border border-slate-200 text-xs font-bold px-3 py-1.5 rounded-full">{{ files|length }} Backups</span>
-                    <div class="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-400 shadow-sm"><i class="fa-solid fa-chevron-down"></i></div>
+                    <span class="bg-white text-slate-600 border border-slate-200 text-xs font-bold px-3 py-1.5 rounded-full">{{ files|length }} Backups</span>
                 </div>
             </div>
-            
-            <div id="backup_{{nid}}" class="hidden border-t border-slate-100 bg-slate-50 p-6">
-                <div class="mb-6 pb-6 border-b border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-red-50/50 p-4 rounded-2xl">
+            <div id="backup_{{nid}}" class="hidden border-t border-slate-100 bg-white p-6">
+                <div class="mb-6 pb-6 border-b border-slate-100 flex justify-between items-center gap-4 bg-red-50 p-4 rounded-xl">
                     <div>
-                        <h4 class="text-sm font-black text-red-600 mb-1"><i class="fa-solid fa-skull-crossbones mr-1"></i> Purge All Data</h4>
-                        <p class="text-xs text-red-500 font-bold">Permanently delete all keys and backups for Node <span class="uppercase font-mono font-black border-b border-red-500">{{ nid }}</span>.</p>
+                        <h4 class="text-sm font-black text-red-600 mb-1">Purge All Data</h4>
+                        <p class="text-xs text-red-500 font-bold">Permanently delete all keys and backups for this node.</p>
                     </div>
-                    <form action="/purge_node/{{ nid }}" method="POST" onsubmit="return confirm('⚠️ EXTREME WARNING: Are you completely sure you want to PURGE all data for Node: {{ nid }}? This CANNOT be undone.');" class="m-0 shrink-0">
-                        <button type="submit" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-sm transition"><i class="fa-solid fa-trash mr-1"></i> Purge Data</button>
+                    <form action="/purge_node/{{ nid }}" method="POST" onsubmit="return confirm('⚠️ WARNING: Purge all data for Node: {{ nid }}?');" class="m-0 shrink-0">
+                        <button type="submit" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-xs font-bold transition">Purge Data</button>
                     </form>
                 </div>
-                
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {% for f in files %}
-                    <div class="flex items-center justify-between bg-white border border-slate-200 p-4 rounded-2xl shadow-sm hover:border-blue-300 transition">
-                        <div class="flex items-center gap-3 overflow-hidden">
-                            <i class="fa-solid fa-file-code text-blue-400 text-2xl"></i>
-                            <div class="truncate">
-                                <p class="text-sm font-bold text-slate-700 truncate" title="{{ f.filename }}">{{ f.filename }}</p>
-                                <p class="text-[10px] font-mono text-slate-400 mt-0.5"><i class="fa-regular fa-clock mr-1"></i>{{ f.time }} <span class="mx-1">•</span> <i class="fa-solid fa-weight-hanging mr-1"></i>{{ f.size }}</p>
-                            </div>
+                    <div class="flex items-center justify-between bg-slate-50 border border-slate-100 p-4 rounded-xl transition">
+                        <div class="truncate">
+                            <p class="text-sm font-bold text-slate-700 truncate"><i class="fa-solid fa-file-code text-blue-400 mr-2"></i>{{ f.filename }}</p>
+                            <p class="text-[10px] font-mono text-slate-400 mt-1">{{ f.time }} | {{ f.size }}</p>
                         </div>
                         <div class="flex gap-2 shrink-0 ml-2">
-                            <a href="/download_backup/{{ f.filename }}" class="bg-blue-50 hover:bg-blue-100 text-blue-600 w-8 h-8 rounded-lg flex items-center justify-center transition" title="Download"><i class="fa-solid fa-download"></i></a>
-                            <form action="/delete_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Delete this backup file?');" class="m-0">
-                                <button type="submit" class="bg-red-50 hover:bg-red-100 text-red-500 w-8 h-8 rounded-lg flex items-center justify-center transition" title="Delete"><i class="fa-solid fa-trash-can"></i></button>
+                            <a href="/download_backup/{{ f.filename }}" class="text-blue-500 hover:text-blue-700 p-2 transition"><i class="fa-solid fa-download"></i></a>
+                            <form action="/delete_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Delete this backup?');" class="m-0">
+                                <button type="submit" class="text-red-400 hover:text-red-600 p-2 transition"><i class="fa-solid fa-trash-can"></i></button>
                             </form>
                         </div>
                     </div>
@@ -108,100 +113,64 @@
             </div>
         </div>
         {% else %}
-        <div class="text-center py-12 bg-white rounded-3xl border border-slate-100 shadow-sm">
-            <i class="fa-solid fa-folder-open text-5xl text-slate-200 mb-4 block"></i>
-            <p class="text-sm text-slate-400 font-bold">No backups available yet.</p>
-        </div>
+        <div class="text-center py-12 bg-white rounded-3xl border border-slate-100 shadow-sm"><p class="text-sm text-slate-400 font-bold">No backups available.</p></div>
         {% endfor %}
     </div>
 </div>
 
 <div id="addNodeModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
     <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100">
-        <h2 class="text-xl font-black mb-2 text-slate-800">Add New Server</h2>
+        <h2 class="text-xl font-black mb-2 text-slate-800">Add Custom Node</h2>
         <form action="/add_node" method="POST">
-            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Node ID (No spaces)</label>
-            <input type="text" name="node_id" placeholder="e.g. sg_01" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none font-mono text-sm" required>
-            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Display Name</label>
-            <input type="text" name="node_name" placeholder="e.g. Singapore Premium" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold text-slate-700" required>
-            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Server IP / Domain</label>
-            <input type="text" name="node_ip" placeholder="e.g. 192.168.1.1" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-8 focus:ring-2 focus:ring-blue-500 outline-none font-mono text-sm" required>
-            <div class="flex justify-end gap-3">
-                <button type="button" onclick="document.getElementById('addNodeModal').classList.add('hidden')" class="px-5 py-3 font-bold text-slate-400 hover:text-slate-600 transition">Cancel</button>
-                <button type="submit" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition">Add Node</button>
-            </div>
+            <input type="text" name="node_id" placeholder="Node ID (e.g. sg_01)" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-4 font-mono text-sm" required>
+            <input type="text" name="node_name" placeholder="Display Name" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-4 text-sm font-bold text-slate-700" required>
+            <input type="text" name="node_ip" placeholder="Server IP" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-8 font-mono text-sm" required>
+            <div class="flex justify-end gap-3"><button type="button" onclick="document.getElementById('addNodeModal').classList.add('hidden')" class="px-4 py-2 font-bold text-slate-400">Cancel</button><button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-xl font-bold">Add</button></div>
+        </form>
+    </div>
+</div>
+
+<div id="addAutoGroupModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100">
+        <h2 class="text-xl font-black mb-2 text-slate-800">Create Auto Group</h2>
+        <form action="/add_auto_group" method="POST">
+            <input type="text" name="group_id" placeholder="Group ID (e.g. auto_sg)" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-4 font-mono text-sm" required>
+            <input type="text" name="group_name" placeholder="Group Name" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-4 text-sm font-bold" required>
+            <input type="number" name="limit" value="30" placeholder="Limit per server" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-8 font-mono text-sm" required>
+            <div class="flex justify-end gap-3"><button type="button" onclick="document.getElementById('addAutoGroupModal').classList.add('hidden')" class="px-4 py-2 font-bold text-slate-400">Cancel</button><button type="submit" class="bg-purple-600 text-white px-4 py-2 rounded-xl font-bold">Create</button></div>
         </form>
     </div>
 </div>
 
 <div id="settingsModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
     <div class="bg-white rounded-3xl p-8 w-[500px] max-w-full shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
-        <h2 class="text-xl font-black mb-6 text-slate-800"><i class="fa-solid fa-gear text-slate-400 mr-2"></i> Settings & Global Backup</h2>
-        
+        <h2 class="text-xl font-black mb-6 text-slate-800">Settings</h2>
         <form action="/save_settings_basic" method="POST" class="mb-6">
-            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Telegram Bot Token</label>
-            <input type="text" name="bot_token" value="{{ config.get('bot_token', '') }}" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none text-sm">
-            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Cron Interval (Hours)</label>
-            <input type="number" name="interval" value="{{ config.get('interval', 12) }}" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none text-sm">
-            <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-3 rounded-xl font-bold transition">Save Config</button>
+            <input type="text" name="bot_token" value="{{ config.get('bot_token', '') }}" placeholder="Bot Token" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-4 text-sm">
+            <button type="submit" class="w-full bg-blue-600 text-white px-4 py-2 rounded-xl font-bold">Save Config</button>
         </form>
-
         <div class="border-t border-slate-100 pt-6 mb-6">
-            <h3 class="text-sm font-black text-slate-800 mb-4"><i class="fa-solid fa-database mr-2 text-blue-500"></i> Global Users Database</h3>
+            <h3 class="text-sm font-black text-slate-800 mb-4">Global Users Database</h3>
             <div class="flex gap-4">
-                <a href="/download_backup_global" class="flex-1 text-center bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-3 rounded-xl text-xs font-bold transition"><i class="fa-solid fa-download mr-1"></i> Download DB</a>
+                <a href="/download_backup_global" class="flex-1 text-center bg-slate-100 text-slate-700 px-4 py-2 rounded-xl text-xs font-bold"><i class="fa-solid fa-download mr-1"></i> Download</a>
                 <form action="/upload_backup" method="POST" enctype="multipart/form-data" class="flex-1 m-0 flex">
-                    <label class="flex-1 text-center bg-blue-50 hover:bg-blue-100 text-blue-600 px-4 py-3 rounded-l-xl text-xs font-bold cursor-pointer transition">
-                        <i class="fa-solid fa-upload mr-1"></i> Upload DB
-                        <input type="file" name="backup_file" class="hidden" onchange="this.form.submit()">
-                    </label>
+                    <label class="flex-1 text-center bg-blue-50 text-blue-600 px-4 py-2 rounded-xl text-xs font-bold cursor-pointer"><i class="fa-solid fa-upload mr-1"></i> Upload<input type="file" name="backup_file" class="hidden" onchange="this.form.submit()"></label>
                 </form>
             </div>
         </div>
-        
-        <div class="border-t border-slate-100 pt-6">
-            <div class="flex gap-6">
-                <div class="flex-1">
-                    <h3 class="text-xs font-black text-slate-800 mb-3">Admin IDs</h3>
-                    <ul class="mb-3 space-y-1">
-                        {% for aid in config.get('admin_ids', []) %}
-                        <li class="flex justify-between items-center bg-slate-50 px-3 py-1 rounded">
-                            <span class="text-[10px] font-mono font-bold text-slate-600">{{ aid }}</span>
-                            <form action="/config_action" method="POST" class="m-0"><input type="hidden" name="type" value="admin"><input type="hidden" name="action" value="del"><input type="hidden" name="val" value="{{ aid }}"><button class="text-red-400 hover:text-red-600"><i class="fa-solid fa-xmark"></i></button></form>
-                        </li>
-                        {% endfor %}
-                    </ul>
-                    <form action="/config_action" method="POST" class="flex gap-1"><input type="hidden" name="type" value="admin"><input type="hidden" name="action" value="add"><input type="text" name="val" placeholder="ID" class="w-full bg-slate-50 border border-slate-100 px-2 py-1 rounded text-xs outline-none focus:border-blue-500"><button class="bg-slate-800 text-white px-2 py-1 rounded text-xs font-bold">Add</button></form>
-                </div>
-                <div class="flex-1">
-                    <h3 class="text-xs font-black text-slate-800 mb-3">Mod IDs</h3>
-                    <ul class="mb-3 space-y-1">
-                        {% for mid in config.get('mod_ids', []) %}
-                        <li class="flex justify-between items-center bg-slate-50 px-3 py-1 rounded">
-                            <span class="text-[10px] font-mono font-bold text-slate-600">{{ mid }}</span>
-                            <form action="/config_action" method="POST" class="m-0"><input type="hidden" name="type" value="mod"><input type="hidden" name="action" value="del"><input type="hidden" name="val" value="{{ mid }}"><button class="text-red-400 hover:text-red-600"><i class="fa-solid fa-xmark"></i></button></form>
-                        </li>
-                        {% endfor %}
-                    </ul>
-                    <form action="/config_action" method="POST" class="flex gap-1"><input type="hidden" name="type" value="mod"><input type="hidden" name="action" value="add"><input type="text" name="val" placeholder="ID" class="w-full bg-slate-50 border border-slate-100 px-2 py-1 rounded text-xs outline-none focus:border-blue-500"><button class="bg-slate-800 text-white px-2 py-1 rounded text-xs font-bold">Add</button></form>
-                </div>
-            </div>
-        </div>
-
-        <div class="mt-8 text-right">
-            <button type="button" onclick="document.getElementById('settingsModal').classList.add('hidden')" class="px-5 py-2 font-bold text-slate-400 hover:text-slate-600 transition">Close Settings</button>
-        </div>
+        <div class="text-right"><button type="button" onclick="document.getElementById('settingsModal').classList.add('hidden')" class="px-5 py-2 font-bold text-slate-400">Close</button></div>
     </div>
 </div>
 
 <script>
 function switchTab(tab) {
-    document.getElementById('tab-nodes').classList.add('hidden');
-    document.getElementById('tab-backups').classList.add('hidden');
-    document.getElementById('tabBtn-nodes').className = "pb-4 px-2 text-sm font-black text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition tracking-widest uppercase";
-    document.getElementById('tabBtn-backups').className = "pb-4 px-2 text-sm font-black text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition tracking-widest uppercase";
+    ['nodes', 'auto', 'backups'].forEach(t => {
+        document.getElementById('tab-' + t).classList.add('hidden');
+        document.getElementById('tabBtn-' + t).className = "pb-4 px-2 text-sm font-black text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition tracking-widest uppercase";
+    });
     document.getElementById('tab-' + tab).classList.remove('hidden');
-    document.getElementById('tabBtn-' + tab).className = "pb-4 px-2 text-sm font-black text-blue-600 border-b-2 border-blue-600 transition tracking-widest uppercase";
+    let color = tab === 'auto' ? 'purple' : 'blue';
+    document.getElementById('tabBtn-' + tab).className = `pb-4 px-2 text-sm font-black text-${color}-600 border-b-2 border-${color}-600 transition tracking-widest uppercase`;
 }
 </script>
 </body>
