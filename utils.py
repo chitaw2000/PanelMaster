@@ -1,6 +1,9 @@
 import os
 
-NODES_LIST = "/root/PanelMaster/nodes_list.txt"
+try:
+    from config import NODES_LIST
+except ImportError:
+    NODES_LIST = "/root/PanelMaster/nodes_list.txt"
 
 def get_nodes():
     nodes = {}
@@ -12,15 +15,19 @@ def get_nodes():
                     # Format အသစ်: ID, Name, IP
                     nodes[parts[0]] = {"name": parts[1], "ip": parts[2]}
                 elif len(parts) == 2:
-                    # အဟောင်းတွေအတွက် Fallback
+                    # Format အဟောင်း: Name, IP တွေ့လျှင် Name ကိုပဲ ID အဖြစ်သုံးမည်
                     nodes[parts[0]] = {"name": parts[0], "ip": parts[1]}
     return nodes
 
 def check_live_status(db):
     active = set()
     for uname, info in db.items():
-        if info.get('used_bytes', 0) > 0 and not info.get('is_blocked', False):
-            active.add(uname)
+        try:
+            # Data အဟောင်းများ String ဖြစ်နေပါက Error မတက်စေရန် float ပြောင်းစစ်မည်
+            if float(info.get('used_bytes', 0)) > 0 and not info.get('is_blocked', False):
+                active.add(uname)
+        except:
+            pass
     return active
 
 def get_safe_delete_cmd(username, protocol, port):
