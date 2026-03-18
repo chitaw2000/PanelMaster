@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Auto Group Details</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="/static/js/app.js"></script>
+</head>
+<body class="bg-[#f4f7f6] font-sans pb-12">
+
+<nav class="bg-white shadow-sm border-b border-slate-200 mb-8">
+    <div class="max-w-7xl mx-auto px-4 md:px-8 py-4 flex justify-between items-center">
+        <a href="/" class="text-sm font-bold text-slate-500 hover:text-purple-600 transition flex items-center"><i class="fa-solid fa-arrow-left mr-2"></i> Back to Dashboard</a>
+    </div>
+</nav>
+
+<div class="max-w-7xl mx-auto px-4 md:px-8">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-4 bg-gradient-to-r from-purple-600 to-indigo-600 p-8 rounded-3xl shadow-lg text-white">
+        <div>
+            <div class="flex items-center gap-3 mb-2">
+                <span class="bg-white/20 font-mono text-[10px] px-3 py-1 rounded-full uppercase tracking-widest backdrop-blur-sm">Group ID: {{ group_id }}</span>
+            </div>
+            <h1 class="text-3xl font-black uppercase mb-1">{{ group.name }}</h1>
+            <p class="text-sm font-bold text-purple-100"><i class="fa-solid fa-key mr-1"></i> Auto-Limit: {{ group.limit }} keys per server</p>
+        </div>
+
+        <div class="flex gap-2 items-center flex-wrap justify-end">
+            <button onclick="document.getElementById('addServerModal').classList.remove('hidden')" class="bg-white/20 hover:bg-white/30 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center backdrop-blur-sm"><i class="fa-solid fa-server mr-2"></i> Add Server to Group</button>
+            <button onclick="document.getElementById('addUserModal').classList.remove('hidden')" class="bg-white text-purple-600 px-6 py-2.5 rounded-xl text-sm font-black shadow-lg transition hover:scale-105"><i class="fa-solid fa-wand-magic-sparkles mr-2"></i> Auto-Generate Keys</button>
+        </div>
+    </div>
+
+    <h3 class="text-lg font-black text-slate-800 mb-4 uppercase tracking-tight"><i class="fa-solid fa-server text-purple-500 mr-2"></i> Group Servers (Nodes)</h3>
+    <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
+        {% for s in server_stats %}
+        <div class="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm flex flex-col relative overflow-hidden">
+            <div class="flex justify-between items-start mb-2">
+                <span class="text-xs font-black text-slate-800 uppercase">{{ s.id }}</span>
+                <form action="/delete_server_from_group/{{ group_id }}/{{ s.id }}" method="POST" onsubmit="return confirm('Remove server from group?');" class="m-0"><button class="text-slate-300 hover:text-red-500 transition"><i class="fa-solid fa-xmark"></i></button></form>
+            </div>
+            <span class="text-[10px] font-mono text-slate-400 mb-4">{{ s.ip }}</span>
+            
+            <div class="mt-auto">
+                <div class="flex justify-between text-[10px] font-bold text-slate-500 mb-1"><span>{{ s.count }} Keys</span><span>Max: {{ group.limit }}</span></div>
+                <div class="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div class="h-full {% if s.count >= group.limit %}bg-red-500{% else %}bg-purple-500{% endif %} rounded-full" style="width: {{ (s.count / group.limit * 100) if group.limit > 0 else 0 }}%"></div>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="col-span-full p-8 text-center bg-white rounded-2xl border border-slate-100 border-dashed">
+            <p class="text-sm font-bold text-slate-400">No servers added to this group yet.</p>
+        </div>
+        {% endfor %}
+    </div>
+
+    </div>
+
+<div id="addServerModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100">
+        <h2 class="text-xl font-black mb-2 text-slate-800">Add Server to Group</h2>
+        <form action="/add_server_to_group/{{ group_id }}" method="POST">
+            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Node ID (e.g. auto_01)</label>
+            <input type="text" name="node_id" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-4 focus:ring-2 focus:ring-purple-500 outline-none font-mono text-sm" required>
+            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Server IP</label>
+            <input type="text" name="node_ip" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-8 focus:ring-2 focus:ring-purple-500 outline-none font-mono text-sm" required>
+            <div class="flex justify-end gap-3">
+                <button type="button" onclick="document.getElementById('addServerModal').classList.add('hidden')" class="px-5 py-3 font-bold text-slate-400">Cancel</button>
+                <button type="submit" class="bg-purple-600 text-white px-6 py-3 rounded-xl font-bold">Add Server</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="addUserModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-3xl p-8 w-[420px] shadow-2xl border border-slate-100">
+        <h2 class="text-lg font-black mb-2 text-slate-800">Auto-Generate Keys</h2>
+        <p class="text-xs text-slate-500 font-bold mb-6">Keys will be automatically placed in an available server.</p>
+        <form action="/add_user_auto" method="POST">
+            <input type="hidden" name="group_id" value="{{ group_id }}">
+            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Creation Mode</label>
+            <select id="creation_mode" name="creation_mode" onchange="toggleMode()" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl mb-4 focus:ring-2 focus:ring-purple-500 outline-none text-sm font-bold text-slate-700"><option value="single">Single Key</option><option value="list">Bulk List</option><option value="pattern">Auto-Number</option></select>
+            <div id="mode_single" class="block mb-4"><input type="text" name="single_username" placeholder="Username" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-purple-500 outline-none text-sm"></div>
+            <div id="mode_list" class="hidden mb-4"><textarea name="list_usernames" rows="3" placeholder="Comma separated" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl focus:ring-2 focus:ring-purple-500 outline-none text-sm"></textarea></div>
+            <div id="mode_pattern" class="hidden mb-4 grid grid-cols-3 gap-2">
+                <input type="text" name="base_name" placeholder="Prefix" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl outline-none text-sm">
+                <input type="number" name="start_num" value="1" placeholder="Start" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl outline-none text-sm">
+                <input type="number" name="qty" value="5" placeholder="Qty" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl outline-none text-sm">
+            </div>
+            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Protocol</label>
+            <select name="protocol" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl mb-4 outline-none text-sm"><option value="v2">VLESS</option><option value="out">Shadowsocks</option></select>
+            <div class="flex gap-3 mb-8"><div class="flex-1"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Total GB</label><input type="number" step="0.1" name="total_gb" value="50" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl outline-none"></div><div class="flex-1"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Duration (Days)</label><input type="number" name="expire_days" value="30" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl outline-none" required></div></div>
+            <div class="flex justify-end gap-3"><button type="button" onclick="document.getElementById('addUserModal').classList.add('hidden')" class="px-5 py-3 font-bold text-slate-400">Cancel</button><button class="bg-purple-600 hover:bg-purple-500 text-white px-6 py-3 rounded-xl font-bold shadow-lg">Auto-Generate</button></div>
+        </form>
+    </div>
+</div>
+
+</body>
+</html>
