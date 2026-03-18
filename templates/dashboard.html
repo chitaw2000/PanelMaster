@@ -1,34 +1,114 @@
-<!DOCTYPE html><html><head><title>Dashboard</title><script src="https://cdn.tailwindcss.com"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"></head>
-<body class="bg-[#f4f7f6] p-4 md:p-8 font-sans"><div class="max-w-6xl mx-auto">
-<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-black text-slate-800 tracking-tight">QITO <span class="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-500">PRO</span></h1>
-<div class="flex gap-3"><button onclick="document.getElementById('settingsModal').classList.remove('hidden')" class="bg-slate-800 text-white px-5 py-2.5 rounded-full font-bold shadow-md hover:bg-black transition"><i class="fa-solid fa-gear mr-2"></i> Settings</button>
-<a href="/logout" class="bg-white border border-slate-200 text-red-500 px-5 py-2.5 rounded-full font-bold hover:bg-red-50 transition shadow-sm"><i class="fa-solid fa-power-off"></i></a></div></div>
-<div class="mb-8 bg-white p-6 rounded-3xl shadow-sm border border-slate-100 relative overflow-hidden"><div class="absolute right-0 top-0 opacity-5 pointer-events-none"><i class="fa-solid fa-globe text-9xl"></i></div><h3 class="text-xs font-black text-slate-400 mb-4 uppercase tracking-widest">Global Search</h3><input type="text" id="globalSearch" onkeyup="searchEverything()" placeholder="Search users or keys..." class="w-full bg-slate-50 border-none p-4 rounded-2xl focus:ring-2 focus:ring-blue-500 transition outline-none"><div id="searchResults" class="mt-4 space-y-2 hidden max-h-60 overflow-y-auto"></div></div>
-<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-{% for n in nodes %}<a href="/node/{{ n.name }}" class="block bg-white rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all group relative {% if n.disabled %}opacity-60 grayscale{% endif %}">
-<div class="absolute -top-3 -left-3 bg-blue-600 text-white w-8 h-8 flex items-center justify-center rounded-full font-black shadow-lg border-2 border-white">{{ loop.index }}</div>
-<div class="flex justify-between items-start mb-6 mt-1"><div class="bg-gradient-to-br from-blue-500 to-cyan-400 p-3 rounded-2xl shadow-lg shadow-blue-500/30 text-white"><i class="fa-solid fa-server text-xl"></i></div>
-{% if n.disabled %}<span class="flex items-center gap-1.5 bg-red-50 text-red-600 text-[10px] font-black px-3 py-1 rounded-full uppercase border border-red-100"><i class="fa-solid fa-ban"></i> Disabled</span>
-{% else %}<span class="flex items-center gap-1.5 bg-emerald-50 text-emerald-600 text-[10px] font-black px-3 py-1 rounded-full uppercase border border-emerald-100"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Online</span>{% endif %}</div>
-<h2 class="text-2xl font-black text-slate-800 mb-1 group-hover:text-blue-600 transition">{{ n.name }}</h2><p class="text-xs text-slate-400 font-mono mb-6">{{ n.ip }}</p>
-<div class="grid grid-cols-2 gap-3"><div class="bg-slate-50 p-4 rounded-2xl text-center border border-slate-100"><p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total</p><p class="text-xl font-black text-slate-700">{{ n.total }}</p></div><div class="bg-emerald-50 p-4 rounded-2xl text-center border border-emerald-100 relative overflow-hidden"><div class="absolute top-0 right-0 p-1.5"><span class="flex h-2 w-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span></span></div><p class="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-1">Active</p><p class="text-xl font-black text-emerald-700">{{ n.live }}</p></div></div></a>{% endfor %}
-<div onclick="document.getElementById('addNodeModal').classList.remove('hidden')" class="cursor-pointer border-2 border-dashed border-slate-300 rounded-3xl flex flex-col items-center justify-center p-6 text-slate-400 hover:border-blue-500 hover:text-blue-500 hover:bg-blue-50/50 transition-all min-h-[220px] mt-2"><i class="fa-solid fa-plus text-4xl mb-3"></i><p class="font-black uppercase tracking-widest text-sm">Add New Node</p></div>
-</div></div>
-<div id="settingsModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto py-10"><div class="bg-white rounded-3xl p-8 w-full max-w-lg shadow-2xl border border-slate-100 my-auto"><div class="flex justify-between items-center mb-6"><h2 class="text-xl font-black text-slate-800"><i class="fa-solid fa-sliders text-blue-500 mr-2"></i> Settings & Roles</h2><button onclick="document.getElementById('settingsModal').classList.add('hidden')" class="text-slate-400 hover:text-red-500"><i class="fa-solid fa-xmark text-xl"></i></button></div>
-<div class="space-y-6"><form action="/save_settings_basic" method="POST" class="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-4"><div><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Telegram Bot Token</label><input type="text" name="bot_token" value="{{ config.bot_token }}" class="w-full bg-white border border-slate-200 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="12345:ABCdef..."></div><div><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Auto-Backup Interval (Hours)</label><input type="number" name="interval" value="{{ config.interval }}" class="w-full bg-white border border-slate-200 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"></div><button class="w-full bg-slate-800 hover:bg-black text-white py-3 rounded-xl font-bold transition shadow-md">Save Core Settings</button></form>
-<div class="grid grid-cols-2 gap-4"><div class="bg-slate-50 p-5 rounded-2xl border border-slate-100"><h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3"><i class="fa-solid fa-crown text-amber-500"></i> Admins</h3><ul class="space-y-2 mb-3 max-h-24 overflow-y-auto pr-1">{% for aid in config.admin_ids %}<li class="flex justify-between items-center bg-white border border-slate-200 px-3 py-2 rounded-lg text-sm font-bold"><span class="truncate">{{ aid }}</span><form action="/config_action" method="POST"><input type="hidden" name="type" value="admin"><input type="hidden" name="action" value="del"><input type="hidden" name="val" value="{{ aid }}"><button class="text-red-400 hover:text-red-600"><i class="fa-solid fa-trash"></i></button></form></li>{% endfor %}</ul><form action="/config_action" method="POST" class="flex gap-2"><input type="hidden" name="type" value="admin"><input type="hidden" name="action" value="add"><input type="text" name="val" placeholder="TG ID..." class="flex-1 min-w-0 bg-white border border-slate-200 p-2 rounded-lg text-xs outline-none"><button class="bg-amber-500 text-white px-3 py-2 rounded-lg text-xs font-bold"><i class="fa-solid fa-plus"></i></button></form></div>
-<div class="bg-slate-50 p-5 rounded-2xl border border-slate-100"><h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3"><i class="fa-solid fa-shield text-blue-500"></i> Moderators</h3><ul class="space-y-2 mb-3 max-h-24 overflow-y-auto pr-1">{% for mid in config.mod_ids %}<li class="flex justify-between items-center bg-white border border-slate-200 px-3 py-2 rounded-lg text-sm font-bold"><span class="truncate">{{ mid }}</span><form action="/config_action" method="POST"><input type="hidden" name="type" value="mod"><input type="hidden" name="action" value="del"><input type="hidden" name="val" value="{{ mid }}"><button class="text-red-400 hover:text-red-600"><i class="fa-solid fa-trash"></i></button></form></li>{% endfor %}</ul><form action="/config_action" method="POST" class="flex gap-2"><input type="hidden" name="type" value="mod"><input type="hidden" name="action" value="add"><input type="text" name="val" placeholder="TG ID..." class="flex-1 min-w-0 bg-white border border-slate-200 p-2 rounded-lg text-xs outline-none"><button class="bg-blue-500 text-white px-3 py-2 rounded-lg text-xs font-bold"><i class="fa-solid fa-plus"></i></button></form></div></div>
-<div class="bg-slate-50 p-5 rounded-2xl border border-slate-100"><h3 class="text-xs font-black text-slate-500 uppercase tracking-widest mb-3">Database Backup</h3><div class="flex gap-2"><a href="/download_backup" class="flex-1 text-center bg-emerald-500 hover:bg-emerald-400 text-white py-3 rounded-xl font-bold shadow-md transition text-sm"><i class="fa-solid fa-download mr-1"></i> Download</a><form action="/upload_backup" method="POST" enctype="multipart/form-data" class="flex-1 flex gap-2"><label class="flex-1 cursor-pointer bg-white text-emerald-600 border border-emerald-200 py-3 rounded-xl font-bold text-center transition text-sm hover:bg-emerald-50"><i class="fa-solid fa-upload mr-1"></i> Upload<input type="file" name="backup_file" class="hidden" onchange="this.form.submit()"></label></form></div></div></div></div></div>
-<div id="addNodeModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100"><h2 class="text-lg font-black mb-6 text-slate-800">Add New Node</h2><form action="/add_node" method="POST"><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Node Name</label><input type="text" name="node_name" placeholder="e.g. Test6" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none" required><label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Node IP Address</label><input type="text" name="node_ip" placeholder="e.g. 192.168.1.1" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-8 focus:ring-2 focus:ring-blue-500 outline-none" required><div class="flex justify-end gap-3"><button type="button" onclick="document.getElementById('addNodeModal').classList.add('hidden')" class="px-5 py-3 font-bold text-slate-400 hover:text-slate-600">Cancel</button><button class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition">Add Node</button></div></form></div></div>
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PanelMaster - Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body class="bg-[#f4f7f6] font-sans">
+
+<nav class="bg-white shadow-sm border-b border-slate-200 mb-8">
+    <div class="max-w-7xl mx-auto px-4 md:px-8 py-4 flex justify-between items-center">
+        <div class="text-xl font-black text-slate-800"><i class="fa-solid fa-bolt text-blue-600 mr-2"></i> PanelMaster</div>
+        <div class="flex gap-6 items-center">
+            <a href="/logout" class="text-sm font-bold text-red-400 hover:text-red-600 transition"><i class="fa-solid fa-right-from-bracket mr-1"></i> Logout</a>
+        </div>
+    </div>
+</nav>
+
+<div class="max-w-7xl mx-auto px-4 md:px-8 pb-12">
+    <div class="flex justify-between items-end mb-8">
+        <div>
+            <h1 class="text-3xl font-black text-slate-800 mb-2">Network Overview</h1>
+            <p class="text-sm font-bold text-slate-500">Manage nodes, backups, and user traffic.</p>
+        </div>
+        <button onclick="document.getElementById('addNodeModal').classList.remove('hidden')" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl text-sm font-bold shadow-lg shadow-blue-500/30 transition flex items-center">
+            <i class="fa-solid fa-plus mr-2"></i> Add New Node
+        </button>
+    </div>
+
+    <div class="border-b border-slate-200 mb-8 flex gap-8">
+        <button id="tabBtn-nodes" onclick="switchTab('nodes')" class="pb-4 px-2 text-sm font-black text-blue-600 border-b-2 border-blue-600 transition tracking-widest uppercase">
+            <i class="fa-solid fa-server mr-1"></i> Server Nodes
+        </button>
+        <button id="tabBtn-backups" onclick="switchTab('backups')" class="pb-4 px-2 text-sm font-black text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition tracking-widest uppercase">
+            <i class="fa-solid fa-database mr-1"></i> Node Backups
+        </button>
+    </div>
+
+    <div id="tab-nodes" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {% for node in nodes %}
+        <a href="/node/{{ node.id }}" class="block bg-white rounded-3xl p-6 shadow-sm border border-slate-100 hover:shadow-xl hover:-translate-y-1 hover:border-blue-100 transition-all group">
+            <div class="flex justify-between items-start mb-4">
+                <div class="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl group-hover:scale-110 transition-transform shadow-inner"><i class="fa-solid fa-server"></i></div>
+                <span class="bg-slate-100 text-slate-500 border border-slate-200 px-2 py-1 rounded text-[10px] font-black uppercase shadow-sm">ID: {{ node.id }}</span>
+            </div>
+            <h2 class="text-xl font-black text-slate-800 mb-1">{{ node.name }}</h2>
+            <p class="text-xs font-mono font-bold text-slate-400 mb-6"><i class="fa-solid fa-globe mr-1"></i> {{ node.ip }}</p>
+            <div class="flex items-center justify-between border-t border-slate-50 pt-4">
+                <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Keys</p><p class="text-lg font-black text-slate-700">{{ node.total }}</p></div>
+                <div class="text-right"><p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Online Active</p><p class="text-lg font-black text-emerald-500">{{ node.live }}</p></div>
+            </div>
+        </a>
+        {% endfor %}
+    </div>
+
+    <div id="tab-backups" class="hidden">
+        <div class="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 md:p-8">
+            {% for nid, files in backups.items() %}
+            <div class="mb-4 last:mb-0 border border-slate-100 rounded-2xl overflow-hidden">
+                <div class="bg-slate-50 px-6 py-4 flex justify-between items-center cursor-pointer hover:bg-slate-100 transition" onclick="document.getElementById('b_{{nid}}').classList.toggle('hidden')">
+                    <span class="font-black text-slate-700"><i class="fa-solid fa-folder-open text-blue-500 mr-3"></i> NODE: {{ nid }}</span>
+                    <span class="bg-blue-100 text-blue-600 text-xs font-bold px-3 py-1 rounded-full">{{ files|length }} Backups</span>
+                </div>
+                <div id="b_{{nid}}" class="hidden p-4 space-y-2 bg-white">
+                    {% for f in files %}
+                    <div class="flex justify-between items-center p-3 hover:bg-slate-50 rounded-xl transition border border-transparent hover:border-slate-100">
+                        <span class="text-sm font-mono text-slate-500 font-bold"><i class="fa-solid fa-file-code mr-2 text-slate-300"></i>{{ f.split('_')[2].split('.')[0] }} (Timestamp)</span>
+                        <a href="/download_backup/{{ f }}" class="bg-slate-100 hover:bg-blue-50 text-blue-600 px-4 py-2 rounded-lg text-xs font-bold transition shadow-sm"><i class="fa-solid fa-download mr-1"></i> Download</a>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% else %}
+            <div class="text-center py-12">
+                <i class="fa-solid fa-folder-open text-4xl text-slate-200 mb-3 block"></i>
+                <p class="text-sm text-slate-400 font-bold">No backups available yet.</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<div id="addNodeModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100">
+        <h2 class="text-xl font-black mb-2 text-slate-800">Add New Server</h2>
+        <p class="text-xs text-slate-500 mb-6 font-bold">Assign a unique ID for database tracking.</p>
+        <form action="/add_node" method="POST">
+            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Node ID (No spaces)</label>
+            <input type="text" name="node_id" placeholder="e.g. sg_01" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none font-mono text-sm" required>
+            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Display Name</label>
+            <input type="text" name="node_name" placeholder="e.g. Singapore Premium" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold text-slate-700" required>
+            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Server IP / Domain</label>
+            <input type="text" name="node_ip" placeholder="e.g. 192.168.1.1" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-8 focus:ring-2 focus:ring-blue-500 outline-none font-mono text-sm" required>
+            <div class="flex justify-end gap-3">
+                <button type="button" onclick="document.getElementById('addNodeModal').classList.add('hidden')" class="px-5 py-3 font-bold text-slate-400 hover:text-slate-600 transition">Cancel</button>
+                <button type="submit" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition">Add Node</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
-const allUsers = {{ all_users | tojson }};
-function searchEverything() {
-    const term = document.getElementById('globalSearch').value.toLowerCase();
-    const resultsDiv = document.getElementById('searchResults');
-    if (term.length < 2) { resultsDiv.classList.add('hidden'); return; }
-    resultsDiv.classList.remove('hidden');
-    const filtered = allUsers.filter(u => u.username.toLowerCase().includes(term) || u.key.toLowerCase().includes(term));
-    resultsDiv.innerHTML = filtered.length === 0 ? '<p class="text-slate-400 p-4 text-sm font-bold">No results found.</p>' : filtered.map(u => `<div class="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-2xl hover:bg-slate-50 transition"><div><span class="font-black text-slate-800">${u.username}</span><span class="ml-3 text-[10px] bg-blue-50 text-blue-600 border border-blue-100 font-black px-3 py-1 rounded-full uppercase">${u.node}</span></div><div class="flex gap-2"><button onclick="copyRawKey('${u.key}')" class="text-xs font-bold bg-slate-800 text-white px-4 py-2 rounded-xl hover:bg-black transition shadow-md">Copy Key</button><a href="/node/${u.node}" class="text-xs font-bold bg-white border border-slate-200 text-slate-600 px-4 py-2 rounded-xl hover:bg-slate-100 transition">View Node</a></div></div>`).join('');
+function switchTab(tab) {
+    document.getElementById('tab-nodes').classList.add('hidden');
+    document.getElementById('tab-backups').classList.add('hidden');
+    document.getElementById('tabBtn-nodes').className = "pb-4 px-2 text-sm font-black text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition tracking-widest uppercase";
+    document.getElementById('tabBtn-backups').className = "pb-4 px-2 text-sm font-black text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition tracking-widest uppercase";
+    
+    document.getElementById('tab-' + tab).classList.remove('hidden');
+    document.getElementById('tabBtn-' + tab).className = "pb-4 px-2 text-sm font-black text-blue-600 border-b-2 border-blue-600 transition tracking-widest uppercase";
 }
-function copyRawKey(val) { if(!val || val === 'No Key') { alert("❌ Key Not Found!"); return; } var t = document.createElement("textarea"); document.body.appendChild(t); t.value = val; t.select(); document.execCommand("copy"); document.body.removeChild(t); alert("✅ Key Copied!"); }
-</script></body></html>
+</script>
+</body>
+</html>
