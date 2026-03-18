@@ -61,12 +61,12 @@
         <div class="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm hover:shadow-md transition">
             <div class="px-6 py-5 cursor-pointer bg-gradient-to-r hover:from-slate-50 hover:to-transparent transition flex justify-between items-center" onclick="document.getElementById('backup_{{nid}}').classList.toggle('hidden')">
                 <div class="flex items-center gap-4">
-                    <div class="w-14 h-14 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center text-2xl shadow-inner">
+                    <div class="w-14 h-14 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center text-2xl shadow-inner">
                         <i class="fa-solid fa-folder-tree"></i>
                     </div>
                     <div>
-                        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Node ID</p>
-                        <h3 class="text-xl font-black text-slate-800">{{ nid }}</h3>
+                        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">NODE ID</p>
+                        <h3 class="text-xl font-black text-slate-800 font-mono">{{ nid }}</h3>
                     </div>
                 </div>
                 <div class="flex items-center gap-4">
@@ -74,16 +74,18 @@
                     <div class="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-400 shadow-sm"><i class="fa-solid fa-chevron-down"></i></div>
                 </div>
             </div>
+            
             <div id="backup_{{nid}}" class="hidden border-t border-slate-100 bg-slate-50 p-6">
                 <div class="mb-6 pb-6 border-b border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-red-50/50 p-4 rounded-2xl">
                     <div>
                         <h4 class="text-sm font-black text-red-600 mb-1"><i class="fa-solid fa-skull-crossbones mr-1"></i> Purge All Data</h4>
-                        <p class="text-xs text-red-500 font-bold">Permanently delete all keys and backups for Node <span class="uppercase border-b border-red-500">{{ nid }}</span>.</p>
+                        <p class="text-xs text-red-500 font-bold">Permanently delete all keys and backups for Node <span class="uppercase font-mono font-black border-b border-red-500">{{ nid }}</span>.</p>
                     </div>
                     <form action="/purge_node/{{ nid }}" method="POST" onsubmit="return confirm('⚠️ EXTREME WARNING: Are you completely sure you want to PURGE all data for Node: {{ nid }}? This CANNOT be undone.');" class="m-0 shrink-0">
                         <button type="submit" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-sm transition"><i class="fa-solid fa-trash mr-1"></i> Purge Data</button>
                     </form>
                 </div>
+                
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {% for f in files %}
                     <div class="flex items-center justify-between bg-white border border-slate-200 p-4 rounded-2xl shadow-sm hover:border-blue-300 transition">
@@ -198,7 +200,6 @@ function switchTab(tab) {
     document.getElementById('tab-backups').classList.add('hidden');
     document.getElementById('tabBtn-nodes').className = "pb-4 px-2 text-sm font-black text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition tracking-widest uppercase";
     document.getElementById('tabBtn-backups').className = "pb-4 px-2 text-sm font-black text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition tracking-widest uppercase";
-    
     document.getElementById('tab-' + tab).classList.remove('hidden');
     document.getElementById('tabBtn-' + tab).className = "pb-4 px-2 text-sm font-black text-blue-600 border-b-2 border-blue-600 transition tracking-widest uppercase";
 }
