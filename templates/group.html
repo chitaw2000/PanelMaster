@@ -29,12 +29,21 @@
     <h3 class="text-lg font-black text-slate-800 mb-4 uppercase tracking-tight"><i class="fa-solid fa-server text-purple-500 mr-2"></i> Servers inside this Group</h3>
     <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
         {% for s in server_stats %}
-        <div class="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm flex flex-col relative overflow-hidden">
+        <div class="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm flex flex-col relative overflow-hidden hover:border-purple-300 transition">
             <div class="flex justify-between items-start mb-2">
                 <span class="text-xs font-black text-slate-800 uppercase">{{ s.id }}</span>
-                <form action="/delete_server_from_group/{{ group_id }}/{{ s.id }}" method="POST" onsubmit="return confirm('Remove server from group?');" class="m-0"><button class="text-slate-300 hover:text-red-500 transition"><i class="fa-solid fa-xmark"></i></button></form>
+                <form action="/delete_server_from_group/{{ group_id }}/{{ s.id }}" method="POST" onsubmit="return confirm('Remove server from group?');" class="m-0 z-10">
+                    <button type="submit" class="text-slate-300 hover:text-red-500 transition"><i class="fa-solid fa-xmark"></i></button>
+                </form>
             </div>
             <span class="text-[10px] font-mono text-slate-400 mb-4">{{ s.ip }}</span>
+            
+            <div class="mb-4">
+                <a href="/node/{{ s.id }}" class="w-full block text-center bg-purple-50 hover:bg-purple-100 text-purple-600 text-[10px] font-bold py-2 rounded-xl transition uppercase tracking-widest">
+                    <i class="fa-solid fa-arrow-up-right-from-square mr-1"></i> Open Node Panel
+                </a>
+            </div>
+            
             <div class="mt-auto">
                 <div class="flex justify-between text-[10px] font-bold text-slate-500 mb-1"><span>{{ s.count }} Keys</span><span>Max: {{ group.limit }}</span></div>
                 <div class="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden"><div class="h-full {% if s.count >= group.limit %}bg-red-500{% else %}bg-purple-500{% endif %} rounded-full" style="width: {{ (s.count / group.limit * 100) if group.limit > 0 else 0 }}%"></div></div>
@@ -49,17 +58,22 @@
     <div class="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-x-auto"><table class="w-full text-left whitespace-nowrap">
     <thead><tr class="bg-slate-50 border-b border-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-400">
     <th class="p-6 w-10 text-center"><input type="checkbox" onclick="const cb=document.querySelectorAll('input[name=\\'usernames\\']'); cb.forEach(c=>c.checked=this.checked); document.getElementById('delSelectedBtn').classList.toggle('hidden', document.querySelectorAll('input[name=\\'usernames\\']:checked').length===0);"></th>
-    <th class="p-6">No.</th><th class="p-6">Profile</th><th class="p-6">Assigned Server</th><th class="p-6">Traffic Usage</th><th class="p-6">Expiry</th><th class="p-6 text-center">VPN Key</th><th class="p-6 text-center">Actions <button type="submit" id="delSelectedBtn" class="hidden ml-2 bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded text-xs font-bold">Del</button></th></tr></thead>
+    <th class="p-6">Server</th>
+    <th class="p-6">Key No.</th>
+    <th class="p-6">Profile</th>
+    <th class="p-6">Traffic Usage</th><th class="p-6">Expiry</th><th class="p-6 text-center">VPN Key</th><th class="p-6 text-center">Actions <button type="submit" id="delSelectedBtn" class="hidden ml-2 bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded text-xs font-bold">Del</button></th></tr></thead>
     <tbody class="divide-y divide-slate-50">
     {% for u in users %}<tr class="hover:bg-slate-50/50 transition-colors {% if u.is_blocked %}opacity-60 bg-red-50/20{% endif %}">
     <td class="p-6 text-center"><input type="checkbox" name="usernames" value="{{ u.username }}" class="w-4 h-4" onchange="document.getElementById('delSelectedBtn').classList.toggle('hidden', document.querySelectorAll('input[name=\\'usernames\\']:checked').length===0)"></td>
-    <td class="p-6 text-slate-400 font-mono text-sm">{{ loop.index }}</td>
+    
+    <td class="p-6"><span class="bg-purple-50 text-purple-600 font-mono text-[10px] font-bold px-2 py-1 rounded uppercase tracking-widest">{{ u.node }}</span></td>
+    <td class="p-6 text-slate-400 font-black text-sm">#{{ u.node_key_idx }}</td>
+    
     <td class="p-6"><div class="flex items-center gap-3">
         {% if u.is_blocked %}<div class="w-8 h-8 rounded-full bg-red-100 text-red-600 flex items-center justify-center"><i class="fa-solid fa-ban"></i></div>
         {% elif u.is_active %}<div class="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center"><i class="fa-solid fa-bolt"></i></div>
         {% else %}<div class="w-8 h-8 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center"><i class="fa-solid fa-user"></i></div>{% endif %}
         <div><p class="font-black text-slate-800 {% if u.is_blocked %}line-through{% endif %}">{{ u.username }}</p></div></div></td>
-    <td class="p-6"><span class="bg-purple-50 text-purple-600 font-mono text-[10px] font-bold px-2 py-1 rounded">{{ u.node }}</span></td>
     <td class="p-6"><div class="flex flex-col"><span class="font-black text-slate-700 text-sm">{{ u.used_gb_str }} / {{ u.total_gb }} GB</span></div></td>
     <td class="p-6 font-mono text-xs font-bold text-slate-500">{{ u.expire_date }}</td>
     <td class="p-6 text-center"><textarea id="k_{{ loop.index }}" class="hidden">{{ u.actual_key }}</textarea><button type="button" onclick="copyK('k_{{ loop.index }}')" class="bg-slate-800 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold"><i class="fa-solid fa-copy"></i></button></td>
@@ -77,7 +91,7 @@
     <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100">
         <h2 class="text-xl font-black mb-4 text-slate-800">Add Node Server</h2>
         <form action="/add_server_to_group/{{ group_id }}" method="POST">
-            <input type="text" name="node_id" placeholder="Node ID (e.g. auto_sg_01)" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-4 font-mono text-sm" required>
+            <input type="text" name="node_id" placeholder="Node ID (e.g. auto_01)" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-4 font-mono text-sm" required>
             <input type="text" name="node_ip" placeholder="Server IP" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-8 font-mono text-sm" required>
             <div class="flex justify-end gap-3"><button type="button" onclick="document.getElementById('addServerModal').classList.add('hidden')" class="px-4 py-2 font-bold text-slate-400">Cancel</button><button type="submit" class="bg-purple-600 text-white px-4 py-2 rounded-xl font-bold">Add</button></div>
         </form>
