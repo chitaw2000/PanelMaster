@@ -13,7 +13,7 @@ BACKUP_DIR = "/root/PanelMaster/backups"
 if not os.path.exists(BACKUP_DIR): os.makedirs(BACKUP_DIR)
 
 # =========================================================
-# 🚀 BACKGROUND TRAFFIC MONITOR (WITH REAL-TIME ONLINE/OFFLINE)
+# 🚀 BACKGROUND TRAFFIC MONITOR (Online/Offline & Auto-Block)
 # =========================================================
 def background_traffic_monitor():
     while True:
@@ -26,6 +26,7 @@ def background_traffic_monitor():
                 with open(USERS_DB, 'r') as f: db = json.load(f)
             if not db: continue
             db_changed = False
+            
             for node_id, info in nodes.items():
                 node_ip = info.get('ip')
                 if not node_ip: continue
@@ -33,6 +34,7 @@ def background_traffic_monitor():
                     cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\""
                     res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
                     user_bytes = {}
+                    
                     if res.stdout.strip():
                         stats = json.loads(res.stdout).get("stat", [])
                         for s in stats:
@@ -41,13 +43,13 @@ def background_traffic_monitor():
                                 if parts[0] == "user": user_bytes[parts[1]] = user_bytes.get(parts[1], 0) + val
                                 elif parts[0] == "inbound" and parts[1].startswith("out-"): user_bytes[parts[1][4:]] = user_bytes.get(parts[1][4:], 0) + val
                     
-                    # အားလုံးကို Loop ပတ်ပြီး Online/Offline စစ်ဆေးမည်
+                    # 🚀 Database ထဲရှိ User အားလုံးကို စစ်ဆေးမည် (Offline/Online ချက်ချင်းသိရန်)
                     for uname, uinfo in db.items():
                         if uinfo.get("node") == node_id:
                             val = user_bytes.get(uname, uinfo.get('last_raw_bytes', 0))
                             last_raw = uinfo.get('last_raw_bytes', 0)
                             
-                            # 🚀 UPDATE: အရင် ၃၀ စက္ကန့်က Data နဲ့ မတူဘဲ တက်လာမှသာ Online လို့ သတ်မှတ်မည်
+                            # 🚀 Online / Offline ပြောင်းလဲမှုစနစ်
                             if val > last_raw:
                                 uinfo['is_online'] = True
                             else:
@@ -56,17 +58,21 @@ def background_traffic_monitor():
                             if val < last_raw: uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + val
                             else: uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + (val - last_raw)
                             
-                            uinfo['last_raw_bytes'] = val; db_changed = True
+                            uinfo['last_raw_bytes'] = val
+                            db_changed = True
                             
+                            # 🚀 GB Limit ပြည့်လျှင် အလိုအလျောက် ပိတ်ချမည့်စနစ် (Auto-Block)
                             tot_gb = float(uinfo.get('total_gb', 0))
                             if tot_gb > 0:
                                 max_bytes = tot_gb * (1024**3)
                                 if float(uinfo['used_bytes']) >= max_bytes and not uinfo.get('is_blocked', False):
                                     uinfo['is_blocked'] = True
-                                    uinfo['is_online'] = False # Block ရင် Offline တန်းဖြစ်မည်
+                                    uinfo['is_online'] = False # Block လုပ်ခံရလျှင် Offline တန်းဖြစ်မည်
                                     safe_cmd = get_safe_delete_cmd(uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443'))
-                                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\" &")
+                                    # ⚠️ Error မဖြစ်စေရန် Background `&` အား ဖယ်ရှားထားသည်
+                                    os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\"")
                 except Exception: pass
+            
             if db_changed:
                 with db_lock:
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
@@ -98,7 +104,7 @@ def get_node_backups():
             if f.endswith('.json') and f.startswith("backup_"):
                 parts = f.split('_')
                 if len(parts) >= 3:
-                    nid = parts[1] # ဒါက Node ID စစ်စစ်ပါ
+                    nid = parts[1]
                     if nid not in backups: backups[nid] = []
                     path = os.path.join(BACKUP_DIR, f)
                     size = os.path.getsize(path) / 1024
@@ -142,7 +148,6 @@ def node_view(node_id):
             info['username'] = uname; info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             info['is_blocked'] = info.get('is_blocked', False)
-            # Pending status (Yellow) will be shown if used_bytes == 0 and not active
             users.append(info)
     other_nodes = [nid for nid in nodes.keys() if nid != node_id]
     return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, config=config)
@@ -159,7 +164,7 @@ def delete_node(node_id):
     nodes = get_nodes()
     if node_id in nodes:
         node_ip = nodes[node_id].get('ip')
-        if node_ip: os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl stop xray' &")
+        if node_ip: os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl stop xray'")
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f: lines = f.readlines()
         with open(NODES_LIST, 'w') as f:
@@ -190,7 +195,7 @@ def replace_id(current_id):
                 if info.get('node') == old_id:
                     if 'key' in info and current_ip: info['key'] = re.sub(r'(@)[^:]+(:)', f'\\g<1>{current_ip}\\g<2>', info['key'])
                     info['last_raw_bytes'] = 0
-                    info['is_online'] = False # Reset status
+                    info['is_online'] = False
                     if not info.get('is_blocked', False):
                         uid = info.get('uuid'); port = str(info.get('port', '443'))
                         if info.get('protocol', 'v2') == 'v2': commands.append(f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}")
@@ -198,7 +203,7 @@ def replace_id(current_id):
             with open(USERS_DB, 'w') as f: json.dump(db, f)
     if commands and current_ip:
         commands.append("systemctl restart xray")
-        os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{current_ip} \"{' ; '.join(commands)}\" &")
+        os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{current_ip} \"{' ; '.join(commands)}\"")
     return redirect(f'/node/{old_id}')
 
 @app.route('/create_node_backup/<node_id>', methods=['POST'])
@@ -290,10 +295,10 @@ def toggle_node(node_id):
     ip = get_nodes().get(node_id, {}).get('ip')
     if node_id in config['disabled_nodes']:
         config['disabled_nodes'].remove(node_id)
-        if ip: os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'systemctl start xray' &")
+        if ip: os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} 'systemctl start xray'")
     else:
         config['disabled_nodes'].append(node_id)
-        if ip: os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'systemctl stop xray' &")
+        if ip: os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} 'systemctl stop xray'")
     save_config(config); return redirect(f'/node/{node_id}')
 
 @app.route('/add_user_manual', methods=['POST'])
@@ -333,7 +338,8 @@ def add_user_manual():
     if cmds:
         with db_lock:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
-        os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{nip} \"{' ; '.join(cmds)} ; systemctl restart xray\" &")
+        # ⚠️ အရေးကြီး: ဤနေရာတွင် `&` ဖယ်ရှားထားသည်
+        os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{nip} \"{' ; '.join(cmds)} ; systemctl restart xray\"")
     return redirect(f'/node/{nid}')
 
 @app.route('/toggle_user/<username>', methods=['POST'])
@@ -352,7 +358,7 @@ def toggle_user(username):
                         uid = user['uuid']
                         if user['protocol'] == 'v2': cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
                         else: cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
-                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\" &")
+                    os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\"")
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
 
@@ -376,7 +382,7 @@ def renew_user(username):
             if username in db:
                 db[username]['total_gb'] = add_gb; db[username]['days'] = add_days
                 db[username]['expire_date'] = (datetime.now() + timedelta(days=add_days)).strftime("%Y-%m-%d")
-                db[username]['used_bytes'] = 0; db[username]['last_raw_bytes'] = 0; db[username]['is_blocked'] = False
+                db[username]['used_bytes'] = 0; db[username]['last_raw_bytes'] = 0; db[username]['is_blocked'] = False; db[username]['is_online'] = False
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
 
@@ -389,7 +395,7 @@ def delete_user(username):
                 info = db[username]; ip = get_nodes().get(info.get('node'), {}).get('ip')
                 if ip:
                     cmd = get_safe_delete_cmd(username, info.get('protocol', 'v2'), info.get('port', '443'))
-                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\" &")
+                    os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\"")
                 del db[username]
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
@@ -406,7 +412,7 @@ def bulk_delete():
                     ip = nodes.get(db[uname].get('node'), {}).get('ip')
                     if ip:
                         cmd = get_safe_delete_cmd(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
-                        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\" &")
+                        os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\"")
                     del db[uname]
             with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
