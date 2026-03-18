@@ -5,7 +5,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
-<body class="bg-[#f4f7f6] font-sans">
+<body class="bg-[#f4f7f6] font-sans pb-12">
 
 <nav class="bg-white shadow-sm border-b border-slate-200 mb-8">
     <div class="max-w-7xl mx-auto px-4 md:px-8 py-4 flex justify-between items-center">
@@ -17,8 +17,8 @@
     </div>
 </nav>
 
-<div class="max-w-7xl mx-auto px-4 md:px-8 pb-12">
-    <div class="flex justify-between items-end mb-8">
+<div class="max-w-7xl mx-auto px-4 md:px-8">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-4">
         <div>
             <h1 class="text-3xl font-black text-slate-800 mb-2">Network Overview</h1>
             <p class="text-sm font-bold text-slate-500">Manage nodes, backups, and user traffic.</p>
@@ -28,12 +28,12 @@
         </button>
     </div>
 
-    <div class="border-b border-slate-200 mb-8 flex gap-8">
+    <div class="border-b border-slate-200 mb-8 flex gap-8 overflow-x-auto whitespace-nowrap">
         <button id="tabBtn-nodes" onclick="switchTab('nodes')" class="pb-4 px-2 text-sm font-black text-blue-600 border-b-2 border-blue-600 transition tracking-widest uppercase">
             <i class="fa-solid fa-server mr-1"></i> Server Nodes
         </button>
         <button id="tabBtn-backups" onclick="switchTab('backups')" class="pb-4 px-2 text-sm font-black text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition tracking-widest uppercase">
-            <i class="fa-solid fa-database mr-1"></i> Data & Backups
+            <i class="fa-solid fa-folder-tree mr-1"></i> Data & Backups
         </button>
     </div>
 
@@ -46,8 +46,8 @@
                     <span class="bg-slate-100 text-slate-500 border border-slate-200 px-2 py-1 rounded text-[10px] font-black uppercase font-mono shadow-sm">ID: {{ node.id }}</span>
                 </div>
             </div>
-            <h2 class="text-xl font-black text-slate-800 mb-1">{{ node.name }}</h2>
-            <p class="text-xs font-mono font-bold text-slate-400 mb-6"><i class="fa-solid fa-globe mr-1"></i> {{ node.ip }}</p>
+            <h2 class="text-xl font-black text-slate-800 mb-1 truncate">{{ node.name }}</h2>
+            <p class="text-xs font-mono font-bold text-slate-400 mb-6 truncate"><i class="fa-solid fa-globe mr-1"></i> {{ node.ip }}</p>
             <div class="flex items-center justify-between border-t border-slate-50 pt-4">
                 <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Keys</p><p class="text-lg font-black text-slate-700">{{ node.total }}</p></div>
                 <div class="text-right"><p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Online Active</p><p class="text-lg font-black text-emerald-500">{{ node.live }}</p></div>
@@ -56,45 +56,61 @@
         {% endfor %}
     </div>
 
-    <div id="tab-backups" class="hidden">
-        <div class="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 md:p-8 mb-6">
-            <h2 class="text-xl font-black text-slate-800 mb-6">Backup Files by Node ID</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {% for b in backups %}
-                <div class="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-blue-200 transition">
-                    <div class="flex items-center gap-3 overflow-hidden">
-                        <div class="bg-blue-100 text-blue-600 font-black font-mono text-[10px] px-2 py-1 rounded shrink-0">[{{ b.node_id }}]</div>
-                        <div class="truncate text-sm font-bold text-slate-600" title="{{ b.filename }}">{{ b.filename }}</div>
+    <div id="tab-backups" class="hidden space-y-4">
+        {% for nid, files in backups.items() %}
+        <div class="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm hover:shadow-md transition">
+            <div class="px-6 py-5 cursor-pointer bg-gradient-to-r hover:from-slate-50 hover:to-transparent transition flex justify-between items-center" onclick="document.getElementById('backup_{{nid}}').classList.toggle('hidden')">
+                <div class="flex items-center gap-4">
+                    <div class="w-14 h-14 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center text-2xl shadow-inner">
+                        <i class="fa-solid fa-folder-tree"></i>
                     </div>
-                    <div class="flex items-center gap-2 shrink-0 ml-2">
-                        <a href="/download_backup/{{ b.filename }}" class="text-blue-500 hover:text-blue-700 px-2 py-1 transition"><i class="fa-solid fa-download"></i></a>
-                        <form action="/delete_backup/{{ b.filename }}" method="POST" onsubmit="return confirm('Delete this backup file?');" class="m-0">
-                            <button type="submit" class="text-red-400 hover:text-red-600 px-2 py-1 transition"><i class="fa-solid fa-trash-can"></i></button>
-                        </form>
+                    <div>
+                        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Node ID</p>
+                        <h3 class="text-xl font-black text-slate-800">{{ nid }}</h3>
                     </div>
                 </div>
-                {% else %}
-                <div class="col-span-full text-center py-8">
-                    <i class="fa-solid fa-database text-3xl text-slate-200 mb-2 block"></i>
-                    <p class="text-sm text-slate-400 font-bold">No backup files found.</p>
+                <div class="flex items-center gap-4">
+                    <span class="bg-slate-100 text-slate-600 border border-slate-200 text-xs font-bold px-3 py-1.5 rounded-full">{{ files|length }} Backups</span>
+                    <div class="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-400 shadow-sm"><i class="fa-solid fa-chevron-down"></i></div>
                 </div>
-                {% endfor %}
+            </div>
+            <div id="backup_{{nid}}" class="hidden border-t border-slate-100 bg-slate-50 p-6">
+                <div class="mb-6 pb-6 border-b border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-red-50/50 p-4 rounded-2xl">
+                    <div>
+                        <h4 class="text-sm font-black text-red-600 mb-1"><i class="fa-solid fa-skull-crossbones mr-1"></i> Purge All Data</h4>
+                        <p class="text-xs text-red-500 font-bold">Permanently delete all keys and backups for Node <span class="uppercase border-b border-red-500">{{ nid }}</span>.</p>
+                    </div>
+                    <form action="/purge_node/{{ nid }}" method="POST" onsubmit="return confirm('⚠️ EXTREME WARNING: Are you completely sure you want to PURGE all data for Node: {{ nid }}? This CANNOT be undone.');" class="m-0 shrink-0">
+                        <button type="submit" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-sm transition"><i class="fa-solid fa-trash mr-1"></i> Purge Data</button>
+                    </form>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {% for f in files %}
+                    <div class="flex items-center justify-between bg-white border border-slate-200 p-4 rounded-2xl shadow-sm hover:border-blue-300 transition">
+                        <div class="flex items-center gap-3 overflow-hidden">
+                            <i class="fa-solid fa-file-code text-blue-400 text-2xl"></i>
+                            <div class="truncate">
+                                <p class="text-sm font-bold text-slate-700 truncate" title="{{ f.filename }}">{{ f.filename }}</p>
+                                <p class="text-[10px] font-mono text-slate-400 mt-0.5"><i class="fa-regular fa-clock mr-1"></i>{{ f.time }} <span class="mx-1">•</span> <i class="fa-solid fa-weight-hanging mr-1"></i>{{ f.size }}</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-2 shrink-0 ml-2">
+                            <a href="/download_backup/{{ f.filename }}" class="bg-blue-50 hover:bg-blue-100 text-blue-600 w-8 h-8 rounded-lg flex items-center justify-center transition" title="Download"><i class="fa-solid fa-download"></i></a>
+                            <form action="/delete_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Delete this backup file?');" class="m-0">
+                                <button type="submit" class="bg-red-50 hover:bg-red-100 text-red-500 w-8 h-8 rounded-lg flex items-center justify-center transition" title="Delete"><i class="fa-solid fa-trash-can"></i></button>
+                            </form>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
             </div>
         </div>
-        
-        <div class="bg-red-50 rounded-3xl border border-red-100 p-6 md:p-8">
-            <h2 class="text-lg font-black text-red-600 mb-2"><i class="fa-solid fa-skull-crossbones mr-2"></i> Danger Zone (Purge Data)</h2>
-            <p class="text-xs text-red-500 font-bold mb-4">Select a Node ID to permanently delete ALL its Users, Keys, and Backups from the system.</p>
-            <form action="" method="POST" id="purgeForm" class="flex gap-4 items-center" onsubmit="return confirm('⚠️ EXTREME WARNING: Are you completely sure you want to PURGE all data for this Node ID? This cannot be undone.');">
-                <select onchange="document.getElementById('purgeForm').action='/purge_node/' + this.value;" class="bg-white border border-red-200 p-3 rounded-xl text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-red-400">
-                    <option value="" disabled selected>-- Select Node ID to Purge --</option>
-                    {% for node in nodes %}
-                    <option value="{{ node.id }}">{{ node.id }}</option>
-                    {% endfor %}
-                </select>
-                <button type="submit" class="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-xl text-xs font-bold shadow-sm transition">Purge Now</button>
-            </form>
+        {% else %}
+        <div class="text-center py-12 bg-white rounded-3xl border border-slate-100 shadow-sm">
+            <i class="fa-solid fa-folder-open text-5xl text-slate-200 mb-4 block"></i>
+            <p class="text-sm text-slate-400 font-bold">No backups available yet.</p>
         </div>
+        {% endfor %}
     </div>
 </div>
 
@@ -182,6 +198,7 @@ function switchTab(tab) {
     document.getElementById('tab-backups').classList.add('hidden');
     document.getElementById('tabBtn-nodes').className = "pb-4 px-2 text-sm font-black text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition tracking-widest uppercase";
     document.getElementById('tabBtn-backups').className = "pb-4 px-2 text-sm font-black text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition tracking-widest uppercase";
+    
     document.getElementById('tab-' + tab).classList.remove('hidden');
     document.getElementById('tabBtn-' + tab).className = "pb-4 px-2 text-sm font-black text-blue-600 border-b-2 border-blue-600 transition tracking-widest uppercase";
 }
