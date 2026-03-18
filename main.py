@@ -12,6 +12,9 @@ db_lock = threading.Lock()
 BACKUP_DIR = "/root/PanelMaster/backups"
 if not os.path.exists(BACKUP_DIR): os.makedirs(BACKUP_DIR)
 
+# =========================================================
+# 🚀 BACKGROUND TRAFFIC MONITOR (WITH REAL-TIME ONLINE/OFFLINE)
+# =========================================================
 def background_traffic_monitor():
     while True:
         time.sleep(30)
@@ -29,27 +32,40 @@ def background_traffic_monitor():
                 try:
                     cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\""
                     res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                    user_bytes = {}
                     if res.stdout.strip():
                         stats = json.loads(res.stdout).get("stat", [])
-                        user_bytes = {}
                         for s in stats:
                             parts = s.get("name", "").split(">>>"); val = s.get("value", 0)
                             if len(parts) >= 4:
                                 if parts[0] == "user": user_bytes[parts[1]] = user_bytes.get(parts[1], 0) + val
                                 elif parts[0] == "inbound" and parts[1].startswith("out-"): user_bytes[parts[1][4:]] = user_bytes.get(parts[1][4:], 0) + val
-                        for uname, val in user_bytes.items():
-                            if uname in db and db[uname].get("node") == node_id:
-                                last_raw = db[uname].get('last_raw_bytes', 0)
-                                if val < last_raw: db[uname]['used_bytes'] = db[uname].get('used_bytes', 0) + val
-                                else: db[uname]['used_bytes'] = db[uname].get('used_bytes', 0) + (val - last_raw)
-                                db[uname]['last_raw_bytes'] = val; db_changed = True
-                                tot_gb = float(db[uname].get('total_gb', 0))
-                                if tot_gb > 0:
-                                    max_bytes = tot_gb * (1024**3)
-                                    if float(db[uname]['used_bytes']) >= max_bytes and not db[uname].get('is_blocked', False):
-                                        db[uname]['is_blocked'] = True
-                                        safe_cmd = get_safe_delete_cmd(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
-                                        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\" &")
+                    
+                    # အားလုံးကို Loop ပတ်ပြီး Online/Offline စစ်ဆေးမည်
+                    for uname, uinfo in db.items():
+                        if uinfo.get("node") == node_id:
+                            val = user_bytes.get(uname, uinfo.get('last_raw_bytes', 0))
+                            last_raw = uinfo.get('last_raw_bytes', 0)
+                            
+                            # 🚀 UPDATE: အရင် ၃၀ စက္ကန့်က Data နဲ့ မတူဘဲ တက်လာမှသာ Online လို့ သတ်မှတ်မည်
+                            if val > last_raw:
+                                uinfo['is_online'] = True
+                            else:
+                                uinfo['is_online'] = False
+                                
+                            if val < last_raw: uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + val
+                            else: uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + (val - last_raw)
+                            
+                            uinfo['last_raw_bytes'] = val; db_changed = True
+                            
+                            tot_gb = float(uinfo.get('total_gb', 0))
+                            if tot_gb > 0:
+                                max_bytes = tot_gb * (1024**3)
+                                if float(uinfo['used_bytes']) >= max_bytes and not uinfo.get('is_blocked', False):
+                                    uinfo['is_blocked'] = True
+                                    uinfo['is_online'] = False # Block ရင် Offline တန်းဖြစ်မည်
+                                    safe_cmd = get_safe_delete_cmd(uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443'))
+                                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\" &")
                 except Exception: pass
             if db_changed:
                 with db_lock:
@@ -58,6 +74,9 @@ def background_traffic_monitor():
 
 threading.Thread(target=background_traffic_monitor, daemon=True).start()
 
+# =========================================================
+# 🌐 ROUTES
+# =========================================================
 @app.before_request
 def check_auth():
     if request.endpoint not in ['login', 'static', 'api_stats'] and not session.get('logged_in'): return redirect(url_for('login'))
@@ -72,7 +91,6 @@ def login():
 @app.route('/logout')
 def logout(): session.clear(); return redirect(url_for('login'))
 
-# --- 🚀 Folder ပုံစံပြရန် Data ကို ID အလိုက် စုစည်းပေးသော Function သစ် ---
 def get_node_backups():
     backups = {}
     if os.path.exists(BACKUP_DIR):
@@ -80,7 +98,7 @@ def get_node_backups():
             if f.endswith('.json') and f.startswith("backup_"):
                 parts = f.split('_')
                 if len(parts) >= 3:
-                    nid = parts[1]
+                    nid = parts[1] # ဒါက Node ID စစ်စစ်ပါ
                     if nid not in backups: backups[nid] = []
                     path = os.path.join(BACKUP_DIR, f)
                     size = os.path.getsize(path) / 1024
@@ -124,6 +142,7 @@ def node_view(node_id):
             info['username'] = uname; info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             info['is_blocked'] = info.get('is_blocked', False)
+            # Pending status (Yellow) will be shown if used_bytes == 0 and not active
             users.append(info)
     other_nodes = [nid for nid in nodes.keys() if nid != node_id]
     return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, config=config)
@@ -171,6 +190,7 @@ def replace_id(current_id):
                 if info.get('node') == old_id:
                     if 'key' in info and current_ip: info['key'] = re.sub(r'(@)[^:]+(:)', f'\\g<1>{current_ip}\\g<2>', info['key'])
                     info['last_raw_bytes'] = 0
+                    info['is_online'] = False # Reset status
                     if not info.get('is_blocked', False):
                         uid = info.get('uuid'); port = str(info.get('port', '443'))
                         if info.get('protocol', 'v2') == 'v2': commands.append(f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}")
@@ -280,18 +300,22 @@ def toggle_node(node_id):
 def add_user_manual():
     nid = request.form.get('node_id'); nip = get_nodes().get(nid, {}).get('ip')
     if not nip: return redirect(f'/node/{nid}')
+    
     mode = request.form.get('creation_mode', 'single'); usernames = []
     if mode == 'single': usernames = [request.form.get('single_username', '').strip()]
     elif mode == 'list': usernames = [u.strip() for u in re.split(r'[,\n]+', request.form.get('list_usernames', '')) if u.strip()]
     elif mode == 'pattern':
         base = request.form.get('base_name', '').strip(); start = int(request.form.get('start_num', 1)); qty = int(request.form.get('qty', 1))
         usernames = [f"{base}{start+i}" for i in range(qty)]
+
     gb = float(request.form.get('total_gb', 0)); days = int(request.form.get('expire_days', 30))
     exp = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d"); proto = request.form.get('protocol', 'v2')
+    
     db = {}
     with db_lock:
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
+            
     max_p = max([int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out'] + [10000])
     cmds = []
     for u in usernames:
@@ -304,7 +328,8 @@ def add_user_manual():
             max_p += 1; port = str(max_p); ss_conf = base64.b64encode(f"chacha20-ietf-poly1305:{uid}".encode()).decode()
             k = f"ss://{ss_conf}@{nip}:{port}#{u}"
             cmds.append(f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
-        db[u] = {"node": nid, "protocol": proto, "uuid": uid, "port": port, "total_gb": gb, "expire_date": exp, "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "key": k}
+        db[u] = {"node": nid, "protocol": proto, "uuid": uid, "port": port, "total_gb": gb, "expire_date": exp, "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False, "key": k}
+    
     if cmds:
         with db_lock:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
@@ -320,7 +345,9 @@ def toggle_user(username):
                 user = db[username]; user['is_blocked'] = not user.get('is_blocked', False)
                 ip = get_nodes().get(user.get('node'), {}).get('ip')
                 if ip:
-                    if user['is_blocked']: cmd = get_safe_delete_cmd(username, user.get('protocol', 'v2'), user.get('port', '443'))
+                    if user['is_blocked']: 
+                        user['is_online'] = False
+                        cmd = get_safe_delete_cmd(username, user.get('protocol', 'v2'), user.get('port', '443'))
                     else:
                         uid = user['uuid']
                         if user['protocol'] == 'v2': cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
