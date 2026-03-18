@@ -121,28 +121,33 @@ def add_node():
             f.write(f"\n{n_name} {n_ip}")
     return redirect(url_for('node_view', node_name=n_name) + "?newly_added=yes")
 
-# --- Route: Node ဖျက်ရန် ---
+# --- Route: Node IP ပြင်ရန် (Server သေသွားရင် ပြင်ဖို့) ---
+@app.route('/edit_node_ip/<node_name>', methods=['POST'])
+def edit_node_ip(node_name):
+    new_ip = request.form.get('new_ip', '').strip()
+    nodes = get_nodes()
+    if node_name in nodes and new_ip:
+        nodes[node_name] = new_ip
+        with open(NODES_LIST, 'w') as f:
+            for n, ip in nodes.items():
+                f.write(f"{n} {ip}\n")
+    return redirect(f'/node/{node_name}')
+
 # --- Route: Node ဖျက်ရန် ---
 @app.route('/delete_node/<node_name>', methods=['POST'])
 def delete_node(node_name):
-    # (၁) nodes_list.txt ထဲကနေ ရှာဖျက်မယ်
     if os.path.exists(NODES_LIST):
-        with open(NODES_LIST, 'r') as f: 
-            lines = f.readlines()
+        with open(NODES_LIST, 'r') as f: lines = f.readlines()
         with open(NODES_LIST, 'w') as f:
             for line in lines:
                 if line.strip():
                     parts = line.split()
-                    # စာကြောင်းရဲ့ ပထမဆုံးနာမည်က ဖျက်မယ့် Node နဲ့ မတူမှသာ ပြန်သိမ်းမယ်
                     if len(parts) >= 1 and parts[0] != node_name:
                         f.write(line)
-                        
-    # (၂) Disabled လုပ်ထားတဲ့ စာရင်းထဲမှာ ပါနေခဲ့ရင်ပါ တစ်ခါတည်း ရှင်းထုတ်မယ်
     config = load_config()
     if node_name in config.get('disabled_nodes', []):
         config['disabled_nodes'].remove(node_name)
         save_config(config)
-        
     return redirect(url_for('dashboard'))
 
 # --- Route: Node ဆီသို့ Script အလိုအလျောက် သွင်းရန် ---
@@ -157,6 +162,38 @@ def install_node_action(node_name):
             subprocess.run(cmd, shell=True)
     return redirect(f'/node/{node_name}')
 
+# --- Route: Key အဟောင်းများကို Node အသစ်ဆီသို့ ပြန်သွင်းပေးရန် (Restore/Sync) ---
+@app.route('/sync_node/<node_name>', methods=['POST'])
+def sync_node(node_name):
+    nodes = get_nodes()
+    node_ip = nodes.get(node_name)
+    if not node_ip: return redirect(request.referrer)
+    
+    db = {}
+    if os.path.exists(USERS_DB):
+        with open(USERS_DB, 'r') as f: db = json.load(f)
+        
+    commands = []
+    for uname, info in db.items():
+        # Block မလုပ်ထားတဲ့ User တွေကိုပဲ ပြန်သွင်းမယ်
+        if info.get('node') == node_name and not info.get('is_blocked', False):
+            uid = info.get('uuid')
+            proto = info.get('protocol', 'v2')
+            port = str(info.get('port', '443'))
+            
+            if proto == 'v2':
+                commands.append(f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}")
+            else:
+                commands.append(f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port}")
+                commands.append(f"ufw allow {port}/tcp && ufw allow {port}/udp")
+                
+    if commands:
+        commands.append("systemctl restart xray")
+        os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{node_ip} \"{' ; '.join(commands)}\"")
+        
+    return redirect(f'/node/{node_name}')
+
+# --- 🚀 [UPDATE] Database ထဲ GB သိမ်းပြီး Auto Block လုပ်မည့် API ---
 @app.route('/api/stats/<node_name>')
 def api_stats(node_name):
     if not session.get('logged_in'): return jsonify({"status": "error"})
@@ -174,8 +211,40 @@ def api_stats(node_name):
                     uname = parts[1]
                     val = s.get("value", 0)
                     user_bytes[uname] = user_bytes.get(uname, 0) + val
+            
+            # --- Database ထဲသို့ Update လုပ်ခြင်း & Auto Block ---
+            if os.path.exists(USERS_DB) and user_bytes:
+                with open(USERS_DB, 'r') as f: db = json.load(f)
+                db_changed = False
+                
+                for uname, val in user_bytes.items():
+                    if uname in db:
+                        last_raw = db[uname].get('last_raw_bytes', 0)
+                        if val < last_raw:
+                            # Xray restart ကျသွားရင် အသစ်ကပြန်ပေါင်းမယ်
+                            db[uname]['used_bytes'] = db[uname].get('used_bytes', 0) + val
+                        else:
+                            # မဟုတ်ရင် တက်လာတဲ့ ပမာဏလေးကိုပဲ ပေါင်းမယ်
+                            db[uname]['used_bytes'] = db[uname].get('used_bytes', 0) + (val - last_raw)
+                        
+                        db[uname]['last_raw_bytes'] = val
+                        db_changed = True
+                        
+                        # --- Auto Block စနစ် ---
+                        tot_gb = float(db[uname].get('total_gb', 0))
+                        if tot_gb > 0:
+                            max_bytes = tot_gb * (1024**3)
+                            if db[uname]['used_bytes'] >= max_bytes and not db[uname].get('is_blocked', False):
+                                db[uname]['is_blocked'] = True
+                                safe_cmd = get_safe_delete_cmd(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
+                                # Server ဆီကိုလှမ်းပိတ်မယ်
+                                os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\" &")
+                
+                if db_changed:
+                    with open(USERS_DB, 'w') as f: json.dump(db, f)
+
             return jsonify({"status": "ok", "data": user_bytes})
-    except: pass
+    except Exception as e: pass
     return jsonify({"status": "error"})
 
 @app.route('/toggle_node/<node_name>', methods=['POST'])
