@@ -18,11 +18,11 @@ def get_nodes():
                 if '|' in line:
                     parts = line.split('|')
                     if len(parts) >= 3:
-                        nodes[parts[0]] = {"name": parts[1], "ip": parts[2]}
+                        nodes[parts[0].strip()] = {"name": parts[1].strip(), "ip": parts[2].strip()}
                 else:
                     parts = line.rsplit(' ', 1)
                     if len(parts) == 2:
-                        nodes[parts[0]] = {"name": parts[0], "ip": parts[1]}
+                        nodes[parts[0].strip()] = {"name": parts[0].strip(), "ip": parts[1].strip()}
     return nodes
 
 def get_all_servers():
@@ -34,8 +34,8 @@ def get_all_servers():
                 groups = json.load(f)
                 for gid, gdata in groups.items():
                     for nid, ndata in gdata.get("nodes", {}).items():
-                        nip = ndata.get("ip") if isinstance(ndata, dict) else ndata
-                        servers[nid] = {"name": f"[AUTO] {nid}", "ip": nip}
+                        nip = str(ndata.get("ip")).strip() if isinstance(ndata, dict) else str(ndata).strip()
+                        servers[nid.strip()] = {"name": f"[AUTO] {nid}", "ip": nip}
         except: pass
     return servers
 
@@ -48,9 +48,9 @@ def check_live_status(db):
         except: pass
     return active
 
+# 🚀 Custom Node တွင် အလုပ်လုပ်ခဲ့သော မူရင်း Script ဟောင်း အတိအကျ
 def get_safe_delete_cmd(username, protocol, port):
-    # 🚀 Xray မှ သေချာပေါက် ဖျက်ချပေးမည့် မူရင်း Script အဟောင်းကိုသာ ပြန်အသုံးပြုပါမည်
-    if protocol == 'v2': 
+    if protocol == 'v2':
         return f"/usr/local/bin/v2ray-node-del-vless {username}"
-    else: 
-        return f"/usr/local/bin/v2ray-node-del-out {username} {port}"
+    else:
+        return f"/usr/local/bin/v2ray-node-del-out {username} {port} ; ufw delete allow {port}/tcp ; ufw delete allow {port}/udp"
