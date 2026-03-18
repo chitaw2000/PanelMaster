@@ -18,7 +18,7 @@
         <div>
             <div class="flex items-center gap-3 mb-2"><span class="bg-white/20 font-mono text-[10px] px-3 py-1 rounded-full uppercase tracking-widest backdrop-blur-sm">Group ID: {{ group_id }}</span></div>
             <h1 class="text-3xl font-black uppercase mb-1">{{ group.name }}</h1>
-            <p class="text-sm font-bold text-purple-100"><i class="fa-solid fa-key mr-1"></i> Node Servers limit: {{ group.limit }} keys per server</p>
+            <p class="text-sm font-bold text-purple-100"><i class="fa-solid fa-key mr-1"></i> Default Limit: {{ group.limit }} keys per server</p>
         </div>
         <div class="flex gap-2 items-center flex-wrap justify-end">
             <button onclick="document.getElementById('addServerModal').classList.remove('hidden')" class="bg-white/20 hover:bg-white/30 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center backdrop-blur-sm"><i class="fa-solid fa-server mr-2"></i> Add Server Node</button>
@@ -31,7 +31,10 @@
         {% for s in server_stats %}
         <div class="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm flex flex-col relative overflow-hidden hover:border-purple-300 transition">
             <div class="flex justify-between items-start mb-2">
-                <span class="text-xs font-black text-slate-800 uppercase">{{ s.id }}</span>
+                <div class="flex items-center gap-2">
+                    <span class="text-xs font-black text-slate-800 uppercase">{{ s.id }}</span>
+                    <button type="button" onclick="openEditLimit('{{ s.id }}', '{{ s.limit }}')" class="text-blue-400 hover:text-blue-600" title="Edit Limit"><i class="fa-solid fa-pen text-[10px]"></i></button>
+                </div>
                 <form action="/delete_server_from_group/{{ group_id }}/{{ s.id }}" method="POST" onsubmit="return confirm('Remove server from group?');" class="m-0 z-10"><button type="submit" class="text-slate-300 hover:text-red-500 transition"><i class="fa-solid fa-xmark"></i></button></form>
             </div>
             <span class="text-[10px] font-mono text-slate-400 mb-4">{{ s.ip }}</span>
@@ -54,10 +57,8 @@
     <tbody class="divide-y divide-slate-50">
     {% for u in users %}<tr class="hover:bg-slate-50/50 transition-colors {% if u.is_blocked %}opacity-60 bg-red-50/20{% endif %}">
     <td class="p-6 text-center"><input type="checkbox" name="usernames" value="{{ u.username }}" class="w-4 h-4" onchange="document.getElementById('delSelectedBtn').classList.toggle('hidden', document.querySelectorAll('input[name=\\'usernames\\']:checked').length===0)"></td>
-    
     <td class="p-6"><span class="bg-purple-50 text-purple-600 font-mono text-[10px] font-bold px-2 py-1 rounded uppercase tracking-widest">{{ u.node }}</span></td>
     <td class="p-6 text-slate-400 font-black text-sm">#{{ u.node_key_idx }}</td>
-    
     <td class="p-6"><div class="flex items-center gap-3">
         {% if u.is_blocked %}<div class="w-8 h-8 rounded-full bg-red-100 text-red-600 flex items-center justify-center"><i class="fa-solid fa-ban"></i></div>
         {% elif u.is_active %}<div class="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center"><i class="fa-solid fa-bolt"></i></div>
@@ -88,6 +89,20 @@
     </div>
 </div>
 
+<div id="editLimitModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100">
+        <h2 class="text-xl font-black mb-4 text-slate-800">Edit Server Limit</h2>
+        <p class="text-xs text-slate-500 mb-4 font-bold" id="editLimitDesc"></p>
+        <form id="editLimitForm" method="POST">
+            <input type="number" name="limit" id="editLimitInput" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-8 font-mono text-sm font-bold text-blue-600" required>
+            <div class="flex justify-end gap-3">
+                <button type="button" onclick="document.getElementById('editLimitModal').classList.add('hidden')" class="px-4 py-2 font-bold text-slate-400">Cancel</button>
+                <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-xl font-bold">Update & Rebalance</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <div id="addUserModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
     <div class="bg-white rounded-3xl p-8 w-[420px] shadow-2xl border border-slate-100">
         <h2 class="text-lg font-black mb-2 text-slate-800">Auto-Generate Keys</h2>
@@ -95,7 +110,7 @@
             <input type="hidden" name="group_id" value="{{ group_id }}">
             <select id="creation_mode" name="creation_mode" onchange="toggleMode()" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl mb-4 text-sm font-bold text-slate-700"><option value="single">Single Key</option><option value="list">Bulk List</option><option value="pattern">Auto-Number</option></select>
             <div id="mode_single" class="block mb-4"><input type="text" name="single_username" placeholder="Username" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl text-sm"></div>
-            <div id="mode_list" class="hidden mb-4"><textarea name="list_usernames" rows="3" placeholder="Comma separated" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl text-sm"></textarea></div>
+            <div id="mode_list" class="hidden mb-4"><textarea name="list_usernames" rows="3" placeholder="Comma separated or new line" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl text-sm"></textarea></div>
             <div id="mode_pattern" class="hidden mb-4 grid grid-cols-3 gap-2">
                 <input type="text" name="base_name" placeholder="Prefix" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl text-sm">
                 <input type="number" name="start_num" value="1" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-2xl text-sm">
@@ -112,6 +127,13 @@
 <div id="rm" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100"><h2 class="text-lg font-black mb-6 text-emerald-600">Renew: <span id="ru"></span></h2><form id="rf" method="POST"><input type="hidden" name="node_name" value="{{ node_id }}"><input type="number" step="0.1" name="add_gb" value="50" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-4"><input type="number" name="add_days" value="30" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-8"><div class="flex justify-end gap-3"><button type="button" onclick="closeRenew()" class="px-4 py-2 font-bold text-slate-400">Cancel</button><button class="bg-emerald-500 text-white px-4 py-2 rounded-xl font-bold">Renew</button></div></form></div></div>
 
 <script>
+// 🚀 UPDATE: Edit Limit Script
+function openEditLimit(nid, currentLimit) {
+    document.getElementById('editLimitDesc').innerText = "Node: " + nid + "\nIf you decrease this limit, excess keys will be automatically migrated to other servers in this group.";
+    document.getElementById('editLimitInput').value = currentLimit;
+    document.getElementById('editLimitForm').action = "/edit_server_limit/{{ group_id }}/" + nid;
+    document.getElementById('editLimitModal').classList.remove('hidden');
+}
 function copyK(id) { var t = document.getElementById(id); if(!t.value){ return; } var d = document.createElement("textarea"); document.body.appendChild(d); d.value = t.value; d.select(); document.execCommand("copy"); document.body.removeChild(d); alert("✅ Copied!"); }
 function toggleMode() { let m = document.getElementById('creation_mode').value; document.getElementById('mode_single').classList.toggle('hidden', m !== 'single'); document.getElementById('mode_list').classList.toggle('hidden', m !== 'list'); document.getElementById('mode_pattern').classList.toggle('hidden', m !== 'pattern'); }
 function openM(u, g, d) { document.getElementById('mu').innerText = "Edit: " + u; document.getElementById('mg').value = g; document.getElementById('md').value = d; document.getElementById('ef').action = "/edit_user/" + u; document.getElementById('m').classList.remove('hidden'); }
