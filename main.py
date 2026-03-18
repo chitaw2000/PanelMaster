@@ -14,11 +14,12 @@ if not os.path.exists(BACKUP_DIR): os.makedirs(BACKUP_DIR)
 
 start_background_monitor()
 
-# 🚀 Bulk ဖြင့် Key ထုတ်ရာတွင် Space နှင့် လိုင်းအသစ်ဆင်းခြင်း (Enter) များကို လုံးဝသန့်စင်ပေးမည့်စနစ်
+# 🚀 UPDATE: Username များထဲမှ Space များနှင့် အမှိုက်စာသားများကို လုံးဝသန့်စင်ပေးမည့်စနစ် (Error ရှင်းလင်းပြီး)
 def sanitize_usernames(raw_list):
     clean = []
     for u in raw_list:
-        u = re.sub(r'[^a-zA-Z0-9_]', '', u.strip().replace(" ", "_"))
+        if not u: continue
+        u = re.sub(r'[^a-zA-Z0-9_]', '', str(u).strip().replace(" ", "_"))
         if u: clean.append(u)
     return clean
 
@@ -141,15 +142,12 @@ def add_server_to_group(group_id):
 def delete_server_from_group(group_id, node_id):
     groups = load_auto_groups()
     node_ip = None
-    
-    # 🚀 Auto Group ထဲမှ Node Server ကို ဖယ်ရှားမည်
     if group_id in groups and node_id in groups[group_id]["nodes"]:
         ndata = groups[group_id]["nodes"][node_id]
         node_ip = ndata.get("ip") if isinstance(ndata, dict) else ndata
         del groups[group_id]["nodes"][node_id]
         save_auto_groups(groups)
         
-    # 🚀 ထို Server တွင်းရှိ Auto Key အားလုံးကို DB နှင့် Server ပေါ်မှ အလိုအလျောက် အပြတ်ဖျက်မည်
     if node_ip:
         with db_lock:
             if os.path.exists(USERS_DB):
@@ -158,12 +156,11 @@ def delete_server_from_group(group_id, node_id):
                 for u in users_to_delete:
                     info = db[u]
                     cmd = get_safe_delete_cmd(u, info.get('protocol', 'v2'), info.get('port', '443'))
-                    subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"{cmd}\"", shell=True)
+                    os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"{cmd}\"")
                     del db[u]
                 if users_to_delete:
-                    subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"systemctl restart xray\"", shell=True)
+                    os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"systemctl restart xray\"")
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
-                    
     return redirect(f'/group/{group_id}')
 
 @app.route('/add_user_auto', methods=['POST'])
@@ -179,7 +176,6 @@ def add_user_auto():
         qty = int(request.form.get('qty', 1))
         usernames = [f"{base}{start+i}" for i in range(qty)]
 
-    # 🚀 Clean Usernames
     usernames = sanitize_usernames(usernames)
     if not usernames: return redirect(f'/group/{gid}')
 
@@ -212,8 +208,8 @@ def add_user_auto():
     if cmds:
         with db_lock:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
-        subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{node_ip} \"{' ; '.join(cmds)}\"", shell=True)
-        subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"systemctl restart xray\"", shell=True)
+        os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{node_ip} \"{' ; '.join(cmds)}\"")
+        os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"systemctl restart xray\"")
     return redirect(f'/group/{gid}')
 
 @app.route('/node/<node_id>')
@@ -251,7 +247,7 @@ def delete_node(node_id):
     nodes = get_all_servers()
     if node_id in nodes:
         node_ip = nodes[node_id].get('ip')
-        if node_ip: subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl stop xray'", shell=True)
+        if node_ip: os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl stop xray'")
     
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f: lines = f.readlines()
@@ -318,8 +314,8 @@ def replace_id(current_id):
                         else: commands.append(f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
             with open(USERS_DB, 'w') as f: json.dump(db, f)
     if commands and current_ip:
-        subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{current_ip} \"{' ; '.join(commands)}\"", shell=True)
-        subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{current_ip} \"systemctl restart xray\"", shell=True)
+        os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{current_ip} \"{' ; '.join(commands)}\"")
+        os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{current_ip} \"systemctl restart xray\"")
     return redirect(f'/node/{old_id}')
 
 @app.route('/api/check_ssh/<node_id>')
@@ -362,7 +358,7 @@ def api_stats(node_id):
 def install_node_action(node_id):
     ip = get_all_servers().get(node_id, {}).get('ip')
     if ip and os.path.exists("/root/PanelMaster/install_node.sh"):
-        subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} 'bash -s' < /root/PanelMaster/install_node.sh", shell=True)
+        os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} 'bash -s' < /root/PanelMaster/install_node.sh")
     return redirect(request.referrer)
 
 @app.route('/toggle_node/<node_id>', methods=['POST'])
@@ -372,10 +368,10 @@ def toggle_node(node_id):
     ip = get_all_servers().get(node_id, {}).get('ip')
     if node_id in config['disabled_nodes']:
         config['disabled_nodes'].remove(node_id)
-        if ip: subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} 'systemctl start xray'", shell=True)
+        if ip: os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} 'systemctl start xray'")
     else:
         config['disabled_nodes'].append(node_id)
-        if ip: subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} 'systemctl stop xray'", shell=True)
+        if ip: os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} 'systemctl stop xray'")
     save_config(config); return redirect(request.referrer)
 
 @app.route('/add_user_manual', methods=['POST'])
@@ -383,6 +379,12 @@ def add_user_manual():
     nid = request.form.get('node_id'); nip = get_all_servers().get(nid, {}).get('ip')
     if not nip: return redirect(f'/node/{nid}')
     
+    # 🚀 Auto Group ထဲကလာခဲ့လျှင် Group ID ကိုပါ တွဲထည့်ပေးမည်
+    gid = ""
+    groups = load_auto_groups()
+    for g_id, gdata in groups.items():
+        if nid in gdata.get("nodes", {}): gid = g_id; break
+
     mode = request.form.get('creation_mode', 'single'); usernames = []
     if mode == 'single': usernames = [request.form.get('single_username', '')]
     elif mode == 'list': usernames = re.split(r'[,\n\r]+', request.form.get('list_usernames', ''))
@@ -390,7 +392,6 @@ def add_user_manual():
         base = request.form.get('base_name', '').strip(); start = int(request.form.get('start_num', 1)); qty = int(request.form.get('qty', 1))
         usernames = [f"{base}{start+i}" for i in range(qty)]
 
-    # 🚀 Clean Usernames
     usernames = sanitize_usernames(usernames)
     if not usernames: return redirect(f'/node/{nid}')
 
@@ -414,14 +415,14 @@ def add_user_manual():
             max_p += 1; port = str(max_p); ss_conf = base64.b64encode(f"chacha20-ietf-poly1305:{uid}".encode()).decode()
             k = f"ss://{ss_conf}@{nip}:{port}#{u}"
             cmds.append(f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
-        db[u] = {"node": nid, "group": "", "protocol": proto, "uuid": uid, "port": port, "total_gb": gb, "expire_date": exp, "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False, "key": k}
+        db[u] = {"node": nid, "group": gid, "protocol": proto, "uuid": uid, "port": port, "total_gb": gb, "expire_date": exp, "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False, "key": k}
     
     if cmds:
         with db_lock:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
-        subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{nip} \"{' ; '.join(cmds)}\"", shell=True)
-        subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{nip} \"systemctl restart xray\"", shell=True)
-    return redirect(f'/node/{nid}')
+        os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{nip} \"{' ; '.join(cmds)}\"")
+        os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{nip} \"systemctl restart xray\"")
+    return redirect(request.referrer)
 
 @app.route('/toggle_user/<username>', methods=['POST'])
 def toggle_user(username):
@@ -439,8 +440,8 @@ def toggle_user(username):
                         uid = user['uuid']
                         if user['protocol'] == 'v2': cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
                         else: cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
-                    subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\"", shell=True)
-                    subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"systemctl restart xray\"", shell=True)
+                    os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\"")
+                    os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"systemctl restart xray\"")
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
 
@@ -477,8 +478,8 @@ def delete_user(username):
                 info = db[username]; ip = get_all_servers().get(info.get('node'), {}).get('ip')
                 if ip:
                     cmd = get_safe_delete_cmd(username, info.get('protocol', 'v2'), info.get('port', '443'))
-                    subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\"", shell=True)
-                    subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"systemctl restart xray\"", shell=True)
+                    os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\"")
+                    os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"systemctl restart xray\"")
                 del db[username]
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
@@ -495,8 +496,8 @@ def bulk_delete():
                     ip = nodes.get(db[uname].get('node'), {}).get('ip')
                     if ip:
                         cmd = get_safe_delete_cmd(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
-                        subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\"", shell=True)
-                        subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"systemctl restart xray\"", shell=True)
+                        os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\"")
+                        os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"systemctl restart xray\"")
                     del db[uname]
             with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
