@@ -18,7 +18,11 @@
         <div>
             <div class="flex items-center gap-3 mb-2"><span class="bg-white/20 font-mono text-[10px] px-3 py-1 rounded-full uppercase tracking-widest backdrop-blur-sm">Group ID: {{ group_id }}</span></div>
             <h1 class="text-3xl font-black uppercase mb-1">{{ group.name }}</h1>
-            <p class="text-sm font-bold text-purple-100"><i class="fa-solid fa-key mr-1"></i> Default Limit: {{ group.limit }} keys per server</p>
+            
+            <div class="flex items-center gap-2">
+                <p class="text-sm font-bold text-purple-100"><i class="fa-solid fa-key mr-1"></i> Global Limit: {{ group.limit }} keys per server</p>
+                <button onclick="document.getElementById('editGlobalLimitModal').classList.remove('hidden')" class="bg-white/20 hover:bg-white/40 text-white w-6 h-6 rounded-full flex items-center justify-center transition"><i class="fa-solid fa-pen text-[10px]"></i></button>
+            </div>
         </div>
         <div class="flex gap-2 items-center flex-wrap justify-end">
             <button onclick="document.getElementById('addServerModal').classList.remove('hidden')" class="bg-white/20 hover:bg-white/30 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center backdrop-blur-sm"><i class="fa-solid fa-server mr-2"></i> Add Server Node</button>
@@ -33,7 +37,7 @@
             <div class="flex justify-between items-start mb-2">
                 <div class="flex items-center gap-2">
                     <span class="text-xs font-black text-slate-800 uppercase">{{ s.id }}</span>
-                    <button type="button" onclick="openEditLimit('{{ s.id }}', '{{ s.limit }}')" class="text-blue-400 hover:text-blue-600" title="Edit Limit"><i class="fa-solid fa-pen text-[10px]"></i></button>
+                    <button type="button" onclick="openEditLimit('{{ s.id }}', '{{ s.limit }}')" class="text-blue-400 hover:text-blue-600" title="Edit Custom Limit"><i class="fa-solid fa-pen text-[10px]"></i></button>
                 </div>
                 <form action="/delete_server_from_group/{{ group_id }}/{{ s.id }}" method="POST" onsubmit="return confirm('Remove server from group?');" class="m-0 z-10"><button type="submit" class="text-slate-300 hover:text-red-500 transition"><i class="fa-solid fa-xmark"></i></button></form>
             </div>
@@ -89,6 +93,20 @@
     </div>
 </div>
 
+<div id="editGlobalLimitModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-3xl p-8 w-[400px] shadow-2xl border border-slate-100">
+        <h2 class="text-xl font-black mb-2 text-slate-800">Edit Global Limit</h2>
+        <p class="text-xs text-slate-500 mb-6 font-bold">This will change the limit for ALL servers in this group. Excess keys will be rebalanced automatically.</p>
+        <form action="/edit_group_limit/{{ group_id }}" method="POST">
+            <input type="number" name="limit" value="{{ group.limit }}" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-xl mb-8 font-mono text-sm font-bold text-purple-600 text-center" required>
+            <div class="flex justify-end gap-3">
+                <button type="button" onclick="document.getElementById('editGlobalLimitModal').classList.add('hidden')" class="px-4 py-2 font-bold text-slate-400">Cancel</button>
+                <button type="submit" class="bg-purple-600 text-white px-6 py-2 rounded-xl font-bold">Update All & Rebalance</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <div id="editLimitModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
     <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100">
         <h2 class="text-xl font-black mb-4 text-slate-800">Edit Server Limit</h2>
@@ -127,7 +145,6 @@
 <div id="rm" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100"><h2 class="text-lg font-black mb-6 text-emerald-600">Renew: <span id="ru"></span></h2><form id="rf" method="POST"><input type="hidden" name="node_name" value="{{ node_id }}"><input type="number" step="0.1" name="add_gb" value="50" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-4"><input type="number" name="add_days" value="30" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-8"><div class="flex justify-end gap-3"><button type="button" onclick="closeRenew()" class="px-4 py-2 font-bold text-slate-400">Cancel</button><button class="bg-emerald-500 text-white px-4 py-2 rounded-xl font-bold">Renew</button></div></form></div></div>
 
 <script>
-// 🚀 UPDATE: Edit Limit Script
 function openEditLimit(nid, currentLimit) {
     document.getElementById('editLimitDesc').innerText = "Node: " + nid + "\nIf you decrease this limit, excess keys will be automatically migrated to other servers in this group.";
     document.getElementById('editLimitInput').value = currentLimit;
