@@ -1,13 +1,8 @@
 import os, base64, threading
 
-try:
-    from config import NODES_LIST
-except ImportError:
-    NODES_LIST = "/root/PanelMaster/nodes_list.txt"
-
-# 🚀 Database Lock ကို နေရာတိုင်းက လှမ်းသုံးနိုင်ရန် ဤနေရာသို့ ရွှေ့လိုက်ပါသည်
-db_lock = threading.Lock()
+NODES_LIST = "/root/PanelMaster/nodes_list.txt"
 AUTO_GROUPS_FILE = "/root/PanelMaster/auto_groups.json"
+db_lock = threading.Lock()
 
 def get_nodes():
     nodes = {}
@@ -26,7 +21,6 @@ def get_nodes():
 def get_all_servers():
     import json
     servers = get_nodes()
-    # 🚀 Auto Nodes များကိုပါ Monitor လုပ်နိုင်ရန် ပေါင်းထည့်မည်
     if os.path.exists(AUTO_GROUPS_FILE):
         try:
             with open(AUTO_GROUPS_FILE, 'r') as f:
@@ -63,8 +57,6 @@ try:
 except Exception: pass
 """
     b64_script = base64.b64encode(py_script.strip().encode()).decode()
-    
     if protocol == 'v2': bash_cmd = f"/usr/local/bin/v2ray-node-del-vless {username} || true"
     else: bash_cmd = f"/usr/local/bin/v2ray-node-del-out {username} {port} || true ; ufw delete allow {port}/tcp || true ; ufw delete allow {port}/udp || true"
-    
     return f"{bash_cmd} ; echo {b64_script} | base64 -d | python3"
