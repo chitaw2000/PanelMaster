@@ -1,9 +1,11 @@
 from flask import Flask, render_template, request, redirect, session, url_for, send_file, jsonify
-import json, os, subprocess, uuid, base64, re, threading, time, urllib.parse
+import json, os, subprocess, uuid, base64, re, threading, time, shutil
+import urllib.parse
 from datetime import datetime, timedelta
 
 from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, load_config, save_config
 from utils import get_nodes, get_all_servers, check_live_status, get_safe_delete_cmd, db_lock, AUTO_GROUPS_FILE
+from core_auto import load_auto_groups, save_auto_groups, find_available_node
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -11,51 +13,7 @@ BACKUP_DIR = "/root/PanelMaster/backups"
 if not os.path.exists(BACKUP_DIR): os.makedirs(BACKUP_DIR)
 
 # ==========================================
-# 🚀 AUTO GROUPS & LOAD BALANCER LOGIC
-# ==========================================
-def load_auto_groups():
-    if not os.path.exists(AUTO_GROUPS_FILE): return {}
-    try:
-        with open(AUTO_GROUPS_FILE, 'r') as f: return json.load(f)
-    except: return {}
-
-def save_auto_groups(data):
-    with open(AUTO_GROUPS_FILE, 'w') as f: json.dump(data, f, indent=4)
-
-def find_available_node(group_id, required_qty, current_db=None):
-    groups = load_auto_groups()
-    if group_id not in groups: return None, None
-    group = groups[group_id]
-    nodes = group.get("nodes", {})
-    if not nodes: return None, None
-
-    if current_db is not None: db = current_db
-    else:
-        with db_lock:
-            if os.path.exists(USERS_DB):
-                with open(USERS_DB, 'r') as f: db = json.load(f)
-            else: db = {}
-
-    counts = {nid: 0 for nid in nodes.keys()}
-    for uname, uinfo in db.items():
-        nid = uinfo.get("node")
-        if nid in counts: counts[nid] += 1
-
-    for nid in sorted(nodes.keys()):
-        ndata = nodes[nid]
-        if isinstance(ndata, dict):
-            limit = int(ndata.get("limit", group.get("limit", 30)))
-            nip = str(ndata.get("ip")).strip()
-        else:
-            limit = int(group.get("limit", 30))
-            nip = str(ndata).strip()
-            
-        if counts[nid] + required_qty <= limit:
-            return nid, nip
-    return None, None
-
-# ==========================================
-# 🚀 100% ORIGINAL BACKGROUND TRAFFIC MONITOR (Exactly like Custom Node)
+# 🚀 100% ORIGINAL BACKGROUND MONITOR (Matches Custom Node Manual Block)
 # ==========================================
 def background_traffic_monitor():
     while True:
@@ -69,6 +27,8 @@ def background_traffic_monitor():
             if not db: continue
             
             db_changed = False
+            users_to_block = [] # 🚀 Block ရမည့်သူများကို သီးသန့်စုစည်းမည်
+            
             for node_id, info in nodes.items():
                 node_ip = info.get('ip')
                 if not node_ip: continue
@@ -84,7 +44,6 @@ def background_traffic_monitor():
                                 if parts[0] == "user": user_bytes[parts[1]] = user_bytes.get(parts[1], 0) + val
                                 elif parts[0] == "inbound" and parts[1].startswith("out-"): user_bytes[parts[1][4:]] = user_bytes.get(parts[1][4:], 0) + val
                     
-                    # Custom Node ကဲ့သို့ အတိအကျ စစ်ဆေးမည်
                     for uname, uinfo in db.items():
                         if uinfo.get("node") == node_id:
                             val = user_bytes.get(uname, uinfo.get('last_raw_bytes', 0))
@@ -105,14 +64,19 @@ def background_traffic_monitor():
                                 if float(uinfo['used_bytes']) >= max_bytes and not uinfo.get('is_blocked', False):
                                     uinfo['is_blocked'] = True
                                     uinfo['is_online'] = False
-                                    safe_cmd = get_safe_delete_cmd(uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443'))
-                                    # Background တွင် Hang မဖြစ်စေရန် Popen ဖြင့် သေချာပေါက် ပိတ်ချမည်
-                                    subprocess.Popen(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\"", shell=True)
+                                    users_to_block.append((node_ip, uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443')))
                 except Exception: pass
             
             if db_changed:
                 with db_lock:
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
+            
+            # 🚀 UPDATE: Custom Node ၏ မူလ Toggle လုပ်သည့်အတိုင်း သေချာပေါက် ပိတ်ချမည့်စနစ်
+            for node_ip, uname, proto, port in users_to_block:
+                safe_cmd = get_safe_delete_cmd(uname, proto, port)
+                subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd}\"", shell=True)
+                subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"systemctl restart xray\"", shell=True)
+                
         except Exception: pass
 
 threading.Thread(target=background_traffic_monitor, daemon=True).start()
