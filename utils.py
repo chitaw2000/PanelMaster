@@ -1,4 +1,4 @@
-import os
+import os, base64
 
 try:
     from config import NODES_LIST
@@ -29,5 +29,29 @@ def check_live_status(db):
     return active
 
 def get_safe_delete_cmd(username, protocol, port):
-    if protocol == 'v2': return f"/usr/local/bin/v2ray-node-del-vless {username}"
-    else: return f"/usr/local/bin/v2ray-node-del-out {username} {port}"
+    # 🚀 Xray Config မှ User ကို အတိအကျ တိုက်ရိုက် ဖျက်ထုတ်မည့် Python Script
+    py_script = f"""
+import json
+try:
+    with open('/usr/local/etc/xray/config.json', 'r') as f: c = json.load(f)
+    new_inbounds = []
+    for inb in c.get('inbounds', []):
+        if 'settings' in inb and 'clients' in inb['settings']:
+            inb['settings']['clients'] = [cl for cl in inb['settings']['clients'] if str(cl.get('email', '')) != '{username}']
+        if str(inb.get('port', '')) == '{port}' and str(inb.get('protocol', '')) == 'shadowsocks':
+            continue
+        new_inbounds.append(inb)
+    c['inbounds'] = new_inbounds
+    with open('/usr/local/etc/xray/config.json', 'w') as f: json.dump(c, f, indent=2)
+except Exception: pass
+"""
+    # 🚀 SSH မှတဆင့် လုံခြုံစွာပို့နိုင်ရန် Base64 ပြောင်းခြင်း
+    b64_script = base64.b64encode(py_script.strip().encode()).decode()
+    
+    if protocol == 'v2':
+        bash_cmd = f"/usr/local/bin/v2ray-node-del-vless {username} || true"
+    else:
+        bash_cmd = f"/usr/local/bin/v2ray-node-del-out {username} {port} || true ; ufw delete allow {port}/tcp || true ; ufw delete allow {port}/udp || true"
+        
+    # Script အဟောင်းကိုပါ တွဲ Run ပြီး၊ အသစ်နဲ့ပါ Config ကို ရှင်းထုတ်မည်
+    return f"{bash_cmd} ; echo {b64_script} | base64 -d | python3"
