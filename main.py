@@ -52,7 +52,6 @@ def background_traffic_monitor():
                         for uname, val in user_bytes.items():
                             if uname in db and db[uname].get("node") == node_name:
                                 last_raw = db[uname].get('last_raw_bytes', 0)
-                                # ဆာဗာအသစ်ပြောင်းလိုက်၍ (သို့) Xray Restart ကျ၍ Counter ပြန်စလျှင် (val < last_raw)
                                 if val < last_raw:
                                     db[uname]['used_bytes'] = db[uname].get('used_bytes', 0) + val
                                 else:
@@ -211,12 +210,8 @@ def edit_node_ip(node_name):
                 with open(USERS_DB, 'r') as f: db = json.load(f)
                 for uname, info in db.items():
                     if info.get('node') == node_name:
-                        # Key ထဲရှိ အဟောင်း IP/DNS ကို အသစ်ဖြင့် Replace ပိုမိုတိကျစွာ လုပ်ခြင်း
                         if 'key' in info:
                             info['key'] = info['key'].replace(f"@{old_ip}:", f"@{new_ip}:")
-                        
-                        # Data အဟောင်း (used_bytes) ကို လုံးဝဆက်လက်ထိန်းသိမ်းထားမည်
-                        # Server အသစ်ဖြစ်သွားသဖြင့် Xray counter meter ကိုသာ 0 မှ ပြန်စမှတ်ရန်
                         info['last_raw_bytes'] = 0
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
                 
@@ -333,6 +328,7 @@ def toggle_node(node_name):
     save_config(config)
     return redirect(f'/node/{node_name}')
 
+# --- 🚀 [UPDATE] Key ထုတ်ရာတွင် Date အစား ရက်အရေအတွက် (Duration) ဖြင့် တွက်ချက်ခြင်း ---
 @app.route('/add_user_manual', methods=['POST'])
 def add_user_manual():
     creation_mode = request.form.get('creation_mode', 'single')
@@ -350,7 +346,11 @@ def add_user_manual():
         for i in range(qty): usernames.append(f"{base}{start+i}")
 
     n_name = request.form.get('node_name')
-    gb = float(request.form.get('total_gb', 0)); exp = request.form.get('expire_date')
+    gb = float(request.form.get('total_gb', 0))
+    # Date အစား ရက်အရေအတွက် (days) ကို ယူပြီး Date ကို အလိုအလျောက်တွက်မည်
+    days = int(request.form.get('expire_days', 30))
+    exp = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+    
     proto = request.form.get('protocol', 'v2')
     nodes = get_nodes(); n_ip = nodes.get(n_name)
     if not n_ip or not usernames: return redirect(f'/node/{n_name}')
