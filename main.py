@@ -56,6 +56,8 @@ def dashboard():
 
 @app.route('/node/<node_name>')
 def node_view(node_name):
+    nodes = get_nodes()
+    node_ip = nodes.get(node_name, "")
     db = {}
     if os.path.exists(USERS_DB):
         try:
@@ -77,7 +79,70 @@ def node_view(node_name):
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             info['is_blocked'] = info.get('is_blocked', False)
             users.append(info)
-    return render_template('node.html', node_name=node_name, users=users, config=config)
+    return render_template('node.html', node_name=node_name, node_ip=node_ip, users=users, config=config)
+
+# --- API: SSH Connection စစ်ဆေးရန် ---
+@app.route('/api/check_ssh/<node_name>')
+def check_ssh(node_name):
+    nodes = get_nodes()
+    node_ip = nodes.get(node_name)
+    if not node_ip: return jsonify({"status": "error", "msg": "Node Not Found"})
+    try:
+        cmd = f"ssh -o ConnectTimeout=3 -o PasswordAuthentication=no -o StrictHostKeyChecking=no root@{node_ip} 'echo ssh_ok'"
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if "ssh_ok" in res.stdout:
+            return jsonify({"status": "success"})
+        return jsonify({"status": "error"})
+    except:
+        return jsonify({"status": "error"})
+
+# --- API: Xray Active ဖြစ်မဖြစ် စစ်ဆေးရန် ---
+@app.route('/api/check_xray/<node_name>')
+def check_xray(node_name):
+    nodes = get_nodes()
+    node_ip = nodes.get(node_name)
+    if not node_ip: return jsonify({"status": "inactive"})
+    try:
+        cmd = f"ssh -o ConnectTimeout=3 -o PasswordAuthentication=no -o StrictHostKeyChecking=no root@{node_ip} 'systemctl is-active xray'"
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if "active" in res.stdout.strip().lower():
+            return jsonify({"status": "active"})
+        return jsonify({"status": "inactive"})
+    except:
+        return jsonify({"status": "inactive"})
+
+# --- Route: Node အသစ်ထည့်ရန် ---
+@app.route('/add_node', methods=['POST'])
+def add_node():
+    n_name = request.form.get('node_name')
+    n_ip = request.form.get('node_ip')
+    if n_name and n_ip:
+        with open(NODES_LIST, 'a') as f: 
+            f.write(f"\n{n_name} {n_ip}")
+    return redirect(url_for('node_view', node_name=n_name) + "?newly_added=yes")
+
+# --- Route: Node ဖျက်ရန် ---
+@app.route('/delete_node/<node_name>', methods=['POST'])
+def delete_node(node_name):
+    if os.path.exists(NODES_LIST):
+        with open(NODES_LIST, 'r') as f: lines = f.readlines()
+        with open(NODES_LIST, 'w') as f:
+            for line in lines:
+                if line.strip() and not line.startswith(f"{node_name} "):
+                    f.write(line)
+    return redirect(url_for('dashboard'))
+
+# --- Route: Node ဆီသို့ Script အလိုအလျောက် သွင်းရန် ---
+@app.route('/install_node/<node_name>', methods=['POST'])
+def install_node_action(node_name):
+    nodes = get_nodes()
+    node_ip = nodes.get(node_name)
+    if node_ip:
+        script_path = "/root/PanelMaster/install_node.sh"
+        if os.path.exists(script_path):
+            cmd = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} 'bash -s' < {script_path}"
+            subprocess.run(cmd, shell=True)
+    return redirect(f'/node/{node_name}')
 
 @app.route('/api/stats/<node_name>')
 def api_stats(node_name):
@@ -112,25 +177,6 @@ def toggle_node(node_name):
         config['disabled_nodes'].append(node_name)
         if node_ip: os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl stop xray'")
     save_config(config)
-    return redirect(f'/node/{node_name}')
-
-@app.route('/add_node', methods=['POST'])
-def add_node():
-    n_name = request.form.get('node_name')
-    n_ip = request.form.get('node_ip')
-    if n_name and n_ip:
-        with open(NODES_LIST, 'a') as f: f.write(f"\n{n_name} {n_ip}")
-    return redirect(url_for('node_view', node_name=n_name) + "?newly_added=yes")
-
-@app.route('/install_node/<node_name>', methods=['POST'])
-def install_node_action(node_name):
-    nodes = get_nodes()
-    node_ip = nodes.get(node_name)
-    if node_ip:
-        script_path = "/root/PanelMaster/install_node.sh"
-        if os.path.exists(script_path):
-            cmd = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} 'bash -s' < {script_path}"
-            subprocess.run(cmd, shell=True)
     return redirect(f'/node/{node_name}')
 
 @app.route('/add_user_manual', methods=['POST'])
