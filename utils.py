@@ -1,9 +1,13 @@
-import os, base64
+import os, base64, threading
 
 try:
     from config import NODES_LIST
 except ImportError:
     NODES_LIST = "/root/PanelMaster/nodes_list.txt"
+
+# 🚀 Database Lock ကို နေရာတိုင်းက လှမ်းသုံးနိုင်ရန် ဤနေရာသို့ ရွှေ့လိုက်ပါသည်
+db_lock = threading.Lock()
+AUTO_GROUPS_FILE = "/root/PanelMaster/auto_groups.json"
 
 def get_nodes():
     nodes = {}
@@ -19,6 +23,20 @@ def get_nodes():
                     nodes[parts[0]] = {"name": parts[0], "ip": parts[1]}
     return nodes
 
+def get_all_servers():
+    import json
+    servers = get_nodes()
+    # 🚀 Auto Nodes များကိုပါ Monitor လုပ်နိုင်ရန် ပေါင်းထည့်မည်
+    if os.path.exists(AUTO_GROUPS_FILE):
+        try:
+            with open(AUTO_GROUPS_FILE, 'r') as f:
+                groups = json.load(f)
+                for gid, gdata in groups.items():
+                    for nid, nip in gdata.get("nodes", {}).items():
+                        servers[nid] = {"name": f"[AUTO] {nid}", "ip": nip}
+        except: pass
+    return servers
+
 def check_live_status(db):
     active = set()
     for uname, info in db.items():
@@ -29,7 +47,6 @@ def check_live_status(db):
     return active
 
 def get_safe_delete_cmd(username, protocol, port):
-    # 🚀 Xray Config မှ User ကို အတိအကျ တိုက်ရိုက် ဖျက်ထုတ်မည့် Python Script
     py_script = f"""
 import json
 try:
@@ -45,13 +62,9 @@ try:
     with open('/usr/local/etc/xray/config.json', 'w') as f: json.dump(c, f, indent=2)
 except Exception: pass
 """
-    # 🚀 SSH မှတဆင့် လုံခြုံစွာပို့နိုင်ရန် Base64 ပြောင်းခြင်း
     b64_script = base64.b64encode(py_script.strip().encode()).decode()
     
-    if protocol == 'v2':
-        bash_cmd = f"/usr/local/bin/v2ray-node-del-vless {username} || true"
-    else:
-        bash_cmd = f"/usr/local/bin/v2ray-node-del-out {username} {port} || true ; ufw delete allow {port}/tcp || true ; ufw delete allow {port}/udp || true"
-        
-    # Script အဟောင်းကိုပါ တွဲ Run ပြီး၊ အသစ်နဲ့ပါ Config ကို ရှင်းထုတ်မည်
+    if protocol == 'v2': bash_cmd = f"/usr/local/bin/v2ray-node-del-vless {username} || true"
+    else: bash_cmd = f"/usr/local/bin/v2ray-node-del-out {username} {port} || true ; ufw delete allow {port}/tcp || true ; ufw delete allow {port}/udp || true"
+    
     return f"{bash_cmd} ; echo {b64_script} | base64 -d | python3"
