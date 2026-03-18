@@ -23,12 +23,14 @@ def check_live_status(db):
     active = set()
     for uname, info in db.items():
         try:
-            # 🚀 UPDATE: used_bytes ကိုမစစ်တော့ဘဲ၊ တကယ် Active ဖြစ်နေတဲ့ is_online ကိုသာ စစ်မည်
             if info.get('is_online', False) and not info.get('is_blocked', False):
                 active.add(uname)
         except: pass
     return active
 
 def get_safe_delete_cmd(username, protocol, port):
-    if protocol == 'v2': return f"/usr/local/bin/v2ray-node-del-vless {username}"
-    else: return f"/usr/local/bin/v2ray-node-del-out {username} {port}"
+    # 🚀 UPDATE: yes | ကိုခံထားခြင်းဖြင့် Script များမှ (Y/N) တောင်းပါက အလိုအလျောက် ကျော်ဖြတ်ပြီး ဖျက်မည်
+    if protocol == 'v2': 
+        return f"yes | /usr/local/bin/v2ray-node-del-vless {username}"
+    else: 
+        return f"yes | /usr/local/bin/v2ray-node-del-out {username} {port}"
