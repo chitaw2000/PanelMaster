@@ -1,4 +1,3 @@
-cat << 'EOF_MAIN' > /root/PanelMaster/main.py
 from flask import Flask, render_template, request, redirect, session, url_for, send_file, jsonify
 import json, os, subprocess, uuid, base64, re
 from datetime import datetime, timedelta
@@ -307,4 +306,3 @@ def config_action():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8888)
-EOF_MAIN
