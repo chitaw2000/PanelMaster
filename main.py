@@ -88,7 +88,6 @@ def add_auto_group():
         save_auto_groups(groups)
     return redirect(url_for('dashboard'))
 
-# 🚀 UPDATE: Auto Group အား အလွယ်တကူ ဖျက်နိုင်သောစနစ်
 @app.route('/delete_auto_group/<group_id>', methods=['POST'])
 def delete_auto_group(group_id):
     groups = load_auto_groups()
@@ -145,7 +144,8 @@ def add_server_to_group(group_id):
     if group_id in groups and nid and nip:
         groups[group_id]["nodes"][nid] = {"ip": nip, "limit": limit}
         save_auto_groups(groups)
-    return redirect(f'/group/{group_id}')
+    # 🚀 UPDATE: newly_added flag ကို ထည့်ပေးလိုက်ပါသည် (Install Prompt ပြရန်)
+    return redirect(f'/group/{group_id}?newly_added={nid}')
 
 @app.route('/delete_server_from_group/<group_id>/<node_id>', methods=['POST'])
 def delete_server_from_group(group_id, node_id):
@@ -172,7 +172,6 @@ def delete_server_from_group(group_id, node_id):
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(f'/group/{group_id}')
 
-# 🚀 UPDATE: Group ကြီးတစ်ခုလုံး၏ Global Limit အား သတ်မှတ်ပြီး Rebalance လုပ်မည့်စနစ်
 @app.route('/edit_group_limit/<group_id>', methods=['POST'])
 def edit_group_limit(group_id):
     new_limit = int(request.form.get('limit', 30))
@@ -192,12 +191,11 @@ def edit_group_limit(group_id):
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
 
-    # Limit ထက် ပိုနေသော Key များအားလုံးကို စုစည်းမည်
     excess_users = []
     for nid, ndata in groups[group_id]["nodes"].items():
         users_on_node = [uname for uname, info in db.items() if info.get('node') == nid]
         if len(users_on_node) > new_limit:
-            excess_users.extend(users_on_node[new_limit:]) # Limit အထက် ပိုနေသည်များကို ဖြတ်ယူမည်
+            excess_users.extend(users_on_node[new_limit:])
 
     if not excess_users:
         return redirect(f'/group/{group_id}')
@@ -213,11 +211,9 @@ def edit_group_limit(group_id):
         old_port = uinfo.get('port')
         proto = uinfo.get('protocol')
         
-        # နေရာလွတ်သော Server အသစ်ကိုရှာမည်
         new_node_id, new_node_ip = find_available_node(group_id, 1, current_db=db)
         if not new_node_id: break
 
-        # အဟောင်းမှ ဖျက်မည်
         if proto == 'v2':
             cmd_del = f"/usr/local/bin/v2ray-node-del-vless {uname} || true"
         else:
@@ -225,14 +221,12 @@ def edit_group_limit(group_id):
         if old_ip not in cmds_by_ip: cmds_by_ip[old_ip] = []
         cmds_by_ip[old_ip].append(cmd_del)
 
-        # အသစ်တွင် Port မထပ်စေရန် တွက်ချက်မည်
         used_ports = [int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out' and i.get('node') == new_node_id]
         new_port = str(max(used_ports) + 1) if used_ports else "10001"
 
         uid = uinfo.get('uuid')
         safe_u = urllib.parse.quote(uname)
 
-        # 🚀 Format အမှန်ဖြင့် အသစ်ထုတ်မည်
         if proto == 'v2':
             new_port = "443"
             k = f"vless://{uid}@{new_node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
@@ -312,7 +306,6 @@ def edit_server_limit(group_id, node_id):
             uid = uinfo.get('uuid')
             safe_u = urllib.parse.quote(uname)
 
-            # 🚀 UPDATE: Format အမှန်
             if proto == 'v2':
                 new_port = "443"
                 k = f"vless://{uid}@{new_node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
@@ -382,7 +375,6 @@ def add_user_auto():
         uid = str(uuid.uuid4()).strip()
         safe_u = urllib.parse.quote(u)
         
-        # 🚀 UPDATE: Custom Server Format နှင့် ၁၀၀% တူညီသော Universal Outline Format
         if proto == 'v2':
             port = "443"
             k = f"vless://{uid}@{node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
@@ -603,7 +595,6 @@ def add_user_manual():
         uid = str(uuid.uuid4()).strip()
         safe_u = urllib.parse.quote(u)
         
-        # 🚀 Custom Node Format 
         if proto == 'v2':
             port = "443"
             k = f"vless://{uid}@{nip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
