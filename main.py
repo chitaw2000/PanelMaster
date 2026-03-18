@@ -122,14 +122,27 @@ def add_node():
     return redirect(url_for('node_view', node_name=n_name) + "?newly_added=yes")
 
 # --- Route: Node ဖျက်ရန် ---
+# --- Route: Node ဖျက်ရန် ---
 @app.route('/delete_node/<node_name>', methods=['POST'])
 def delete_node(node_name):
+    # (၁) nodes_list.txt ထဲကနေ ရှာဖျက်မယ်
     if os.path.exists(NODES_LIST):
-        with open(NODES_LIST, 'r') as f: lines = f.readlines()
+        with open(NODES_LIST, 'r') as f: 
+            lines = f.readlines()
         with open(NODES_LIST, 'w') as f:
             for line in lines:
-                if line.strip() and not line.startswith(f"{node_name} "):
-                    f.write(line)
+                if line.strip():
+                    parts = line.split()
+                    # စာကြောင်းရဲ့ ပထမဆုံးနာမည်က ဖျက်မယ့် Node နဲ့ မတူမှသာ ပြန်သိမ်းမယ်
+                    if len(parts) >= 1 and parts[0] != node_name:
+                        f.write(line)
+                        
+    # (၂) Disabled လုပ်ထားတဲ့ စာရင်းထဲမှာ ပါနေခဲ့ရင်ပါ တစ်ခါတည်း ရှင်းထုတ်မယ်
+    config = load_config()
+    if node_name in config.get('disabled_nodes', []):
+        config['disabled_nodes'].remove(node_name)
+        save_config(config)
+        
     return redirect(url_for('dashboard'))
 
 # --- Route: Node ဆီသို့ Script အလိုအလျောက် သွင်းရန် ---
