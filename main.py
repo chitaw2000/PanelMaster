@@ -14,6 +14,14 @@ if not os.path.exists(BACKUP_DIR): os.makedirs(BACKUP_DIR)
 
 start_background_monitor()
 
+# 🚀 Bulk ဖြင့် Key ထုတ်ရာတွင် Space နှင့် လိုင်းအသစ်ဆင်းခြင်း (Enter) များကို လုံးဝသန့်စင်ပေးမည့်စနစ်
+def sanitize_usernames(raw_list):
+    clean = []
+    for u in raw_list:
+        u = re.sub(r'[^a-zA-Z0-9_]', '', u.strip().replace(" ", "_"))
+        if u: clean.append(u)
+    return clean
+
 @app.before_request
 def check_auth():
     if request.endpoint not in ['login', 'static', 'api_stats'] and not session.get('logged_in'): return redirect(url_for('login'))
@@ -100,7 +108,6 @@ def group_view(group_id):
             users.append(info)
             if info.get('node') in counts: counts[info.get('node')] += 1
             
-    # 🚀 Key များကို Node ID အလိုက် စီစဉ်ပေးခြင်း (UI တွင် နံပါတ်စဉ် အတိအကျပြရန်)
     users = sorted(users, key=lambda x: (x.get('node', ''), x.get('username', '')))
     idx_tracker = {}
     for u in users:
@@ -108,8 +115,14 @@ def group_view(group_id):
         idx_tracker[n] = idx_tracker.get(n, 0) + 1
         u['node_key_idx'] = idx_tracker[n]
             
-    for nid, nip in g_nodes.items():
-        server_stats.append({"id": nid, "ip": nip, "count": counts[nid]})
+    for nid, ndata in g_nodes.items():
+        if isinstance(ndata, dict):
+            nip = ndata.get("ip")
+            limit = int(ndata.get("limit", group.get("limit", 30)))
+        else:
+            nip = ndata
+            limit = int(group.get("limit", 30))
+        server_stats.append({"id": nid, "ip": nip, "count": counts[nid], "limit": limit})
         
     return render_template('group.html', group_id=group_id, group=group, users=users, server_stats=server_stats)
 
@@ -117,31 +130,57 @@ def group_view(group_id):
 def add_server_to_group(group_id):
     nid = request.form.get('node_id', '').strip().replace(" ", "_")
     nip = request.form.get('node_ip', '').strip()
+    limit = int(request.form.get('limit', 30))
     groups = load_auto_groups()
     if group_id in groups and nid and nip:
-        groups[group_id]["nodes"][nid] = nip
+        groups[group_id]["nodes"][nid] = {"ip": nip, "limit": limit}
         save_auto_groups(groups)
     return redirect(f'/group/{group_id}')
 
 @app.route('/delete_server_from_group/<group_id>/<node_id>', methods=['POST'])
 def delete_server_from_group(group_id, node_id):
     groups = load_auto_groups()
+    node_ip = None
+    
+    # 🚀 Auto Group ထဲမှ Node Server ကို ဖယ်ရှားမည်
     if group_id in groups and node_id in groups[group_id]["nodes"]:
+        ndata = groups[group_id]["nodes"][node_id]
+        node_ip = ndata.get("ip") if isinstance(ndata, dict) else ndata
         del groups[group_id]["nodes"][node_id]
         save_auto_groups(groups)
+        
+    # 🚀 ထို Server တွင်းရှိ Auto Key အားလုံးကို DB နှင့် Server ပေါ်မှ အလိုအလျောက် အပြတ်ဖျက်မည်
+    if node_ip:
+        with db_lock:
+            if os.path.exists(USERS_DB):
+                with open(USERS_DB, 'r') as f: db = json.load(f)
+                users_to_delete = [u for u, info in db.items() if info.get('node') == node_id]
+                for u in users_to_delete:
+                    info = db[u]
+                    cmd = get_safe_delete_cmd(u, info.get('protocol', 'v2'), info.get('port', '443'))
+                    subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"{cmd}\"", shell=True)
+                    del db[u]
+                if users_to_delete:
+                    subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"systemctl restart xray\"", shell=True)
+                    with open(USERS_DB, 'w') as f: json.dump(db, f)
+                    
     return redirect(f'/group/{group_id}')
 
 @app.route('/add_user_auto', methods=['POST'])
 def add_user_auto():
     gid = request.form.get('group_id', '')
     mode = request.form.get('creation_mode', 'single'); usernames = []
-    if mode == 'single': usernames = [request.form.get('single_username', '').strip()]
-    elif mode == 'list': usernames = [u.strip() for u in re.split(r'[,\n]+', request.form.get('list_usernames', '')) if u.strip()]
+    
+    if mode == 'single': usernames = [request.form.get('single_username', '')]
+    elif mode == 'list': usernames = re.split(r'[,\n\r]+', request.form.get('list_usernames', ''))
     elif mode == 'pattern':
-        base = request.form.get('base_name', '').strip(); start = int(request.form.get('start_num', 1)); qty = int(request.form.get('qty', 1))
+        base = request.form.get('base_name', '').strip()
+        start = int(request.form.get('start_num', 1))
+        qty = int(request.form.get('qty', 1))
         usernames = [f"{base}{start+i}" for i in range(qty)]
 
-    usernames = [u for u in usernames if u]
+    # 🚀 Clean Usernames
+    usernames = sanitize_usernames(usernames)
     if not usernames: return redirect(f'/group/{gid}')
 
     node_id, node_ip = find_available_node(gid, len(usernames))
@@ -177,7 +216,6 @@ def add_user_auto():
         subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"systemctl restart xray\"", shell=True)
     return redirect(f'/group/{gid}')
 
-# 🚀 UPDATE: Auto Nodes များကို Custom လို အလုပ်လုပ်ခွင့်ပေးသည်
 @app.route('/node/<node_id>')
 def node_view(node_id):
     nodes = get_all_servers()
@@ -190,7 +228,6 @@ def node_view(node_id):
             except: pass
     config = load_config(); active_users = check_live_status(db); users = []
     for uname, info in db.items():
-        # Auto Node ရော Custom Node ပါ အလုပ်လုပ်ရန် group စစ်ဆေးခြင်းကို ဖြုတ်ထားသည်
         if info.get('node') == node_id:
             info['used_bytes'] = float(info.get('used_bytes', 0)); info['total_gb'] = float(info.get('total_gb', 0)); info['used_gb_str'] = f"{(info['used_bytes'] / (1024**3)):.2f}"
             info['username'] = uname; info['actual_key'] = info.get('key') or "No Key Found"
@@ -216,7 +253,6 @@ def delete_node(node_id):
         node_ip = nodes[node_id].get('ip')
         if node_ip: subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl stop xray'", shell=True)
     
-    # Custom Node မှ ဖျက်ခြင်း
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f: lines = f.readlines()
         with open(NODES_LIST, 'w') as f:
@@ -224,7 +260,6 @@ def delete_node(node_id):
                 if line.strip() and not line.startswith(f"{node_id}|") and not line.startswith(f"{node_id} "): 
                     f.write(line)
                     
-    # Auto Group မှ ဖျက်ခြင်း
     groups = load_auto_groups()
     is_auto = False
     for gid, gdata in groups.items():
@@ -246,7 +281,6 @@ def replace_id(current_id):
     if current_id not in nodes or not old_id: return redirect(f'/node/{current_id}')
     current_ip = nodes[current_id].get('ip')
     
-    # Custom Node Replace
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f: lines = f.readlines()
         with open(NODES_LIST, 'w') as f:
@@ -261,13 +295,12 @@ def replace_id(current_id):
                             f.write(f"{old_id} {parts[1]}\n")
                     else: f.write(line)
                     
-    # Auto Group Replace
     groups = load_auto_groups()
     for gid, gdata in groups.items():
         if current_id in gdata.get("nodes", {}):
-            ip = gdata["nodes"][current_id]
+            ndata = gdata["nodes"][current_id]
             del groups[gid]["nodes"][current_id]
-            groups[gid]["nodes"][old_id] = ip
+            groups[gid]["nodes"][old_id] = ndata
             save_auto_groups(groups)
             break
             
@@ -350,17 +383,16 @@ def add_user_manual():
     nid = request.form.get('node_id'); nip = get_all_servers().get(nid, {}).get('ip')
     if not nip: return redirect(f'/node/{nid}')
     
-    gid = ""
-    groups = load_auto_groups()
-    for g_id, gdata in groups.items():
-        if nid in gdata.get("nodes", {}): gid = g_id; break
-        
     mode = request.form.get('creation_mode', 'single'); usernames = []
-    if mode == 'single': usernames = [request.form.get('single_username', '').strip()]
-    elif mode == 'list': usernames = [u.strip() for u in re.split(r'[,\n]+', request.form.get('list_usernames', '')) if u.strip()]
+    if mode == 'single': usernames = [request.form.get('single_username', '')]
+    elif mode == 'list': usernames = re.split(r'[,\n\r]+', request.form.get('list_usernames', ''))
     elif mode == 'pattern':
         base = request.form.get('base_name', '').strip(); start = int(request.form.get('start_num', 1)); qty = int(request.form.get('qty', 1))
         usernames = [f"{base}{start+i}" for i in range(qty)]
+
+    # 🚀 Clean Usernames
+    usernames = sanitize_usernames(usernames)
+    if not usernames: return redirect(f'/node/{nid}')
 
     gb = float(request.form.get('total_gb', 0)); days = int(request.form.get('expire_days', 30))
     exp = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d"); proto = request.form.get('protocol', 'v2')
@@ -373,7 +405,7 @@ def add_user_manual():
     max_p = max([int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out'] + [10000])
     cmds = []
     for u in usernames:
-        if u in db or not u: continue
+        if u in db: continue
         uid = str(uuid.uuid4())
         if proto == 'v2':
             port = "443"; k = f"vless://{uid}@{nip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{u}"
@@ -382,14 +414,14 @@ def add_user_manual():
             max_p += 1; port = str(max_p); ss_conf = base64.b64encode(f"chacha20-ietf-poly1305:{uid}".encode()).decode()
             k = f"ss://{ss_conf}@{nip}:{port}#{u}"
             cmds.append(f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
-        db[u] = {"node": nid, "group": gid, "protocol": proto, "uuid": uid, "port": port, "total_gb": gb, "expire_date": exp, "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False, "key": k}
+        db[u] = {"node": nid, "group": "", "protocol": proto, "uuid": uid, "port": port, "total_gb": gb, "expire_date": exp, "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False, "key": k}
     
     if cmds:
         with db_lock:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
         subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{nip} \"{' ; '.join(cmds)}\"", shell=True)
         subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{nip} \"systemctl restart xray\"", shell=True)
-    return redirect(request.referrer)
+    return redirect(f'/node/{nid}')
 
 @app.route('/toggle_user/<username>', methods=['POST'])
 def toggle_user(username):
