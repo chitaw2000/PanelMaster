@@ -72,19 +72,20 @@ def login():
 @app.route('/logout')
 def logout(): session.clear(); return redirect(url_for('login'))
 
-def get_all_backups_flat():
-    # ID နှင့် Filename ကို တိုက်ရိုက်တွဲ၍ Flat List အဖြစ်ပို့မည်
-    backups = []
+# --- 🚀 Folder ပုံစံပြရန် Data ကို ID အလိုက် စုစည်းပေးသော Function သစ် ---
+def get_node_backups():
+    backups = {}
     if os.path.exists(BACKUP_DIR):
         for f in sorted(os.listdir(BACKUP_DIR), reverse=True):
             if f.endswith('.json') and f.startswith("backup_"):
                 parts = f.split('_')
                 if len(parts) >= 3:
                     nid = parts[1]
+                    if nid not in backups: backups[nid] = []
                     path = os.path.join(BACKUP_DIR, f)
                     size = os.path.getsize(path) / 1024
                     ctime = datetime.fromtimestamp(os.path.getctime(path)).strftime('%Y-%m-%d %H:%M:%S')
-                    backups.append({"node_id": nid, "filename": f, "size": f"{size:.1f} KB", "time": ctime})
+                    backups[nid].append({"filename": f, "size": f"{size:.1f} KB", "time": ctime})
     return backups
 
 @app.route('/')
@@ -104,7 +105,7 @@ def dashboard():
                 if uname in active_users and not i.get('is_blocked'): live_count += 1
                 all_users.append({'username': uname, 'node': nid, 'key': i.get('key', 'No Key')})
         node_stats.append({"id": nid, "name": info.get('name', nid), "ip": info.get('ip', ''), "total": total_count, "live": live_count, "disabled": nid in config.get('disabled_nodes', [])})
-    return render_template('dashboard.html', nodes=node_stats, all_users=all_users, config=config, backups=get_all_backups_flat())
+    return render_template('dashboard.html', nodes=node_stats, all_users=all_users, config=config, backups=get_node_backups())
 
 @app.route('/node/<node_id>')
 def node_view(node_id):
@@ -279,22 +280,18 @@ def toggle_node(node_id):
 def add_user_manual():
     nid = request.form.get('node_id'); nip = get_nodes().get(nid, {}).get('ip')
     if not nip: return redirect(f'/node/{nid}')
-    
     mode = request.form.get('creation_mode', 'single'); usernames = []
     if mode == 'single': usernames = [request.form.get('single_username', '').strip()]
     elif mode == 'list': usernames = [u.strip() for u in re.split(r'[,\n]+', request.form.get('list_usernames', '')) if u.strip()]
     elif mode == 'pattern':
         base = request.form.get('base_name', '').strip(); start = int(request.form.get('start_num', 1)); qty = int(request.form.get('qty', 1))
         usernames = [f"{base}{start+i}" for i in range(qty)]
-
     gb = float(request.form.get('total_gb', 0)); days = int(request.form.get('expire_days', 30))
     exp = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d"); proto = request.form.get('protocol', 'v2')
-    
     db = {}
     with db_lock:
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
-            
     max_p = max([int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out'] + [10000])
     cmds = []
     for u in usernames:
@@ -308,7 +305,6 @@ def add_user_manual():
             k = f"ss://{ss_conf}@{nip}:{port}#{u}"
             cmds.append(f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
         db[u] = {"node": nid, "protocol": proto, "uuid": uid, "port": port, "total_gb": gb, "expire_date": exp, "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "key": k}
-    
     if cmds:
         with db_lock:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
@@ -388,11 +384,9 @@ def bulk_delete():
             with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
 
-# --- 🚀 [NEW] Global Backup ယူရန် နှင့် တင်ရန် (Settings ထဲမှ) ---
 @app.route('/download_backup_global')
 def download_backup_global():
-    if os.path.exists(USERS_DB): 
-        return send_file(USERS_DB, as_attachment=True, download_name=f"qito_db_backup.json")
+    if os.path.exists(USERS_DB): return send_file(USERS_DB, as_attachment=True, download_name=f"qito_db_backup.json")
     return "No DB found."
 
 @app.route('/upload_backup', methods=['POST'])
@@ -411,19 +405,12 @@ def save_settings_basic():
 
 @app.route('/config_action', methods=['POST'])
 def config_action():
-    config = load_config()
-    ctype = request.form.get('type')
-    action = request.form.get('action')
-    val = request.form.get('val', '').strip()
+    config = load_config(); ctype = request.form.get('type'); action = request.form.get('action'); val = request.form.get('val', '').strip()
     target_list = 'admin_ids' if ctype == 'admin' else 'mod_ids'
-    
     if action == 'add' and val:
-        if val not in config.get(target_list, []): 
-            config.setdefault(target_list, []).append(val)
+        if val not in config.get(target_list, []): config.setdefault(target_list, []).append(val)
     elif action == 'del' and val:
-        if val in config.get(target_list, []): 
-            config[target_list].remove(val)
-            
+        if val in config.get(target_list, []): config[target_list].remove(val)
     save_config(config)
     return redirect(url_for('dashboard'))
 
