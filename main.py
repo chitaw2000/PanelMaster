@@ -10,13 +10,8 @@ app.secret_key = SECRET_KEY
 
 db_lock = threading.Lock()
 BACKUP_DIR = "/root/PanelMaster/backups"
+if not os.path.exists(BACKUP_DIR): os.makedirs(BACKUP_DIR)
 
-if not os.path.exists(BACKUP_DIR):
-    os.makedirs(BACKUP_DIR)
-
-# =========================================================
-# 🚀 BACKGROUND TRAFFIC MONITOR
-# =========================================================
 def background_traffic_monitor():
     while True:
         time.sleep(30)
@@ -63,13 +58,9 @@ def background_traffic_monitor():
 
 threading.Thread(target=background_traffic_monitor, daemon=True).start()
 
-# =========================================================
-# 🌐 ROUTES
-# =========================================================
 @app.before_request
 def check_auth():
-    if request.endpoint not in ['login', 'static', 'api_stats'] and not session.get('logged_in'):
-        return redirect(url_for('login'))
+    if request.endpoint not in ['login', 'static', 'api_stats'] and not session.get('logged_in'): return redirect(url_for('login'))
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -81,16 +72,19 @@ def login():
 @app.route('/logout')
 def logout(): session.clear(); return redirect(url_for('login'))
 
-def get_node_backups():
-    backups = {}
+def get_all_backups_flat():
+    # ID နှင့် Filename ကို တိုက်ရိုက်တွဲ၍ Flat List အဖြစ်ပို့မည်
+    backups = []
     if os.path.exists(BACKUP_DIR):
         for f in sorted(os.listdir(BACKUP_DIR), reverse=True):
-            if f.endswith('.json'):
+            if f.endswith('.json') and f.startswith("backup_"):
                 parts = f.split('_')
-                if len(parts) >= 3 and parts[0] == "backup":
+                if len(parts) >= 3:
                     nid = parts[1]
-                    if nid not in backups: backups[nid] = []
-                    backups[nid].append(f)
+                    path = os.path.join(BACKUP_DIR, f)
+                    size = os.path.getsize(path) / 1024
+                    ctime = datetime.fromtimestamp(os.path.getctime(path)).strftime('%Y-%m-%d %H:%M:%S')
+                    backups.append({"node_id": nid, "filename": f, "size": f"{size:.1f} KB", "time": ctime})
     return backups
 
 @app.route('/')
@@ -110,7 +104,7 @@ def dashboard():
                 if uname in active_users and not i.get('is_blocked'): live_count += 1
                 all_users.append({'username': uname, 'node': nid, 'key': i.get('key', 'No Key')})
         node_stats.append({"id": nid, "name": info.get('name', nid), "ip": info.get('ip', ''), "total": total_count, "live": live_count, "disabled": nid in config.get('disabled_nodes', [])})
-    return render_template('dashboard.html', nodes=node_stats, all_users=all_users, config=config, backups=get_node_backups())
+    return render_template('dashboard.html', nodes=node_stats, all_users=all_users, config=config, backups=get_all_backups_flat())
 
 @app.route('/node/<node_id>')
 def node_view(node_id):
@@ -125,14 +119,13 @@ def node_view(node_id):
     config = load_config(); active_users = check_live_status(db); users = []
     for uname, info in db.items():
         if info.get('node') == node_id:
-            info['used_bytes'] = float(info.get('used_bytes', 0)); info['total_gb'] = float(info.get('total_gb', 0))
-            info['used_gb_str'] = f"{(info['used_bytes'] / (1024**3)):.2f}"
+            info['used_bytes'] = float(info.get('used_bytes', 0)); info['total_gb'] = float(info.get('total_gb', 0)); info['used_gb_str'] = f"{(info['used_bytes'] / (1024**3)):.2f}"
             info['username'] = uname; info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             info['is_blocked'] = info.get('is_blocked', False)
             users.append(info)
     other_nodes = [nid for nid in nodes.keys() if nid != node_id]
-    return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, backups=get_node_backups(), config=config)
+    return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, config=config)
 
 @app.route('/add_node', methods=['POST'])
 def add_node():
@@ -207,29 +200,23 @@ def download_backup(filename):
     if os.path.exists(path): return send_file(path, as_attachment=True)
     return redirect(request.referrer)
 
-# --- 🚀 [NEW] Backup ကိုဖျက်ရန် ---
 @app.route('/delete_backup/<filename>', methods=['POST'])
 def delete_backup(filename):
     path = os.path.join(BACKUP_DIR, filename)
     if os.path.exists(path): os.remove(path)
     return redirect(request.referrer)
 
-# --- 🚀 [NEW] Node တစ်ခုလုံး၏ Data အား Database မှ အပြတ်ရှင်းရန် ---
 @app.route('/purge_node/<node_id>', methods=['POST'])
 def purge_node(node_id):
-    # 1. users_db.json မှ ဖျက်မည်
     with db_lock:
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
             users_to_delete = [u for u, info in db.items() if info.get('node') == node_id]
             for u in users_to_delete: del db[u]
             with open(USERS_DB, 'w') as f: json.dump(db, f)
-            
-    # 2. backups folder မှ ဖိုင်များပါ ရှင်းမည်
     if os.path.exists(BACKUP_DIR):
         for f in os.listdir(BACKUP_DIR):
-            if f.startswith(f"backup_{node_id}_"):
-                os.remove(os.path.join(BACKUP_DIR, f))
+            if f.startswith(f"backup_{node_id}_"): os.remove(os.path.join(BACKUP_DIR, f))
     return redirect(request.referrer)
 
 @app.route('/api/check_ssh/<node_id>')
@@ -401,6 +388,19 @@ def bulk_delete():
             with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
 
+# --- 🚀 [NEW] Global Backup ယူရန် နှင့် တင်ရန် (Settings ထဲမှ) ---
+@app.route('/download_backup_global')
+def download_backup_global():
+    if os.path.exists(USERS_DB): 
+        return send_file(USERS_DB, as_attachment=True, download_name=f"qito_db_backup.json")
+    return "No DB found."
+
+@app.route('/upload_backup', methods=['POST'])
+def upload_backup():
+    file = request.files.get('backup_file')
+    if file: file.save(USERS_DB)
+    return redirect(url_for('dashboard'))
+
 @app.route('/save_settings_basic', methods=['POST'])
 def save_settings_basic():
     config = load_config()
@@ -411,12 +411,19 @@ def save_settings_basic():
 
 @app.route('/config_action', methods=['POST'])
 def config_action():
-    config = load_config(); ctype = request.form.get('type'); action = request.form.get('action'); val = request.form.get('val', '').strip()
+    config = load_config()
+    ctype = request.form.get('type')
+    action = request.form.get('action')
+    val = request.form.get('val', '').strip()
     target_list = 'admin_ids' if ctype == 'admin' else 'mod_ids'
+    
     if action == 'add' and val:
-        if val not in config.get(target_list, []): config.setdefault(target_list, []).append(val)
+        if val not in config.get(target_list, []): 
+            config.setdefault(target_list, []).append(val)
     elif action == 'del' and val:
-        if val in config.get(target_list, []): config[target_list].remove(val)
+        if val in config.get(target_list, []): 
+            config[target_list].remove(val)
+            
     save_config(config)
     return redirect(url_for('dashboard'))
 
