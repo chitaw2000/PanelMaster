@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, redirect, session, url_for, send_file, jsonify
-import json, os, subprocess, uuid, base64, re
+import json, os, subprocess, uuid, base64, re, threading, time
 from datetime import datetime, timedelta
 
 from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, load_config, save_config
@@ -7,6 +7,81 @@ from utils import get_nodes, check_live_status, get_safe_delete_cmd
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
+
+# =========================================================
+# 🚀 BACKGROUND TRAFFIC MONITOR & AUTO-BLOCK SYSTEM
+# =========================================================
+def background_traffic_monitor():
+    while True:
+        time.sleep(60) # ၁ မိနစ်တစ်ခါ နောက်ကွယ်မှ အလိုအလျောက် စစ်ဆေးမည်
+        try:
+            nodes = get_nodes()
+            if not nodes: continue
+            
+            db = {}
+            if os.path.exists(USERS_DB):
+                try:
+                    with open(USERS_DB, 'r') as f: db = json.load(f)
+                except: pass
+            
+            if not db: continue
+            db_changed = False
+            
+            for node_name, node_ip in nodes.items():
+                try:
+                    cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\""
+                    res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                    if res.stdout.strip():
+                        stats = json.loads(res.stdout).get("stat", [])
+                        user_bytes = {}
+                        
+                        # Xray ဆီမှ Data ကို မှန်ကန်စွာ ခွဲထုတ်ဖတ်ရှုခြင်း (VLESS & SS)
+                        for s in stats:
+                            parts = s.get("name", "").split(">>>")
+                            val = s.get("value", 0)
+                            if len(parts) >= 4:
+                                if parts[0] == "user": # VLESS Protocol အတွက်
+                                    uname = parts[1]
+                                    user_bytes[uname] = user_bytes.get(uname, 0) + val
+                                elif parts[0] == "inbound" and parts[1].startswith("out-"): # Shadowsocks အတွက်
+                                    uname = parts[1][4:]
+                                    user_bytes[uname] = user_bytes.get(uname, 0) + val
+                                    
+                        # Database သို့ Update လုပ်ခြင်း
+                        for uname, val in user_bytes.items():
+                            if uname in db and db[uname].get("node") == node_name:
+                                last_raw = db[uname].get('last_raw_bytes', 0)
+                                if val < last_raw:
+                                    db[uname]['used_bytes'] = db[uname].get('used_bytes', 0) + val
+                                else:
+                                    db[uname]['used_bytes'] = db[uname].get('used_bytes', 0) + (val - last_raw)
+                                
+                                db[uname]['last_raw_bytes'] = val
+                                db_changed = True
+                                
+                                # Limit ပြည့်လျှင် အလိုအလျောက် ပိတ်ချခြင်း (Auto-Block)
+                                tot_gb = float(db[uname].get('total_gb', 0))
+                                if tot_gb > 0:
+                                    max_bytes = tot_gb * (1024**3)
+                                    if db[uname]['used_bytes'] >= max_bytes and not db[uname].get('is_blocked', False):
+                                        db[uname]['is_blocked'] = True
+                                        safe_cmd = get_safe_delete_cmd(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
+                                        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\" &")
+                except Exception as e:
+                    pass
+            
+            if db_changed:
+                try:
+                    with open(USERS_DB, 'w') as f: json.dump(db, f)
+                except: pass
+        except Exception as e:
+            pass
+
+# Server တက်လာသည်နှင့် Background Process ကို အသက်သွင်းခြင်း
+monitor_thread = threading.Thread(target=background_traffic_monitor, daemon=True)
+monitor_thread.start()
+# =========================================================
+
 
 @app.before_request
 def check_auth():
@@ -81,7 +156,6 @@ def node_view(node_name):
             users.append(info)
     return render_template('node.html', node_name=node_name, node_ip=node_ip, users=users, config=config)
 
-# --- API: SSH Connection စစ်ဆေးရန် ---
 @app.route('/api/check_ssh/<node_name>')
 def check_ssh(node_name):
     nodes = get_nodes()
@@ -96,7 +170,6 @@ def check_ssh(node_name):
     except:
         return jsonify({"status": "error"})
 
-# --- API: Xray Active ဖြစ်မဖြစ် စစ်ဆေးရန် ---
 @app.route('/api/check_xray/<node_name>')
 def check_xray(node_name):
     nodes = get_nodes()
@@ -111,7 +184,6 @@ def check_xray(node_name):
     except:
         return jsonify({"status": "inactive"})
 
-# --- Route: Node အသစ်ထည့်ရန် ---
 @app.route('/add_node', methods=['POST'])
 def add_node():
     n_name = request.form.get('node_name')
@@ -121,7 +193,6 @@ def add_node():
             f.write(f"\n{n_name} {n_ip}")
     return redirect(url_for('node_view', node_name=n_name) + "?newly_added=yes")
 
-# --- Route: Node IP ပြင်ရန် (Server သေသွားရင် ပြင်ဖို့) ---
 @app.route('/edit_node_ip/<node_name>', methods=['POST'])
 def edit_node_ip(node_name):
     new_ip = request.form.get('new_ip', '').strip()
@@ -133,7 +204,6 @@ def edit_node_ip(node_name):
                 f.write(f"{n} {ip}\n")
     return redirect(f'/node/{node_name}')
 
-# --- Route: Node ဖျက်ရန် ---
 @app.route('/delete_node/<node_name>', methods=['POST'])
 def delete_node(node_name):
     if os.path.exists(NODES_LIST):
@@ -150,7 +220,6 @@ def delete_node(node_name):
         save_config(config)
     return redirect(url_for('dashboard'))
 
-# --- Route: Node ဆီသို့ Script အလိုအလျောက် သွင်းရန် ---
 @app.route('/install_node/<node_name>', methods=['POST'])
 def install_node_action(node_name):
     nodes = get_nodes()
@@ -162,7 +231,6 @@ def install_node_action(node_name):
             subprocess.run(cmd, shell=True)
     return redirect(f'/node/{node_name}')
 
-# --- Route: Key အဟောင်းများကို Node အသစ်ဆီသို့ ပြန်သွင်းပေးရန် (Restore/Sync) ---
 @app.route('/sync_node/<node_name>', methods=['POST'])
 def sync_node(node_name):
     nodes = get_nodes()
@@ -175,7 +243,6 @@ def sync_node(node_name):
         
     commands = []
     for uname, info in db.items():
-        # Block မလုပ်ထားတဲ့ User တွေကိုပဲ ပြန်သွင်းမယ်
         if info.get('node') == node_name and not info.get('is_blocked', False):
             uid = info.get('uuid')
             proto = info.get('protocol', 'v2')
@@ -193,7 +260,7 @@ def sync_node(node_name):
         
     return redirect(f'/node/{node_name}')
 
-# --- 🚀 [UPDATE] Database ထဲ GB သိမ်းပြီး Auto Block လုပ်မည့် API ---
+# --- API: UI ပေါ်ရှိ Live Speed အတွက် သီးသန့် Data လှမ်းဆွဲခြင်း (DB မထိပါ) ---
 @app.route('/api/stats/<node_name>')
 def api_stats(node_name):
     if not session.get('logged_in'): return jsonify({"status": "error"})
@@ -207,44 +274,16 @@ def api_stats(node_name):
             user_bytes = {}
             for s in stats:
                 parts = s.get("name", "").split(">>>")
+                val = s.get("value", 0)
                 if len(parts) >= 4:
-                    uname = parts[1]
-                    val = s.get("value", 0)
-                    user_bytes[uname] = user_bytes.get(uname, 0) + val
-            
-            # --- Database ထဲသို့ Update လုပ်ခြင်း & Auto Block ---
-            if os.path.exists(USERS_DB) and user_bytes:
-                with open(USERS_DB, 'r') as f: db = json.load(f)
-                db_changed = False
-                
-                for uname, val in user_bytes.items():
-                    if uname in db:
-                        last_raw = db[uname].get('last_raw_bytes', 0)
-                        if val < last_raw:
-                            # Xray restart ကျသွားရင် အသစ်ကပြန်ပေါင်းမယ်
-                            db[uname]['used_bytes'] = db[uname].get('used_bytes', 0) + val
-                        else:
-                            # မဟုတ်ရင် တက်လာတဲ့ ပမာဏလေးကိုပဲ ပေါင်းမယ်
-                            db[uname]['used_bytes'] = db[uname].get('used_bytes', 0) + (val - last_raw)
-                        
-                        db[uname]['last_raw_bytes'] = val
-                        db_changed = True
-                        
-                        # --- Auto Block စနစ် ---
-                        tot_gb = float(db[uname].get('total_gb', 0))
-                        if tot_gb > 0:
-                            max_bytes = tot_gb * (1024**3)
-                            if db[uname]['used_bytes'] >= max_bytes and not db[uname].get('is_blocked', False):
-                                db[uname]['is_blocked'] = True
-                                safe_cmd = get_safe_delete_cmd(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
-                                # Server ဆီကိုလှမ်းပိတ်မယ်
-                                os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\" &")
-                
-                if db_changed:
-                    with open(USERS_DB, 'w') as f: json.dump(db, f)
-
+                    if parts[0] == "user":
+                        uname = parts[1]
+                        user_bytes[uname] = user_bytes.get(uname, 0) + val
+                    elif parts[0] == "inbound" and parts[1].startswith("out-"):
+                        uname = parts[1][4:]
+                        user_bytes[uname] = user_bytes.get(uname, 0) + val
             return jsonify({"status": "ok", "data": user_bytes})
-    except Exception as e: pass
+    except: pass
     return jsonify({"status": "error"})
 
 @app.route('/toggle_node/<node_name>', methods=['POST'])
