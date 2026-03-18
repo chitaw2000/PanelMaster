@@ -100,6 +100,14 @@ def group_view(group_id):
             users.append(info)
             if info.get('node') in counts: counts[info.get('node')] += 1
             
+    # 🚀 Key များကို Node ID အလိုက် စီစဉ်ပေးခြင်း (UI တွင် နံပါတ်စဉ် အတိအကျပြရန်)
+    users = sorted(users, key=lambda x: (x.get('node', ''), x.get('username', '')))
+    idx_tracker = {}
+    for u in users:
+        n = u.get('node', '')
+        idx_tracker[n] = idx_tracker.get(n, 0) + 1
+        u['node_key_idx'] = idx_tracker[n]
+            
     for nid, nip in g_nodes.items():
         server_stats.append({"id": nid, "ip": nip, "count": counts[nid]})
         
@@ -169,9 +177,10 @@ def add_user_auto():
         subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"systemctl restart xray\"", shell=True)
     return redirect(f'/group/{gid}')
 
+# 🚀 UPDATE: Auto Nodes များကို Custom လို အလုပ်လုပ်ခွင့်ပေးသည်
 @app.route('/node/<node_id>')
 def node_view(node_id):
-    nodes = get_nodes()
+    nodes = get_all_servers()
     if node_id not in nodes: return redirect(url_for('dashboard'))
     node_info = nodes[node_id]; db = {}
     with db_lock:
@@ -181,7 +190,8 @@ def node_view(node_id):
             except: pass
     config = load_config(); active_users = check_live_status(db); users = []
     for uname, info in db.items():
-        if info.get('node') == node_id and not info.get('group'):
+        # Auto Node ရော Custom Node ပါ အလုပ်လုပ်ရန် group စစ်ဆေးခြင်းကို ဖြုတ်ထားသည်
+        if info.get('node') == node_id:
             info['used_bytes'] = float(info.get('used_bytes', 0)); info['total_gb'] = float(info.get('total_gb', 0)); info['used_gb_str'] = f"{(info['used_bytes'] / (1024**3)):.2f}"
             info['username'] = uname; info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
@@ -191,7 +201,6 @@ def node_view(node_id):
 
 @app.route('/add_node', methods=['POST'])
 def add_node():
-    # 🚀 Crash မဖြစ်အောင် Default ('') ပေးထားပြီး Format သစ်ဖြင့် Save မည်
     n_id = request.form.get('node_id', '').strip().replace(" ", "_")
     n_name = request.form.get('node_name', '').strip()
     n_ip = request.form.get('node_ip', '').strip()
@@ -202,26 +211,42 @@ def add_node():
 
 @app.route('/delete_node/<node_id>', methods=['POST'])
 def delete_node(node_id):
-    nodes = get_nodes()
+    nodes = get_all_servers()
     if node_id in nodes:
         node_ip = nodes[node_id].get('ip')
         if node_ip: subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl stop xray'", shell=True)
+    
+    # Custom Node မှ ဖျက်ခြင်း
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f: lines = f.readlines()
         with open(NODES_LIST, 'w') as f:
             for line in lines:
                 if line.strip() and not line.startswith(f"{node_id}|") and not line.startswith(f"{node_id} "): 
                     f.write(line)
+                    
+    # Auto Group မှ ဖျက်ခြင်း
+    groups = load_auto_groups()
+    is_auto = False
+    for gid, gdata in groups.items():
+        if node_id in gdata.get("nodes", {}):
+            del groups[gid]["nodes"][node_id]
+            save_auto_groups(groups)
+            is_auto = True
+            break
+            
     config = load_config()
     if node_id in config.get('disabled_nodes', []): config['disabled_nodes'].remove(node_id); save_config(config)
+    
+    if is_auto: return redirect(request.referrer)
     return redirect(url_for('dashboard'))
 
 @app.route('/replace_id/<current_id>', methods=['POST'])
 def replace_id(current_id):
-    old_id = request.form.get('old_id', '').strip(); nodes = get_nodes()
+    old_id = request.form.get('old_id', '').strip(); nodes = get_all_servers()
     if current_id not in nodes or not old_id: return redirect(f'/node/{current_id}')
     current_ip = nodes[current_id].get('ip')
     
+    # Custom Node Replace
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f: lines = f.readlines()
         with open(NODES_LIST, 'w') as f:
@@ -236,6 +261,16 @@ def replace_id(current_id):
                             f.write(f"{old_id} {parts[1]}\n")
                     else: f.write(line)
                     
+    # Auto Group Replace
+    groups = load_auto_groups()
+    for gid, gdata in groups.items():
+        if current_id in gdata.get("nodes", {}):
+            ip = gdata["nodes"][current_id]
+            del groups[gid]["nodes"][current_id]
+            groups[gid]["nodes"][old_id] = ip
+            save_auto_groups(groups)
+            break
+            
     commands = []
     with db_lock:
         if os.path.exists(USERS_DB):
@@ -301,7 +336,7 @@ def install_node_action(node_id):
 def toggle_node(node_id):
     config = load_config()
     if 'disabled_nodes' not in config: config['disabled_nodes'] = []
-    ip = get_nodes().get(node_id, {}).get('ip')
+    ip = get_all_servers().get(node_id, {}).get('ip')
     if node_id in config['disabled_nodes']:
         config['disabled_nodes'].remove(node_id)
         if ip: subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} 'systemctl start xray'", shell=True)
@@ -312,20 +347,29 @@ def toggle_node(node_id):
 
 @app.route('/add_user_manual', methods=['POST'])
 def add_user_manual():
-    nid = request.form.get('node_id'); nip = get_nodes().get(nid, {}).get('ip')
+    nid = request.form.get('node_id'); nip = get_all_servers().get(nid, {}).get('ip')
     if not nip: return redirect(f'/node/{nid}')
+    
+    gid = ""
+    groups = load_auto_groups()
+    for g_id, gdata in groups.items():
+        if nid in gdata.get("nodes", {}): gid = g_id; break
+        
     mode = request.form.get('creation_mode', 'single'); usernames = []
     if mode == 'single': usernames = [request.form.get('single_username', '').strip()]
     elif mode == 'list': usernames = [u.strip() for u in re.split(r'[,\n]+', request.form.get('list_usernames', '')) if u.strip()]
     elif mode == 'pattern':
         base = request.form.get('base_name', '').strip(); start = int(request.form.get('start_num', 1)); qty = int(request.form.get('qty', 1))
         usernames = [f"{base}{start+i}" for i in range(qty)]
+
     gb = float(request.form.get('total_gb', 0)); days = int(request.form.get('expire_days', 30))
     exp = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d"); proto = request.form.get('protocol', 'v2')
+    
     db = {}
     with db_lock:
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
+            
     max_p = max([int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out'] + [10000])
     cmds = []
     for u in usernames:
@@ -338,13 +382,14 @@ def add_user_manual():
             max_p += 1; port = str(max_p); ss_conf = base64.b64encode(f"chacha20-ietf-poly1305:{uid}".encode()).decode()
             k = f"ss://{ss_conf}@{nip}:{port}#{u}"
             cmds.append(f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
-        db[u] = {"node": nid, "protocol": proto, "uuid": uid, "port": port, "total_gb": gb, "expire_date": exp, "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False, "key": k}
+        db[u] = {"node": nid, "group": gid, "protocol": proto, "uuid": uid, "port": port, "total_gb": gb, "expire_date": exp, "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False, "key": k}
+    
     if cmds:
         with db_lock:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
         subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{nip} \"{' ; '.join(cmds)}\"", shell=True)
         subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{nip} \"systemctl restart xray\"", shell=True)
-    return redirect(f'/node/{nid}')
+    return redirect(request.referrer)
 
 @app.route('/toggle_user/<username>', methods=['POST'])
 def toggle_user(username):
@@ -424,36 +469,6 @@ def bulk_delete():
             with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
 
-@app.route('/download_backup_global')
-def download_backup_global():
-    if os.path.exists(USERS_DB): return send_file(USERS_DB, as_attachment=True, download_name=f"qito_db_backup.json")
-    return "No DB found."
-
-@app.route('/upload_backup', methods=['POST'])
-def upload_backup():
-    file = request.files.get('backup_file')
-    if file: file.save(USERS_DB)
-    return redirect(url_for('dashboard'))
-
-@app.route('/save_settings_basic', methods=['POST'])
-def save_settings_basic():
-    config = load_config()
-    config['interval'] = int(request.form.get('interval', 12))
-    config['bot_token'] = request.form.get('bot_token', '')
-    save_config(config)
-    return redirect(url_for('dashboard'))
-
-@app.route('/config_action', methods=['POST'])
-def config_action():
-    config = load_config(); ctype = request.form.get('type'); action = request.form.get('action'); val = request.form.get('val', '').strip()
-    target_list = 'admin_ids' if ctype == 'admin' else 'mod_ids'
-    if action == 'add' and val:
-        if val not in config.get(target_list, []): config.setdefault(target_list, []).append(val)
-    elif action == 'del' and val:
-        if val in config.get(target_list, []): config[target_list].remove(val)
-    save_config(config)
-    return redirect(url_for('dashboard'))
-
 @app.route('/create_node_backup/<node_id>', methods=['POST'])
 def create_node_backup(node_id):
     if os.path.exists(USERS_DB):
@@ -492,6 +507,36 @@ def purge_node(node_id):
         for f in os.listdir(BACKUP_DIR):
             if f.startswith(f"backup_{node_id}_"): os.remove(os.path.join(BACKUP_DIR, f))
     return redirect(request.referrer)
+
+@app.route('/download_backup_global')
+def download_backup_global():
+    if os.path.exists(USERS_DB): return send_file(USERS_DB, as_attachment=True, download_name=f"qito_db_backup.json")
+    return "No DB found."
+
+@app.route('/upload_backup', methods=['POST'])
+def upload_backup():
+    file = request.files.get('backup_file')
+    if file: file.save(USERS_DB)
+    return redirect(url_for('dashboard'))
+
+@app.route('/save_settings_basic', methods=['POST'])
+def save_settings_basic():
+    config = load_config()
+    config['interval'] = int(request.form.get('interval', 12))
+    config['bot_token'] = request.form.get('bot_token', '')
+    save_config(config)
+    return redirect(url_for('dashboard'))
+
+@app.route('/config_action', methods=['POST'])
+def config_action():
+    config = load_config(); ctype = request.form.get('type'); action = request.form.get('action'); val = request.form.get('val', '').strip()
+    target_list = 'admin_ids' if ctype == 'admin' else 'mod_ids'
+    if action == 'add' and val:
+        if val not in config.get(target_list, []): config.setdefault(target_list, []).append(val)
+    elif action == 'del' and val:
+        if val in config.get(target_list, []): config[target_list].remove(val)
+    save_config(config)
+    return redirect(url_for('dashboard'))
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8888)
