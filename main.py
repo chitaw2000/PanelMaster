@@ -1,20 +1,125 @@
 from flask import Flask, render_template, request, redirect, session, url_for, send_file, jsonify
-import json, os, subprocess, uuid, base64, re, threading, time, shutil
-import urllib.parse
+import json, os, subprocess, uuid, base64, re, threading, time, urllib.parse
 from datetime import datetime, timedelta
 
 from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, load_config, save_config
 from utils import get_nodes, get_all_servers, check_live_status, get_safe_delete_cmd, db_lock, AUTO_GROUPS_FILE
-from core_auto import load_auto_groups, save_auto_groups, find_available_node
-from core_monitor import start_background_monitor
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 BACKUP_DIR = "/root/PanelMaster/backups"
 if not os.path.exists(BACKUP_DIR): os.makedirs(BACKUP_DIR)
 
-start_background_monitor()
+# ==========================================
+# 🚀 AUTO GROUPS & LOAD BALANCER LOGIC
+# ==========================================
+def load_auto_groups():
+    if not os.path.exists(AUTO_GROUPS_FILE): return {}
+    try:
+        with open(AUTO_GROUPS_FILE, 'r') as f: return json.load(f)
+    except: return {}
 
+def save_auto_groups(data):
+    with open(AUTO_GROUPS_FILE, 'w') as f: json.dump(data, f, indent=4)
+
+def find_available_node(group_id, required_qty, current_db=None):
+    groups = load_auto_groups()
+    if group_id not in groups: return None, None
+    group = groups[group_id]
+    nodes = group.get("nodes", {})
+    if not nodes: return None, None
+
+    if current_db is not None: db = current_db
+    else:
+        with db_lock:
+            if os.path.exists(USERS_DB):
+                with open(USERS_DB, 'r') as f: db = json.load(f)
+            else: db = {}
+
+    counts = {nid: 0 for nid in nodes.keys()}
+    for uname, uinfo in db.items():
+        nid = uinfo.get("node")
+        if nid in counts: counts[nid] += 1
+
+    for nid in sorted(nodes.keys()):
+        ndata = nodes[nid]
+        if isinstance(ndata, dict):
+            limit = int(ndata.get("limit", group.get("limit", 30)))
+            nip = str(ndata.get("ip")).strip()
+        else:
+            limit = int(group.get("limit", 30))
+            nip = str(ndata).strip()
+            
+        if counts[nid] + required_qty <= limit:
+            return nid, nip
+    return None, None
+
+# ==========================================
+# 🚀 100% ORIGINAL BACKGROUND TRAFFIC MONITOR (Exactly like Custom Node)
+# ==========================================
+def background_traffic_monitor():
+    while True:
+        time.sleep(30)
+        try:
+            nodes = get_all_servers()
+            if not nodes: continue
+            with db_lock:
+                if not os.path.exists(USERS_DB): continue
+                with open(USERS_DB, 'r') as f: db = json.load(f)
+            if not db: continue
+            
+            db_changed = False
+            for node_id, info in nodes.items():
+                node_ip = info.get('ip')
+                if not node_ip: continue
+                try:
+                    cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\""
+                    res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                    user_bytes = {}
+                    if res.stdout.strip():
+                        stats = json.loads(res.stdout).get("stat", [])
+                        for s in stats:
+                            parts = s.get("name", "").split(">>>"); val = s.get("value", 0)
+                            if len(parts) >= 4:
+                                if parts[0] == "user": user_bytes[parts[1]] = user_bytes.get(parts[1], 0) + val
+                                elif parts[0] == "inbound" and parts[1].startswith("out-"): user_bytes[parts[1][4:]] = user_bytes.get(parts[1][4:], 0) + val
+                    
+                    # Custom Node ကဲ့သို့ အတိအကျ စစ်ဆေးမည်
+                    for uname, uinfo in db.items():
+                        if uinfo.get("node") == node_id:
+                            val = user_bytes.get(uname, uinfo.get('last_raw_bytes', 0))
+                            last_raw = uinfo.get('last_raw_bytes', 0)
+                            
+                            if val > last_raw: uinfo['is_online'] = True
+                            else: uinfo['is_online'] = False
+                                
+                            if val < last_raw: uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + val
+                            else: uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + (val - last_raw)
+                            
+                            uinfo['last_raw_bytes'] = val
+                            db_changed = True
+                            
+                            tot_gb = float(uinfo.get('total_gb', 0))
+                            if tot_gb > 0:
+                                max_bytes = tot_gb * (1024**3)
+                                if float(uinfo['used_bytes']) >= max_bytes and not uinfo.get('is_blocked', False):
+                                    uinfo['is_blocked'] = True
+                                    uinfo['is_online'] = False
+                                    safe_cmd = get_safe_delete_cmd(uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443'))
+                                    # Background တွင် Hang မဖြစ်စေရန် Popen ဖြင့် သေချာပေါက် ပိတ်ချမည်
+                                    subprocess.Popen(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\"", shell=True)
+                except Exception: pass
+            
+            if db_changed:
+                with db_lock:
+                    with open(USERS_DB, 'w') as f: json.dump(db, f)
+        except Exception: pass
+
+threading.Thread(target=background_traffic_monitor, daemon=True).start()
+
+# ==========================================
+# 🌐 WEB ROUTES
+# ==========================================
 def sanitize_usernames(raw_list):
     clean = []
     for u in raw_list:
@@ -144,7 +249,6 @@ def add_server_to_group(group_id):
     if group_id in groups and nid and nip:
         groups[group_id]["nodes"][nid] = {"ip": nip, "limit": limit}
         save_auto_groups(groups)
-    # 🚀 UPDATE: newly_added flag ကို ထည့်ပေးလိုက်ပါသည် (Install Prompt ပြရန်)
     return redirect(f'/group/{group_id}?newly_added={nid}')
 
 @app.route('/delete_server_from_group/<group_id>/<node_id>', methods=['POST'])
@@ -214,10 +318,7 @@ def edit_group_limit(group_id):
         new_node_id, new_node_ip = find_available_node(group_id, 1, current_db=db)
         if not new_node_id: break
 
-        if proto == 'v2':
-            cmd_del = f"/usr/local/bin/v2ray-node-del-vless {uname} || true"
-        else:
-            cmd_del = f"/usr/local/bin/v2ray-node-del-out {uname} {old_port} || true ; ufw delete allow {old_port}/tcp || true ; ufw delete allow {old_port}/udp || true"
+        cmd_del = get_safe_delete_cmd(uname, proto, old_port)
         if old_ip not in cmds_by_ip: cmds_by_ip[old_ip] = []
         cmds_by_ip[old_ip].append(cmd_del)
 
@@ -293,10 +394,7 @@ def edit_server_limit(group_id, node_id):
             new_node_id, new_node_ip = find_available_node(group_id, 1, current_db=db)
             if not new_node_id: break
             
-            if proto == 'v2':
-                cmd_del = f"/usr/local/bin/v2ray-node-del-vless {uname} || true"
-            else:
-                cmd_del = f"/usr/local/bin/v2ray-node-del-out {uname} {old_port} || true ; ufw delete allow {old_port}/tcp || true ; ufw delete allow {old_port}/udp || true"
+            cmd_del = get_safe_delete_cmd(uname, proto, old_port)
             if node_ip not in cmds_by_ip: cmds_by_ip[node_ip] = []
             cmds_by_ip[node_ip].append(cmd_del)
             
