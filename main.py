@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, redirect, session, url_for, send_file, jsonify
 import json, os, subprocess, uuid, base64, re, threading, time, shutil
+import urllib.parse
 from datetime import datetime, timedelta
 
 from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, load_config, save_config
@@ -14,7 +15,6 @@ if not os.path.exists(BACKUP_DIR): os.makedirs(BACKUP_DIR)
 
 start_background_monitor()
 
-# 🚀 UPDATE: မြန်မာစာ လက်ခံမည်။ Space နှင့် Enter ကိုသာ သန့်စင်မည်
 def sanitize_usernames(raw_list):
     clean = []
     for u in raw_list:
@@ -85,6 +85,15 @@ def add_auto_group():
     if gid and gname:
         groups = load_auto_groups()
         groups[gid] = {"name": gname, "limit": limit, "nodes": {}}
+        save_auto_groups(groups)
+    return redirect(url_for('dashboard'))
+
+# 🚀 UPDATE: Auto Group အား အလွယ်တကူ ဖျက်နိုင်သောစနစ်
+@app.route('/delete_auto_group/<group_id>', methods=['POST'])
+def delete_auto_group(group_id):
+    groups = load_auto_groups()
+    if group_id in groups:
+        del groups[group_id]
         save_auto_groups(groups)
     return redirect(url_for('dashboard'))
 
@@ -163,7 +172,98 @@ def delete_server_from_group(group_id, node_id):
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(f'/group/{group_id}')
 
-# 🚀 NEW: Limit လျှော့ချပါက အလိုအလျောက် Key များကို အခြား Server များသို့ ရွှေ့ပေးမည့် (Rebalance) စနစ်
+# 🚀 UPDATE: Group ကြီးတစ်ခုလုံး၏ Global Limit အား သတ်မှတ်ပြီး Rebalance လုပ်မည့်စနစ်
+@app.route('/edit_group_limit/<group_id>', methods=['POST'])
+def edit_group_limit(group_id):
+    new_limit = int(request.form.get('limit', 30))
+    groups = load_auto_groups()
+    if group_id not in groups: return redirect(url_for('dashboard'))
+
+    groups[group_id]["limit"] = new_limit
+    for nid in groups[group_id]["nodes"]:
+        if isinstance(groups[group_id]["nodes"][nid], dict):
+            groups[group_id]["nodes"][nid]["limit"] = new_limit
+        else:
+            groups[group_id]["nodes"][nid] = {"ip": groups[group_id]["nodes"][nid], "limit": new_limit}
+    save_auto_groups(groups)
+
+    db = {}
+    with db_lock:
+        if os.path.exists(USERS_DB):
+            with open(USERS_DB, 'r') as f: db = json.load(f)
+
+    # Limit ထက် ပိုနေသော Key များအားလုံးကို စုစည်းမည်
+    excess_users = []
+    for nid, ndata in groups[group_id]["nodes"].items():
+        users_on_node = [uname for uname, info in db.items() if info.get('node') == nid]
+        if len(users_on_node) > new_limit:
+            excess_users.extend(users_on_node[new_limit:]) # Limit အထက် ပိုနေသည်များကို ဖြတ်ယူမည်
+
+    if not excess_users:
+        return redirect(f'/group/{group_id}')
+
+    cmds_by_ip = {}
+    migrated_count = 0
+    
+    for uname in excess_users:
+        uinfo = db[uname]
+        old_node = uinfo.get('node')
+        ndata = groups[group_id]["nodes"][old_node]
+        old_ip = str(ndata.get("ip")).strip() if isinstance(ndata, dict) else str(ndata).strip()
+        old_port = uinfo.get('port')
+        proto = uinfo.get('protocol')
+        
+        # နေရာလွတ်သော Server အသစ်ကိုရှာမည်
+        new_node_id, new_node_ip = find_available_node(group_id, 1, current_db=db)
+        if not new_node_id: break
+
+        # အဟောင်းမှ ဖျက်မည်
+        if proto == 'v2':
+            cmd_del = f"/usr/local/bin/v2ray-node-del-vless {uname} || true"
+        else:
+            cmd_del = f"/usr/local/bin/v2ray-node-del-out {uname} {old_port} || true ; ufw delete allow {old_port}/tcp || true ; ufw delete allow {old_port}/udp || true"
+        if old_ip not in cmds_by_ip: cmds_by_ip[old_ip] = []
+        cmds_by_ip[old_ip].append(cmd_del)
+
+        # အသစ်တွင် Port မထပ်စေရန် တွက်ချက်မည်
+        used_ports = [int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out' and i.get('node') == new_node_id]
+        new_port = str(max(used_ports) + 1) if used_ports else "10001"
+
+        uid = uinfo.get('uuid')
+        safe_u = urllib.parse.quote(uname)
+
+        # 🚀 Format အမှန်ဖြင့် အသစ်ထုတ်မည်
+        if proto == 'v2':
+            new_port = "443"
+            k = f"vless://{uid}@{new_node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
+            cmd_add = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
+        else:
+            raw_ss = f"chacha20-ietf-poly1305:{uid}@{new_node_ip}:{new_port}"
+            ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
+            k = f"ss://{ss_conf}#{safe_u}"
+            cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port} ; ufw allow {new_port}/tcp && ufw allow {new_port}/udp"
+
+        if new_node_ip not in cmds_by_ip: cmds_by_ip[new_node_ip] = []
+        cmds_by_ip[new_node_ip].append(cmd_add)
+
+        db[uname]['node'] = new_node_id
+        db[uname]['port'] = new_port
+        db[uname]['key'] = k
+        migrated_count += 1
+
+    with db_lock:
+        with open(USERS_DB, 'w') as f: json.dump(db, f)
+
+    for ip, cmds in cmds_by_ip.items():
+        if cmds:
+            subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"{' ; '.join(cmds)}\"", shell=True)
+            subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"systemctl restart xray\"", shell=True)
+
+    if migrated_count < len(excess_users):
+        return f"<script>alert('Limit Updated. Migrated {migrated_count} keys. Could not migrate {len(excess_users) - migrated_count} keys due to lack of space in other servers!'); window.location.href='/group/{group_id}';</script>"
+
+    return redirect(f'/group/{group_id}')
+
 @app.route('/edit_server_limit/<group_id>/<node_id>', methods=['POST'])
 def edit_server_limit(group_id, node_id):
     new_limit = int(request.form.get('limit', 30))
@@ -184,13 +284,11 @@ def edit_server_limit(group_id, node_id):
 
     users_on_node = [uname for uname, info in db.items() if info.get('node') == node_id]
     
-    # Limit ထက် ကျော်လွန်နေပါက ပိုနေသော Key များကို ရွှေ့ပြောင်းမည်
     if len(users_on_node) > new_limit:
         excess_count = len(users_on_node) - new_limit
-        excess_users = users_on_node[-excess_count:] # နောက်ဆုံးထုတ်ထားသော Key များကို ရွှေ့မည်
+        excess_users = users_on_node[-excess_count:]
 
-        cmds_by_ip = {node_ip: []}
-        affected_ips = set([node_ip])
+        cmds_by_ip = {}
         migrated_count = 0
         
         for uname in excess_users:
@@ -198,37 +296,36 @@ def edit_server_limit(group_id, node_id):
             old_port = uinfo.get('port')
             proto = uinfo.get('protocol')
             
-            # နေရာလွတ်သော Server အသစ်ကို Group အတွင်းမှ ရှာမည် (၁ ခုချင်းစီ)
             new_node_id, new_node_ip = find_available_node(group_id, 1, current_db=db)
-            if not new_node_id:
-                break # နေရာမရှိတော့ပါက ရပ်မည်
+            if not new_node_id: break
             
-            # ၁။ အဟောင်းမှ ဖျက်ရန် Command ပြင်ဆင်ခြင်း
             if proto == 'v2':
-                cmds_by_ip[node_ip].append(f"/usr/local/bin/v2ray-node-del-vless {uname} || true")
+                cmd_del = f"/usr/local/bin/v2ray-node-del-vless {uname} || true"
             else:
-                cmds_by_ip[node_ip].append(f"/usr/local/bin/v2ray-node-del-out {uname} {old_port} || true ; ufw delete allow {old_port}/tcp || true ; ufw delete allow {old_port}/udp || true")
+                cmd_del = f"/usr/local/bin/v2ray-node-del-out {uname} {old_port} || true ; ufw delete allow {old_port}/tcp || true ; ufw delete allow {old_port}/udp || true"
+            if node_ip not in cmds_by_ip: cmds_by_ip[node_ip] = []
+            cmds_by_ip[node_ip].append(cmd_del)
             
-            # ၂။ Server အသစ်တွင် Port မထပ်စေရန် စစ်ဆေးခြင်း
             used_ports = [int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out' and i.get('node') == new_node_id]
             new_port = str(max(used_ports) + 1) if used_ports else "10001"
             
-            # ၃။ Key အသစ် (Format အမှန်) ဖြင့် ပြန်ထုတ်ခြင်း
             uid = uinfo.get('uuid')
+            safe_u = urllib.parse.quote(uname)
+
+            # 🚀 UPDATE: Format အမှန်
             if proto == 'v2':
                 new_port = "443"
-                k = f"vless://{uid}@{new_node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{uname}"
+                k = f"vless://{uid}@{new_node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
                 cmd_add = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
             else:
-                ss_conf = base64.b64encode(f"chacha20-ietf-poly1305:{uid}".encode()).decode()
-                k = f"ss://{ss_conf}@{new_node_ip}:{new_port}#{uname}"
+                raw_ss = f"chacha20-ietf-poly1305:{uid}@{new_node_ip}:{new_port}"
+                ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
+                k = f"ss://{ss_conf}#{safe_u}"
                 cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port} ; ufw allow {new_port}/tcp && ufw allow {new_port}/udp"
 
             if new_node_ip not in cmds_by_ip: cmds_by_ip[new_node_ip] = []
             cmds_by_ip[new_node_ip].append(cmd_add)
-            affected_ips.add(new_node_ip)
             
-            # ၄။ Database အား Update လုပ်ခြင်း
             db[uname]['node'] = new_node_id
             db[uname]['port'] = new_port
             db[uname]['key'] = k
@@ -237,7 +334,6 @@ def edit_server_limit(group_id, node_id):
         with db_lock:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
 
-        # ၅။ သက်ဆိုင်ရာ ဆာဗာများအားလုံးတွင် Execute လုပ်ခြင်း
         for ip, cmds in cmds_by_ip.items():
             if cmds:
                 subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"{' ; '.join(cmds)}\"", shell=True)
@@ -251,17 +347,18 @@ def edit_server_limit(group_id, node_id):
 @app.route('/add_user_auto', methods=['POST'])
 def add_user_auto():
     gid = request.form.get('group_id', '')
-    mode = request.form.get('creation_mode', 'single'); usernames = []
+    mode = request.form.get('creation_mode', 'single')
     
-    if mode == 'single': usernames = [request.form.get('single_username', '')]
-    elif mode == 'list': usernames = re.split(r'[,\n\r]+', request.form.get('list_usernames', ''))
+    raw_usernames = []
+    if mode == 'single': raw_usernames = [request.form.get('single_username', '')]
+    elif mode == 'list': raw_usernames = re.split(r'[,\n\r]+', request.form.get('list_usernames', ''))
     elif mode == 'pattern':
         base = request.form.get('base_name', '').strip()
         start = int(request.form.get('start_num', 1))
         qty = int(request.form.get('qty', 1))
-        usernames = [f"{base}{start+i}" for i in range(qty)]
+        raw_usernames = [f"{base}{start+i}" for i in range(qty)]
 
-    usernames = sanitize_usernames(usernames)
+    usernames = sanitize_usernames(raw_usernames)
     if not usernames: return redirect(f'/group/{gid}')
 
     db = {}
@@ -269,12 +366,10 @@ def add_user_auto():
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
 
-    # 🚀 နေရာလွတ်ရှာခြင်း
     node_id, node_ip = find_available_node(gid, len(usernames), current_db=db)
     if not node_id:
         return "<script>alert('❌ Error: Limit Reached! No space available in any server for this group.'); window.history.back();</script>"
 
-    # 🚀 Port ကို Target Server ၏ အချက်အလက်များဖြင့် သီးသန့်တွက်ချက်ခြင်း (Conflict မဖြစ်စေရန်)
     used_ports = [int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out' and i.get('node') == node_id]
     max_p = max(used_ports) if used_ports else 10000
 
@@ -285,16 +380,18 @@ def add_user_auto():
     for u in usernames:
         if u in db: continue
         uid = str(uuid.uuid4()).strip()
+        safe_u = urllib.parse.quote(u)
         
-        # 🚀 UPDATE: Custom Server Format နှင့် ၁၀၀% တူညီသော မူရင်း Format
+        # 🚀 UPDATE: Custom Server Format နှင့် ၁၀၀% တူညီသော Universal Outline Format
         if proto == 'v2':
             port = "443"
-            k = f"vless://{uid}@{node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{u}"
+            k = f"vless://{uid}@{node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
             cmds.append(f"/usr/local/bin/v2ray-node-add-vless {u} {uid}")
         else:
             max_p += 1; port = str(max_p)
-            ss_conf = base64.b64encode(f"chacha20-ietf-poly1305:{uid}".encode()).decode()
-            k = f"ss://{ss_conf}@{node_ip}:{port}#{u}"
+            raw_ss = f"chacha20-ietf-poly1305:{uid}@{node_ip}:{port}"
+            ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
+            k = f"ss://{ss_conf}#{safe_u}"
             cmds.append(f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
             
         db[u] = {"node": node_id, "group": gid, "protocol": proto, "uuid": uid, "port": port, "total_gb": gb, "expire_date": exp, "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False, "key": k}
@@ -306,9 +403,6 @@ def add_user_auto():
         subprocess.run(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"systemctl restart xray\"", shell=True)
     return redirect(f'/group/{gid}')
 
-# ==========================================
-# 🌐 CUSTOM NODES & GENERAL ROUTES
-# ==========================================
 @app.route('/node/<node_id>')
 def node_view(node_id):
     nodes = get_all_servers()
@@ -481,14 +575,15 @@ def add_user_manual():
     for g_id, gdata in groups.items():
         if nid in gdata.get("nodes", {}): gid = g_id; break
 
-    mode = request.form.get('creation_mode', 'single'); usernames = []
-    if mode == 'single': usernames = [request.form.get('single_username', '')]
-    elif mode == 'list': usernames = re.split(r'[,\n\r]+', request.form.get('list_usernames', ''))
+    mode = request.form.get('creation_mode', 'single')
+    raw_usernames = []
+    if mode == 'single': raw_usernames = [request.form.get('single_username', '')]
+    elif mode == 'list': raw_usernames = re.split(r'[,\n\r]+', request.form.get('list_usernames', ''))
     elif mode == 'pattern':
         base = request.form.get('base_name', '').strip(); start = int(request.form.get('start_num', 1)); qty = int(request.form.get('qty', 1))
-        usernames = [f"{base}{start+i}" for i in range(qty)]
+        raw_usernames = [f"{base}{start+i}" for i in range(qty)]
 
-    usernames = sanitize_usernames(usernames)
+    usernames = sanitize_usernames(raw_usernames)
     if not usernames: return redirect(f'/node/{nid}')
 
     gb = float(request.form.get('total_gb', 0)); days = int(request.form.get('expire_days', 30))
@@ -499,7 +594,6 @@ def add_user_manual():
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
             
-    # 🚀 Port ကို Target Server အတွက် သီးသန့်တွက်ချက်ခြင်း
     used_ports = [int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out' and i.get('node') == nid]
     max_p = max(used_ports) if used_ports else 10000
 
@@ -507,16 +601,18 @@ def add_user_manual():
     for u in usernames:
         if u in db: continue
         uid = str(uuid.uuid4()).strip()
+        safe_u = urllib.parse.quote(u)
         
-        # 🚀 UPDATE: Custom Server Format
+        # 🚀 Custom Node Format 
         if proto == 'v2':
             port = "443"
-            k = f"vless://{uid}@{nip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{u}"
+            k = f"vless://{uid}@{nip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
             cmds.append(f"/usr/local/bin/v2ray-node-add-vless {u} {uid}")
         else:
             max_p += 1; port = str(max_p)
-            ss_conf = base64.b64encode(f"chacha20-ietf-poly1305:{uid}".encode()).decode()
-            k = f"ss://{ss_conf}@{nip}:{port}#{u}"
+            raw_ss = f"chacha20-ietf-poly1305:{uid}@{nip}:{port}"
+            ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
+            k = f"ss://{ss_conf}#{safe_u}"
             cmds.append(f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
             
         db[u] = {"node": nid, "group": gid, "protocol": proto, "uuid": uid, "port": port, "total_gb": gb, "expire_date": exp, "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False, "key": k}
