@@ -1,33 +1,39 @@
 <!DOCTYPE html><html><head><title>Node Details</title><script src="https://cdn.tailwindcss.com"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"></head>
-<body class="bg-[#f4f7f6] p-4 md:p-8 font-sans"><div class="max-w-7xl mx-auto"><div class="flex justify-between items-center mb-8">
-<div class="flex items-center gap-4"><a href="/" class="bg-white border border-slate-200 w-10 h-10 flex items-center justify-center rounded-full text-slate-400 hover:text-slate-800 hover:bg-slate-50 transition"><i class="fa-solid fa-arrow-left"></i></a>
-<h1 class="text-2xl font-black text-slate-800">Node: <span class="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-500 uppercase mr-3">{{ node_name }}</span></h1>
+<body class="bg-[#f4f7f6] p-4 md:p-8 font-sans"><div class="max-w-7xl mx-auto">
 
-<div class="flex gap-2 items-center">
-    <form action="/toggle_node/{{ node_name }}" method="POST" class="inline m-0 p-0">
-        {% if config.disabled_nodes and node_name in config.disabled_nodes %}<button class="bg-red-100 text-red-600 border border-red-200 px-4 py-2 rounded-full font-bold shadow-sm hover:bg-red-200 transition text-xs uppercase tracking-widest"><i class="fa-solid fa-lock mr-2"></i>Disabled (Click to Enable)</button>
-        {% else %}<button class="bg-emerald-100 text-emerald-600 border border-emerald-200 px-4 py-2 rounded-full font-bold shadow-sm hover:bg-emerald-200 transition text-xs uppercase tracking-widest"><i class="fa-solid fa-lock-open mr-2"></i>Active (Click to Disable)</button>{% endif %}
-    </form>
-    <form action="/delete_node/{{ node_name }}" method="POST" class="inline m-0 p-0" onsubmit="return confirm('⚠️ WARNING: Are you sure you want to completely DELETE this node?');">
-        <button class="bg-slate-100 text-red-500 border border-slate-200 px-4 py-2 rounded-full font-bold shadow-sm hover:bg-red-50 hover:text-red-600 transition text-xs uppercase tracking-widest"><i class="fa-solid fa-trash mr-1"></i> Delete Node</button>
-    </form>
-</div>
-</div>
-
-<div class="flex gap-4 items-center mb-6 justify-end">
-    <span id="xrayStatusBadge" class="bg-slate-100 text-slate-500 border border-slate-200 px-4 py-2 rounded-full font-bold shadow-sm text-xs uppercase tracking-widest flex items-center gap-2">
-        <i class="fa-solid fa-circle-notch fa-spin"></i> Checking Xray...
-    </span>
-
-    <div class="bg-white border border-slate-200 rounded-full px-4 py-2 flex items-center gap-2 shadow-sm">
-        <label class="relative inline-flex items-center cursor-pointer" title="Enable Live Speed">
-            <input type="checkbox" id="speedToggle" class="sr-only peer" onchange="toggleSpeedMonitor()">
-            <div class="w-8 h-4 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-500 shadow-inner"></div>
-        </label>
-        <span class="text-[10px] font-black text-slate-500 uppercase tracking-widest"><i class="fa-solid fa-gauge-high mr-1"></i> Live Speed</span>
+<div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+    <div class="flex items-center gap-3 flex-wrap">
+        <a href="/" class="bg-white border border-slate-200 w-10 h-10 flex items-center justify-center rounded-full text-slate-400 hover:text-slate-800 hover:bg-slate-50 transition"><i class="fa-solid fa-arrow-left"></i></a>
+        <h1 class="text-2xl font-black text-slate-800">Node: <span class="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-500 uppercase mr-2">{{ node_name }}</span></h1>
+        
+        <form action="/toggle_node/{{ node_name }}" method="POST" class="inline m-0 p-0">
+            {% if config.disabled_nodes and node_name in config.disabled_nodes %}
+                <button class="bg-red-100 text-red-600 border border-red-200 px-3 py-1.5 rounded-full font-bold shadow-sm hover:bg-red-200 transition text-[10px] uppercase tracking-widest"><i class="fa-solid fa-lock mr-1"></i>Disabled</button>
+            {% else %}
+                <button class="bg-emerald-100 text-emerald-600 border border-emerald-200 px-3 py-1.5 rounded-full font-bold shadow-sm hover:bg-emerald-200 transition text-[10px] uppercase tracking-widest"><i class="fa-solid fa-lock-open mr-1"></i>Active</button>
+            {% endif %}
+        </form>
+        
+        <form action="/delete_node/{{ node_name }}" method="POST" class="inline m-0 p-0" onsubmit="return confirm('⚠️ WARNING: Are you sure you want to completely DELETE this node?');">
+            <button class="bg-slate-100 text-red-500 border border-slate-200 px-3 py-1.5 rounded-full font-bold shadow-sm hover:bg-red-50 hover:text-red-600 transition text-[10px] uppercase tracking-widest"><i class="fa-solid fa-trash mr-1"></i> Delete Node</button>
+        </form>
     </div>
-    <button id="delSelectedBtn" form="bulkForm" class="hidden bg-red-500 hover:bg-red-600 text-white px-6 py-2.5 rounded-full font-bold shadow-lg shadow-red-500/30 transition"><i class="fa-solid fa-trash-can mr-2"></i>Delete Selected</button>
-    <button onclick="document.getElementById('addUserModal').classList.remove('hidden')" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-full font-bold shadow-lg shadow-blue-500/30 transition"><i class="fa-solid fa-plus mr-2"></i> Create Key(s)</button>
+
+    <div class="flex gap-2 items-center flex-wrap justify-end">
+        <span id="xrayStatusBadge" class="bg-slate-100 text-slate-500 border border-slate-200 px-3 py-2 rounded-full font-bold shadow-sm text-[10px] uppercase tracking-widest flex items-center gap-1.5">
+            <i class="fa-solid fa-circle-notch fa-spin"></i> Checking Xray...
+        </span>
+
+        <div class="bg-white border border-slate-200 rounded-full px-3 py-2 flex items-center gap-2 shadow-sm">
+            <label class="relative inline-flex items-center cursor-pointer" title="Enable Live Speed">
+                <input type="checkbox" id="speedToggle" class="sr-only peer" onchange="toggleSpeedMonitor()">
+                <div class="w-7 h-3.5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-blue-500 shadow-inner"></div>
+            </label>
+            <span class="text-[10px] font-black text-slate-500 uppercase tracking-widest"><i class="fa-solid fa-gauge-high mr-1"></i> Speed</span>
+        </div>
+        <button id="delSelectedBtn" form="bulkForm" class="hidden bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-full text-xs font-bold shadow-lg shadow-red-500/30 transition"><i class="fa-solid fa-trash-can mr-1"></i>Del Selected</button>
+        <button onclick="document.getElementById('addUserModal').classList.remove('hidden')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full text-xs font-bold shadow-lg shadow-blue-500/30 transition"><i class="fa-solid fa-plus mr-1"></i> Create Key(s)</button>
+    </div>
 </div>
 
 <form id="bulkForm" action="/bulk_delete" method="POST" onsubmit="return confirm('Are you sure you want to permanently delete the selected keys?');"><input type="hidden" name="node_name" value="{{ node_name }}">
@@ -84,13 +90,9 @@
             
             <div id="sshInstructions" class="hidden mt-2 text-left">
                 <p class="text-red-500 font-bold text-sm mb-2"><i class="fa-solid fa-triangle-exclamation mr-1"></i> SSH Not Connected!</p>
-                <p class="text-slate-500 text-xs mb-3">Please run this exact command in your <b>Master Server's Terminal</b> to allow automatic installation:</p>
-                <div class="bg-black text-green-400 p-3 rounded-lg text-xs font-mono break-all flex justify-between items-center">
-                    <span id="sshCmdText">ssh-copy-id root@{{ node_ip }}</span>
-                    <button type="button" onclick="copySSHCmd()" class="text-white hover:text-blue-400 ml-2"><i class="fa-solid fa-copy"></i></button>
-                </div>
+                <p class="text-slate-500 text-xs leading-relaxed">Please make sure you have manually added this <b>Master Server's SSH Public Key</b> <code>(~/.ssh/id_rsa.pub)</code> into the Node Server's <code>~/.ssh/authorized_keys</code> file.</p>
                 <div class="mt-4 text-center">
-                    <button type="button" onclick="checkSSH()" class="bg-slate-800 hover:bg-black text-white px-6 py-2 rounded-xl text-xs font-bold transition shadow-md">I have run it, Check Again</button>
+                    <button type="button" onclick="checkSSH()" class="bg-slate-800 hover:bg-black text-white px-6 py-2 rounded-xl text-xs font-bold transition shadow-md"><i class="fa-solid fa-rotate-right mr-1"></i> Check Again</button>
                 </div>
             </div>
         </div>
@@ -138,14 +140,14 @@ async function checkXrayStatus() {
         const res = await fetch('/api/check_xray/{{ node_name }}');
         const json = await res.json();
         if(json.status === 'active') {
-            badge.className = "bg-emerald-100 text-emerald-600 border border-emerald-200 px-4 py-2 rounded-full font-bold shadow-sm text-xs uppercase tracking-widest flex items-center gap-2";
-            badge.innerHTML = '<i class="fa-solid fa-circle-check"></i> Xray: Active';
+            badge.className = "bg-emerald-100 text-emerald-600 border border-emerald-200 px-3 py-2 rounded-full font-bold shadow-sm text-[10px] uppercase tracking-widest flex items-center gap-1.5";
+            badge.innerHTML = '<i class="fa-solid fa-circle-check"></i> Xray Active';
         } else {
-            badge.className = "bg-red-100 text-red-600 border border-red-200 px-4 py-2 rounded-full font-bold shadow-sm text-xs uppercase tracking-widest flex items-center gap-2";
-            badge.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> Xray: Inactive';
+            badge.className = "bg-red-100 text-red-600 border border-red-200 px-3 py-2 rounded-full font-bold shadow-sm text-[10px] uppercase tracking-widest flex items-center gap-1.5";
+            badge.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> Xray Inactive';
         }
     } catch(e) {
-        badge.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Check Failed';
+        badge.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Error';
     }
 }
 
@@ -179,12 +181,6 @@ async function checkSSH() {
         statusText.classList.add('hidden');
         instructions.classList.remove('hidden');
     }
-}
-
-function copySSHCmd() {
-    const text = document.getElementById('sshCmdText').innerText;
-    navigator.clipboard.writeText(text);
-    alert('✅ SSH Command Copied! Run it in your Master VPS terminal.');
 }
 
 function toggleSpeedMonitor() {
