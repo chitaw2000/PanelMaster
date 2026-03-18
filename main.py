@@ -13,7 +13,7 @@ BACKUP_DIR = "/root/PanelMaster/backups"
 if not os.path.exists(BACKUP_DIR): os.makedirs(BACKUP_DIR)
 
 # =========================================================
-# 🚀 BACKGROUND TRAFFIC MONITOR (WITH RELIABLE AUTO-BLOCK)
+# 🚀 BACKGROUND TRAFFIC MONITOR (100% Guaranteed Execution)
 # =========================================================
 def background_traffic_monitor():
     while True:
@@ -54,7 +54,6 @@ def background_traffic_monitor():
                             
                             uinfo['last_raw_bytes'] = val; db_changed = True
                             
-                            # 🚀 GB Limit ပြည့်ပါက သေချာပေါက် ပိတ်ချမည့်အပိုင်း
                             tot_gb = float(uinfo.get('total_gb', 0))
                             if tot_gb > 0:
                                 max_bytes = tot_gb * (1024**3)
@@ -62,8 +61,10 @@ def background_traffic_monitor():
                                     uinfo['is_blocked'] = True
                                     uinfo['is_online'] = False
                                     safe_cmd = get_safe_delete_cmd(uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443'))
-                                    # ⚠️ os.system အစား subprocess.Popen ကိုသုံး၍ အလုပ်သေချာပြီးမြောက်စေသည်
-                                    subprocess.Popen(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\"", shell=True)
+                                    
+                                    # ⚠️ 100% သေချာပေါက် ပိတ်အောင် subprocess.run ကို ပြန်သုံးထားသည်
+                                    delete_exec = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\""
+                                    subprocess.run(delete_exec, shell=True)
                 except Exception: pass
             if db_changed:
                 with db_lock:
@@ -156,7 +157,7 @@ def delete_node(node_id):
     nodes = get_nodes()
     if node_id in nodes:
         node_ip = nodes[node_id].get('ip')
-        if node_ip: subprocess.Popen(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl stop xray'", shell=True)
+        if node_ip: os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl stop xray'")
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f: lines = f.readlines()
         with open(NODES_LIST, 'w') as f:
@@ -190,12 +191,12 @@ def replace_id(current_id):
                     info['is_online'] = False
                     if not info.get('is_blocked', False):
                         uid = info.get('uuid'); port = str(info.get('port', '443'))
-                        if info.get('protocol', 'v2') == 'v2': commands.append(f"yes | /usr/local/bin/v2ray-node-add-vless {uname} {uid}")
-                        else: commands.append(f"yes | /usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
+                        if info.get('protocol', 'v2') == 'v2': commands.append(f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}")
+                        else: commands.append(f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
             with open(USERS_DB, 'w') as f: json.dump(db, f)
     if commands and current_ip:
         commands.append("systemctl restart xray")
-        subprocess.Popen(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{current_ip} \"{' ; '.join(commands)}\"", shell=True)
+        os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{current_ip} \"{' ; '.join(commands)}\"")
     return redirect(f'/node/{old_id}')
 
 @app.route('/create_node_backup/<node_id>', methods=['POST'])
@@ -277,7 +278,7 @@ def api_stats(node_id):
 def install_node_action(node_id):
     ip = get_nodes().get(node_id, {}).get('ip')
     if ip and os.path.exists("/root/PanelMaster/install_node.sh"):
-        subprocess.Popen(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} 'bash -s' < /root/PanelMaster/install_node.sh", shell=True)
+        os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} 'bash -s' < /root/PanelMaster/install_node.sh")
     return redirect(f'/node/{node_id}')
 
 @app.route('/toggle_node/<node_id>', methods=['POST'])
@@ -287,16 +288,17 @@ def toggle_node(node_id):
     ip = get_nodes().get(node_id, {}).get('ip')
     if node_id in config['disabled_nodes']:
         config['disabled_nodes'].remove(node_id)
-        if ip: subprocess.Popen(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'systemctl start xray'", shell=True)
+        if ip: os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} 'systemctl start xray'")
     else:
         config['disabled_nodes'].append(node_id)
-        if ip: subprocess.Popen(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'systemctl stop xray'", shell=True)
+        if ip: os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} 'systemctl stop xray'")
     save_config(config); return redirect(f'/node/{node_id}')
 
 @app.route('/add_user_manual', methods=['POST'])
 def add_user_manual():
     nid = request.form.get('node_id'); nip = get_nodes().get(nid, {}).get('ip')
     if not nip: return redirect(f'/node/{nid}')
+    
     mode = request.form.get('creation_mode', 'single'); usernames = []
     if mode == 'single': usernames = [request.form.get('single_username', '').strip()]
     elif mode == 'list': usernames = [u.strip() for u in re.split(r'[,\n]+', request.form.get('list_usernames', '')) if u.strip()]
@@ -319,17 +321,17 @@ def add_user_manual():
         uid = str(uuid.uuid4())
         if proto == 'v2':
             port = "443"; k = f"vless://{uid}@{nip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{u}"
-            cmds.append(f"yes | /usr/local/bin/v2ray-node-add-vless {u} {uid}")
+            cmds.append(f"/usr/local/bin/v2ray-node-add-vless {u} {uid}")
         else:
             max_p += 1; port = str(max_p); ss_conf = base64.b64encode(f"chacha20-ietf-poly1305:{uid}".encode()).decode()
             k = f"ss://{ss_conf}@{nip}:{port}#{u}"
-            cmds.append(f"yes | /usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
+            cmds.append(f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
         db[u] = {"node": nid, "protocol": proto, "uuid": uid, "port": port, "total_gb": gb, "expire_date": exp, "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False, "key": k}
     
     if cmds:
         with db_lock:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
-        subprocess.Popen(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{nip} \"{' ; '.join(cmds)} ; systemctl restart xray\"", shell=True)
+        os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{nip} \"{' ; '.join(cmds)} ; systemctl restart xray\"")
     return redirect(f'/node/{nid}')
 
 @app.route('/toggle_user/<username>', methods=['POST'])
@@ -346,10 +348,9 @@ def toggle_user(username):
                         cmd = get_safe_delete_cmd(username, user.get('protocol', 'v2'), user.get('port', '443'))
                     else:
                         uid = user['uuid']
-                        if user['protocol'] == 'v2': cmd = f"yes | /usr/local/bin/v2ray-node-add-vless {username} {uid}"
-                        else: cmd = f"yes | /usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
-                    # ⚠️ os.system အစား Popen ကိုသုံး၍ Hang ဖြစ်ခြင်းကို တားဆီးသည်
-                    subprocess.Popen(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\"", shell=True)
+                        if user['protocol'] == 'v2': cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
+                        else: cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
+                    os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\"")
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
 
@@ -386,7 +387,7 @@ def delete_user(username):
                 info = db[username]; ip = get_nodes().get(info.get('node'), {}).get('ip')
                 if ip:
                     cmd = get_safe_delete_cmd(username, info.get('protocol', 'v2'), info.get('port', '443'))
-                    subprocess.Popen(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\"", shell=True)
+                    os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\"")
                 del db[username]
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
@@ -403,7 +404,7 @@ def bulk_delete():
                     ip = nodes.get(db[uname].get('node'), {}).get('ip')
                     if ip:
                         cmd = get_safe_delete_cmd(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
-                        subprocess.Popen(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\"", shell=True)
+                        os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\"")
                     del db[uname]
             with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
