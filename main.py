@@ -13,7 +13,7 @@ BACKUP_DIR = "/root/PanelMaster/backups"
 if not os.path.exists(BACKUP_DIR): os.makedirs(BACKUP_DIR)
 
 # =========================================================
-# 🚀 BACKGROUND TRAFFIC MONITOR (100% Guaranteed Auto-Block)
+# 🚀 BACKGROUND TRAFFIC MONITOR (100% Reliable Auto-Block)
 # =========================================================
 def background_traffic_monitor():
     while True:
@@ -62,9 +62,8 @@ def background_traffic_monitor():
                                     uinfo['is_online'] = False
                                     safe_cmd = get_safe_delete_cmd(uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443'))
                                     
-                                    # ⚠️ အလုပ်သေချာအောင် တစ်ကြောင်းချင်းစီ (Synchronous) ပြန်ခွဲ Run ထားသည်
-                                    os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd}\"")
-                                    os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"systemctl restart xray\"")
+                                    # ⚠️ မူလ အလုပ်လုပ်သော Code အဟောင်းအတိုင်း အတိအကျ ပြန်ထားသည်
+                                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\" &")
                 except Exception: pass
             if db_changed:
                 with db_lock:
@@ -157,7 +156,7 @@ def delete_node(node_id):
     nodes = get_nodes()
     if node_id in nodes:
         node_ip = nodes[node_id].get('ip')
-        if node_ip: os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl stop xray'")
+        if node_ip: os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl stop xray' &")
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f: lines = f.readlines()
         with open(NODES_LIST, 'w') as f:
@@ -195,8 +194,7 @@ def replace_id(current_id):
                         else: commands.append(f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
             with open(USERS_DB, 'w') as f: json.dump(db, f)
     if commands and current_ip:
-        os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{current_ip} \"{' ; '.join(commands)}\"")
-        os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{current_ip} \"systemctl restart xray\"")
+        os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{current_ip} \"{' ; '.join(commands)} ; systemctl restart xray\" &")
     return redirect(f'/node/{old_id}')
 
 @app.route('/create_node_backup/<node_id>', methods=['POST'])
@@ -288,10 +286,10 @@ def toggle_node(node_id):
     ip = get_nodes().get(node_id, {}).get('ip')
     if node_id in config['disabled_nodes']:
         config['disabled_nodes'].remove(node_id)
-        if ip: os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} 'systemctl start xray'")
+        if ip: os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'systemctl start xray' &")
     else:
         config['disabled_nodes'].append(node_id)
-        if ip: os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} 'systemctl stop xray'")
+        if ip: os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'systemctl stop xray' &")
     save_config(config); return redirect(f'/node/{node_id}')
 
 @app.route('/add_user_manual', methods=['POST'])
@@ -331,8 +329,8 @@ def add_user_manual():
     if cmds:
         with db_lock:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
-        os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{nip} \"{' ; '.join(cmds)}\"")
-        os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{nip} \"systemctl restart xray\"")
+        # ⚠️ မူလ အလုပ်လုပ်သော Code အဟောင်းအတိုင်း ပြန်လည်ထားရှိသည်
+        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{nip} \"{' ; '.join(cmds)} ; systemctl restart xray\" &")
     return redirect(f'/node/{nid}')
 
 @app.route('/toggle_user/<username>', methods=['POST'])
@@ -351,8 +349,8 @@ def toggle_user(username):
                         uid = user['uuid']
                         if user['protocol'] == 'v2': cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
                         else: cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
-                    os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\"")
-                    os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"systemctl restart xray\"")
+                    # ⚠️ မူလ အလုပ်လုပ်သော Code အဟောင်းအတိုင်း ပြန်လည်ထားရှိသည်
+                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\" &")
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
 
@@ -389,8 +387,8 @@ def delete_user(username):
                 info = db[username]; ip = get_nodes().get(info.get('node'), {}).get('ip')
                 if ip:
                     cmd = get_safe_delete_cmd(username, info.get('protocol', 'v2'), info.get('port', '443'))
-                    os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\"")
-                    os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"systemctl restart xray\"")
+                    # ⚠️ မူလ အလုပ်လုပ်သော Code အဟောင်းအတိုင်း ပြန်လည်ထားရှိသည်
+                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\" &")
                 del db[username]
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
@@ -407,8 +405,7 @@ def bulk_delete():
                     ip = nodes.get(db[uname].get('node'), {}).get('ip')
                     if ip:
                         cmd = get_safe_delete_cmd(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
-                        os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\"")
-                        os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"systemctl restart xray\"")
+                        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\" &")
                     del db[uname]
             with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
