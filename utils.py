@@ -14,7 +14,6 @@ def get_nodes():
                 if not line: continue
                 parts = line.split()
                 if len(parts) >= 3:
-                    # Space များကို အလိုအလျောက် ပေါင်းပေးမည့်စနစ်
                     nodes[parts[0]] = {"name": " ".join(parts[1:-1]).replace("_", " "), "ip": parts[-1]}
                 elif len(parts) == 2:
                     nodes[parts[0]] = {"name": parts[0], "ip": parts[1]}
@@ -24,7 +23,8 @@ def check_live_status(db):
     active = set()
     for uname, info in db.items():
         try:
-            if float(info.get('used_bytes', 0)) > 0 and not info.get('is_blocked', False):
+            # 🚀 UPDATE: used_bytes ကိုမစစ်တော့ဘဲ၊ တကယ် Active ဖြစ်နေတဲ့ is_online ကိုသာ စစ်မည်
+            if info.get('is_online', False) and not info.get('is_blocked', False):
                 active.add(uname)
         except: pass
     return active
