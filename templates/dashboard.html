@@ -5,54 +5,23 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
-<body class="bg-[#f4f7f6] font-sans flex h-screen overflow-hidden">
+<body class="bg-[#f4f7f6] font-sans">
 
-<aside class="w-64 bg-white border-r border-slate-200 flex flex-col h-full shadow-sm z-10 shrink-0">
-    <div class="p-6 border-b border-slate-100 flex items-center gap-3">
-        <div class="w-8 h-8 bg-blue-600 text-white rounded-lg flex items-center justify-center font-black shadow-md"><i class="fa-solid fa-bolt"></i></div>
-        <span class="text-xl font-black text-slate-800 tracking-tight">PanelMaster</span>
-    </div>
-    
-    <div class="p-4 flex-1 overflow-y-auto">
-        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 px-2">Main Menu</p>
-        <a href="/" class="flex items-center gap-3 px-4 py-3 bg-blue-50 text-blue-600 rounded-xl font-bold mb-2 transition"><i class="fa-solid fa-chart-pie w-5"></i> Dashboard</a>
-        <button onclick="document.getElementById('settingsModal').classList.remove('hidden')" class="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 text-slate-600 rounded-xl font-bold mb-6 transition"><i class="fa-solid fa-gear w-5"></i> Settings</button>
-        
-        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 px-2 flex justify-between items-center">Node Backups <i class="fa-solid fa-database text-slate-300"></i></p>
-        <div class="space-y-1">
-            {% for nid, files in backups.items() %}
-            <div class="group">
-                <div class="flex items-center justify-between px-4 py-2 hover:bg-slate-50 rounded-lg cursor-pointer transition text-sm font-bold text-slate-600" onclick="document.getElementById('b_{{nid}}').classList.toggle('hidden')">
-                    <span class="flex items-center gap-2 truncate"><i class="fa-regular fa-folder text-blue-400"></i> {{ nid }}</span>
-                    <span class="bg-slate-100 text-[10px] px-2 py-0.5 rounded-full">{{ files|length }}</span>
-                </div>
-                <div id="b_{{nid}}" class="hidden pl-8 pr-2 py-2 space-y-2 border-l-2 border-slate-100 ml-6 mt-1">
-                    {% for f in files %}
-                    <div class="flex items-center justify-between">
-                        <a href="/download_backup/{{ f }}" class="flex-1 truncate text-xs text-slate-500 hover:text-blue-600 transition"><i class="fa-solid fa-file-code mr-1"></i> {{ f.split('_')[2].split('.')[0] }}</a>
-                        <form action="/delete_backup/{{ f }}" method="POST" onsubmit="return confirm('Delete this backup file?');" class="m-0">
-                            <button type="submit" class="text-red-400 hover:text-red-600 px-2 py-1"><i class="fa-solid fa-trash-can"></i></button>
-                        </form>
-                    </div>
-                    {% endfor %}
-                </div>
-            </div>
-            {% else %}
-            <p class="text-xs text-slate-400 px-4 py-2 italic">No backups found.</p>
-            {% endfor %}
+<nav class="bg-white shadow-sm border-b border-slate-200 mb-8">
+    <div class="max-w-7xl mx-auto px-4 md:px-8 py-4 flex justify-between items-center">
+        <div class="text-xl font-black text-slate-800"><i class="fa-solid fa-bolt text-blue-600 mr-2"></i> PanelMaster</div>
+        <div class="flex gap-4 items-center">
+            <button onclick="document.getElementById('settingsModal').classList.remove('hidden')" class="text-sm font-bold text-slate-500 hover:text-blue-600 transition px-3 py-2 bg-slate-50 rounded-lg"><i class="fa-solid fa-gear mr-1"></i> Settings</button>
+            <a href="/logout" class="text-sm font-bold text-red-400 hover:text-red-600 transition ml-2"><i class="fa-solid fa-right-from-bracket mr-1"></i> Logout</a>
         </div>
     </div>
-    
-    <div class="p-4 border-t border-slate-100">
-        <a href="/logout" class="flex items-center gap-3 px-4 py-3 text-red-500 hover:bg-red-50 rounded-xl font-bold transition"><i class="fa-solid fa-power-off w-5"></i> Logout</a>
-    </div>
-</aside>
+</nav>
 
-<main class="flex-1 overflow-y-auto p-8 relative">
+<div class="max-w-7xl mx-auto px-4 md:px-8 pb-12">
     <div class="flex justify-between items-end mb-8">
         <div>
             <h1 class="text-3xl font-black text-slate-800 mb-2">Network Overview</h1>
-            <p class="text-sm font-bold text-slate-500">Manage nodes, assign IDs, and monitor traffic.</p>
+            <p class="text-sm font-bold text-slate-500">Manage nodes, backups, and user traffic.</p>
         </div>
         <button onclick="document.getElementById('addNodeModal').classList.remove('hidden')" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl text-sm font-bold shadow-lg shadow-blue-500/30 transition flex items-center">
             <i class="fa-solid fa-plus mr-2"></i> Add New Node
@@ -88,31 +57,46 @@
     </div>
 
     <div id="tab-backups" class="hidden">
-        <div class="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 md:p-8">
-            <h2 class="text-xl font-black text-slate-800 mb-6">Database Management</h2>
-            {% for nid, files in backups.items() %}
-            <div class="mb-4 last:mb-0 border border-slate-100 rounded-2xl overflow-hidden">
-                <div class="bg-slate-50 px-6 py-4 flex justify-between items-center">
-                    <span class="font-black text-slate-700 flex-1"><i class="fa-solid fa-folder text-blue-500 mr-2"></i> Node ID: <span class="text-blue-600">{{ nid }}</span></span>
-                    
-                    <div class="flex items-center gap-4">
-                        <span class="bg-slate-200 text-slate-600 text-xs font-bold px-3 py-1 rounded-full">{{ files|length }} Backups</span>
-                        
-                        <form action="/purge_node/{{ nid }}" method="POST" onsubmit="return confirm('⚠️ EXTREME WARNING: This will PERMANENTLY DELETE all user data, keys, and backups for Node ID: {{ nid }}. Are you sure?');" class="m-0">
-                            <button type="submit" class="bg-red-500 hover:bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm transition"><i class="fa-solid fa-skull mr-1"></i> Delete Node Data</button>
+        <div class="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 md:p-8 mb-6">
+            <h2 class="text-xl font-black text-slate-800 mb-6">Backup Files by Node ID</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {% for b in backups %}
+                <div class="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-blue-200 transition">
+                    <div class="flex items-center gap-3 overflow-hidden">
+                        <div class="bg-blue-100 text-blue-600 font-black font-mono text-[10px] px-2 py-1 rounded shrink-0">[{{ b.node_id }}]</div>
+                        <div class="truncate text-sm font-bold text-slate-600" title="{{ b.filename }}">{{ b.filename }}</div>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0 ml-2">
+                        <a href="/download_backup/{{ b.filename }}" class="text-blue-500 hover:text-blue-700 px-2 py-1 transition"><i class="fa-solid fa-download"></i></a>
+                        <form action="/delete_backup/{{ b.filename }}" method="POST" onsubmit="return confirm('Delete this backup file?');" class="m-0">
+                            <button type="submit" class="text-red-400 hover:text-red-600 px-2 py-1 transition"><i class="fa-solid fa-trash-can"></i></button>
                         </form>
                     </div>
                 </div>
+                {% else %}
+                <div class="col-span-full text-center py-8">
+                    <i class="fa-solid fa-database text-3xl text-slate-200 mb-2 block"></i>
+                    <p class="text-sm text-slate-400 font-bold">No backup files found.</p>
+                </div>
+                {% endfor %}
             </div>
-            {% else %}
-            <div class="text-center py-12">
-                <i class="fa-solid fa-database text-4xl text-slate-200 mb-3 block"></i>
-                <p class="text-sm text-slate-400 font-bold">No data found in database.</p>
-            </div>
-            {% endfor %}
+        </div>
+        
+        <div class="bg-red-50 rounded-3xl border border-red-100 p-6 md:p-8">
+            <h2 class="text-lg font-black text-red-600 mb-2"><i class="fa-solid fa-skull-crossbones mr-2"></i> Danger Zone (Purge Data)</h2>
+            <p class="text-xs text-red-500 font-bold mb-4">Select a Node ID to permanently delete ALL its Users, Keys, and Backups from the system.</p>
+            <form action="" method="POST" id="purgeForm" class="flex gap-4 items-center" onsubmit="return confirm('⚠️ EXTREME WARNING: Are you completely sure you want to PURGE all data for this Node ID? This cannot be undone.');">
+                <select onchange="document.getElementById('purgeForm').action='/purge_node/' + this.value;" class="bg-white border border-red-200 p-3 rounded-xl text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-red-400">
+                    <option value="" disabled selected>-- Select Node ID to Purge --</option>
+                    {% for node in nodes %}
+                    <option value="{{ node.id }}">{{ node.id }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-xl text-xs font-bold shadow-sm transition">Purge Now</button>
+            </form>
         </div>
     </div>
-</main>
+</div>
 
 <div id="addNodeModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
     <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100">
@@ -134,39 +118,60 @@
 
 <div id="settingsModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
     <div class="bg-white rounded-3xl p-8 w-[500px] max-w-full shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
-        <h2 class="text-xl font-black mb-6 text-slate-800"><i class="fa-solid fa-gear text-slate-400 mr-2"></i> Settings</h2>
+        <h2 class="text-xl font-black mb-6 text-slate-800"><i class="fa-solid fa-gear text-slate-400 mr-2"></i> Settings & Global Backup</h2>
         
-        <form action="/save_settings_basic" method="POST" class="mb-8">
+        <form action="/save_settings_basic" method="POST" class="mb-6">
             <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Telegram Bot Token</label>
             <input type="text" name="bot_token" value="{{ config.get('bot_token', '') }}" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none text-sm">
-            
             <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Cron Interval (Hours)</label>
             <input type="number" name="interval" value="{{ config.get('interval', 12) }}" class="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none text-sm">
-            
-            <div class="flex justify-end gap-3">
-                <button type="button" onclick="document.getElementById('settingsModal').classList.add('hidden')" class="px-5 py-3 font-bold text-slate-400 hover:text-slate-600 transition">Close</button>
-                <button type="submit" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition">Save Config</button>
-            </div>
+            <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-3 rounded-xl font-bold transition">Save Config</button>
         </form>
+
+        <div class="border-t border-slate-100 pt-6 mb-6">
+            <h3 class="text-sm font-black text-slate-800 mb-4"><i class="fa-solid fa-database mr-2 text-blue-500"></i> Global Users Database</h3>
+            <div class="flex gap-4">
+                <a href="/download_backup_global" class="flex-1 text-center bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-3 rounded-xl text-xs font-bold transition"><i class="fa-solid fa-download mr-1"></i> Download DB</a>
+                <form action="/upload_backup" method="POST" enctype="multipart/form-data" class="flex-1 m-0 flex">
+                    <label class="flex-1 text-center bg-blue-50 hover:bg-blue-100 text-blue-600 px-4 py-3 rounded-l-xl text-xs font-bold cursor-pointer transition">
+                        <i class="fa-solid fa-upload mr-1"></i> Upload DB
+                        <input type="file" name="backup_file" class="hidden" onchange="this.form.submit()">
+                    </label>
+                </form>
+            </div>
+        </div>
         
         <div class="border-t border-slate-100 pt-6">
-            <h3 class="text-sm font-black text-slate-800 mb-4">Admin Telegram IDs</h3>
-            <ul class="mb-4">
-                {% for aid in config.get('admin_ids', []) %}
-                <li class="flex justify-between items-center bg-slate-50 p-2 rounded mb-2">
-                    <span class="text-xs font-mono font-bold text-slate-600">{{ aid }}</span>
-                    <form action="/config_action" method="POST" class="m-0">
-                        <input type="hidden" name="type" value="admin"><input type="hidden" name="action" value="del"><input type="hidden" name="val" value="{{ aid }}">
-                        <button class="text-red-400 hover:text-red-600"><i class="fa-solid fa-xmark"></i></button>
-                    </form>
-                </li>
-                {% endfor %}
-            </ul>
-            <form action="/config_action" method="POST" class="flex gap-2">
-                <input type="hidden" name="type" value="admin"><input type="hidden" name="action" value="add">
-                <input type="text" name="val" placeholder="Add Admin ID" class="flex-1 bg-slate-50 border border-slate-100 px-3 py-2 rounded-lg text-xs outline-none focus:border-blue-500">
-                <button class="bg-slate-800 text-white px-4 py-2 rounded-lg text-xs font-bold">Add</button>
-            </form>
+            <div class="flex gap-6">
+                <div class="flex-1">
+                    <h3 class="text-xs font-black text-slate-800 mb-3">Admin IDs</h3>
+                    <ul class="mb-3 space-y-1">
+                        {% for aid in config.get('admin_ids', []) %}
+                        <li class="flex justify-between items-center bg-slate-50 px-3 py-1 rounded">
+                            <span class="text-[10px] font-mono font-bold text-slate-600">{{ aid }}</span>
+                            <form action="/config_action" method="POST" class="m-0"><input type="hidden" name="type" value="admin"><input type="hidden" name="action" value="del"><input type="hidden" name="val" value="{{ aid }}"><button class="text-red-400 hover:text-red-600"><i class="fa-solid fa-xmark"></i></button></form>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    <form action="/config_action" method="POST" class="flex gap-1"><input type="hidden" name="type" value="admin"><input type="hidden" name="action" value="add"><input type="text" name="val" placeholder="ID" class="w-full bg-slate-50 border border-slate-100 px-2 py-1 rounded text-xs outline-none focus:border-blue-500"><button class="bg-slate-800 text-white px-2 py-1 rounded text-xs font-bold">Add</button></form>
+                </div>
+                <div class="flex-1">
+                    <h3 class="text-xs font-black text-slate-800 mb-3">Mod IDs</h3>
+                    <ul class="mb-3 space-y-1">
+                        {% for mid in config.get('mod_ids', []) %}
+                        <li class="flex justify-between items-center bg-slate-50 px-3 py-1 rounded">
+                            <span class="text-[10px] font-mono font-bold text-slate-600">{{ mid }}</span>
+                            <form action="/config_action" method="POST" class="m-0"><input type="hidden" name="type" value="mod"><input type="hidden" name="action" value="del"><input type="hidden" name="val" value="{{ mid }}"><button class="text-red-400 hover:text-red-600"><i class="fa-solid fa-xmark"></i></button></form>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    <form action="/config_action" method="POST" class="flex gap-1"><input type="hidden" name="type" value="mod"><input type="hidden" name="action" value="add"><input type="text" name="val" placeholder="ID" class="w-full bg-slate-50 border border-slate-100 px-2 py-1 rounded text-xs outline-none focus:border-blue-500"><button class="bg-slate-800 text-white px-2 py-1 rounded text-xs font-bold">Add</button></form>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-8 text-right">
+            <button type="button" onclick="document.getElementById('settingsModal').classList.add('hidden')" class="px-5 py-2 font-bold text-slate-400 hover:text-slate-600 transition">Close Settings</button>
         </div>
     </div>
 </div>
@@ -177,7 +182,6 @@ function switchTab(tab) {
     document.getElementById('tab-backups').classList.add('hidden');
     document.getElementById('tabBtn-nodes').className = "pb-4 px-2 text-sm font-black text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition tracking-widest uppercase";
     document.getElementById('tabBtn-backups').className = "pb-4 px-2 text-sm font-black text-slate-400 hover:text-slate-600 border-b-2 border-transparent transition tracking-widest uppercase";
-    
     document.getElementById('tab-' + tab).classList.remove('hidden');
     document.getElementById('tabBtn-' + tab).className = "pb-4 px-2 text-sm font-black text-blue-600 border-b-2 border-blue-600 transition tracking-widest uppercase";
 }
