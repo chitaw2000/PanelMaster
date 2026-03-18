@@ -29,6 +29,5 @@ def check_live_status(db):
     return active
 
 def get_safe_delete_cmd(username, protocol, port):
-    # မူရင်းအဟောင်းအတိုင်း ပြန်လည်ထားရှိသည်
     if protocol == 'v2': return f"/usr/local/bin/v2ray-node-del-vless {username}"
     else: return f"/usr/local/bin/v2ray-node-del-out {username} {port}"
