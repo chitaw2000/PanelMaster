@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, redirect, session, url_for, send_file, jsonify
-import json, os, subprocess, uuid, base64, re, threading, time
+import json, os, subprocess, uuid, base64, re, threading, time, shutil
 from datetime import datetime, timedelta
 
 from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, load_config, save_config
@@ -10,13 +10,18 @@ app.secret_key = SECRET_KEY
 
 # Data Collisions မဖြစ်စေရန် Thread Lock အသုံးပြုခြင်း
 db_lock = threading.Lock()
+BACKUP_DIR = "/root/PanelMaster/backups"
+
+# Backup Folder မရှိလျှင် တည်ဆောက်ရန်
+if not os.path.exists(BACKUP_DIR):
+    os.makedirs(BACKUP_DIR)
 
 # =========================================================
 # 🚀 BACKGROUND TRAFFIC MONITOR & AUTO-BLOCK SYSTEM
 # =========================================================
 def background_traffic_monitor():
     while True:
-        time.sleep(30) # စက္ကန့် ၃၀ တစ်ခါ နောက်ကွယ်မှ အလိုအလျောက် စစ်ဆေးမည်
+        time.sleep(30)
         try:
             nodes = get_nodes()
             if not nodes: continue
@@ -36,7 +41,6 @@ def background_traffic_monitor():
                         stats = json.loads(res.stdout).get("stat", [])
                         user_bytes = {}
                         
-                        # VLESS & Shadowsocks ခွဲခြားဖတ်ရှုခြင်း
                         for s in stats:
                             parts = s.get("name", "").split(">>>")
                             val = s.get("value", 0)
@@ -48,7 +52,6 @@ def background_traffic_monitor():
                                     uname = parts[1][4:]
                                     user_bytes[uname] = user_bytes.get(uname, 0) + val
                                     
-                        # Database သို့ Update လုပ်ခြင်း
                         for uname, val in user_bytes.items():
                             if uname in db and db[uname].get("node") == node_name:
                                 last_raw = db[uname].get('last_raw_bytes', 0)
@@ -60,7 +63,6 @@ def background_traffic_monitor():
                                 db[uname]['last_raw_bytes'] = val
                                 db_changed = True
                                 
-                                # Limit ပြည့်လျှင် အလိုအလျောက် ပိတ်ချခြင်း
                                 tot_gb = float(db[uname].get('total_gb', 0))
                                 if tot_gb > 0:
                                     max_bytes = tot_gb * (1024**3)
@@ -68,19 +70,21 @@ def background_traffic_monitor():
                                         db[uname]['is_blocked'] = True
                                         safe_cmd = get_safe_delete_cmd(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
                                         os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\" &")
-                except Exception as e:
+                except Exception:
                     pass
             
             if db_changed:
                 with db_lock:
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
-        except Exception as e:
+        except Exception:
             pass
 
 monitor_thread = threading.Thread(target=background_traffic_monitor, daemon=True)
 monitor_thread.start()
-# =========================================================
 
+# =========================================================
+# 🌐 ROUTES
+# =========================================================
 @app.before_request
 def check_auth():
     if request.endpoint not in ['login', 'static', 'api_stats'] and not session.get('logged_in'):
@@ -128,6 +132,35 @@ def dashboard():
         
     return render_template('dashboard.html', nodes=node_stats, all_users=all_users, config=config)
 
+# --- 🚀 [NEW] Backup List ဖော်ပြမည့် စာမျက်နှာ ---
+@app.route('/backups')
+def backups_page():
+    backups = []
+    if os.path.exists(BACKUP_DIR):
+        for f in sorted(os.listdir(BACKUP_DIR), reverse=True):
+            if f.endswith('.json'):
+                path = os.path.join(BACKUP_DIR, f)
+                size = os.path.getsize(path) / 1024
+                ctime = datetime.fromtimestamp(os.path.getctime(path)).strftime('%Y-%m-%d %H:%M:%S')
+                backups.append({"name": f, "size": f"{size:.1f} KB", "time": ctime})
+    return render_template('backups.html', backups=backups)
+
+# --- 🚀 [NEW] Manual Backup ပြုလုပ်ရန် ---
+@app.route('/create_backup', methods=['POST'])
+def create_backup():
+    if os.path.exists(USERS_DB):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_name = f"users_db_{timestamp}.json"
+        shutil.copy2(USERS_DB, os.path.join(BACKUP_DIR, backup_name))
+    return redirect(url_for('backups_page'))
+
+@app.route('/download_backup_file/<filename>')
+def download_backup_file(filename):
+    file_path = os.path.join(BACKUP_DIR, filename)
+    if os.path.exists(file_path):
+        return send_file(file_path, as_attachment=True)
+    return redirect(url_for('backups_page'))
+
 @app.route('/node/<node_name>')
 def node_view(node_name):
     nodes = get_nodes()
@@ -154,21 +187,78 @@ def node_view(node_name):
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             info['is_blocked'] = info.get('is_blocked', False)
             users.append(info)
-    return render_template('node.html', node_name=node_name, node_ip=node_ip, users=users, config=config)
+            
+    # Migration အတွက် တခြား Node စာရင်းများကို ပို့ပေးမည်
+    other_nodes = [n for n in nodes.keys() if n != node_name]
+    return render_template('node.html', node_name=node_name, node_ip=node_ip, users=users, other_nodes=other_nodes, config=config)
+
+# --- 🚀 [NEW] Node အဟောင်းမှ Key များကို Node အသစ်သို့ ပြောင်းရွှေ့ခြင်း (Migrate) ---
+@app.route('/migrate_node/<target_node>', methods=['POST'])
+def migrate_node(target_node):
+    source_node = request.form.get('source_node') # ကျသွားသော Node အဟောင်း (ID)
+    if not source_node or source_node == target_node:
+        return redirect(f'/node/{target_node}')
+        
+    nodes = get_nodes()
+    target_ip = nodes.get(target_node)
+    source_ip = nodes.get(source_node, "")
+
+    if not target_ip: return redirect(url_for('dashboard'))
+
+    commands = []
+    with db_lock:
+        if os.path.exists(USERS_DB):
+            with open(USERS_DB, 'r') as f: db = json.load(f)
+            
+            for uname, info in list(db.items()):
+                # Node အဟောင်း၏ Key များကို ရှာဖွေခြင်း
+                if info.get('node') == source_node:
+                    info['node'] = target_node # Node အသစ်သို့ ပိုင်ရှင်ပြောင်းခြင်း
+                    
+                    # IP အဟောင်းကို IP အသစ်ဖြင့် Replace လုပ်ခြင်း
+                    if 'key' in info and source_ip:
+                        info['key'] = info['key'].replace(f"@{source_ip}:", f"@{target_ip}:")
+                    info['last_raw_bytes'] = 0 # Counter Reset
+                    
+                    # Target Server တွင် သွင်းမည့် Command များစုစည်းခြင်း
+                    if not info.get('is_blocked', False):
+                        uid = info.get('uuid')
+                        proto = info.get('protocol', 'v2')
+                        port = str(info.get('port', '443'))
+                        if proto == 'v2':
+                            commands.append(f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}")
+                        else:
+                            commands.append(f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port}")
+                            commands.append(f"ufw allow {port}/tcp && ufw allow {port}/udp")
+                            
+            with open(USERS_DB, 'w') as f: json.dump(db, f)
+
+    # Node အသစ် (Target Server) သို့ Command များ လှမ်းပို့ခြင်း
+    if commands:
+        commands.append("systemctl restart xray")
+        os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{target_ip} \"{' ; '.join(commands)}\" &")
+        
+    # Node အဟောင်းကို List မှ အလိုအလျောက် ဖျက်ပေးခြင်း
+    if os.path.exists(NODES_LIST):
+        with open(NODES_LIST, 'r') as f: lines = f.readlines()
+        with open(NODES_LIST, 'w') as f:
+            for line in lines:
+                if line.strip() and line.split()[0] != source_node:
+                    f.write(line)
+
+    return redirect(f'/node/{target_node}')
 
 @app.route('/api/check_ssh/<node_name>')
 def check_ssh(node_name):
     nodes = get_nodes()
     node_ip = nodes.get(node_name)
-    if not node_ip: return jsonify({"status": "error", "msg": "Node Not Found"})
+    if not node_ip: return jsonify({"status": "error"})
     try:
         cmd = f"ssh -o ConnectTimeout=3 -o PasswordAuthentication=no -o StrictHostKeyChecking=no root@{node_ip} 'echo ssh_ok'"
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        if "ssh_ok" in res.stdout:
-            return jsonify({"status": "success"})
+        if "ssh_ok" in res.stdout: return jsonify({"status": "success"})
         return jsonify({"status": "error"})
-    except:
-        return jsonify({"status": "error"})
+    except: return jsonify({"status": "error"})
 
 @app.route('/api/check_xray/<node_name>')
 def check_xray(node_name):
@@ -178,74 +268,38 @@ def check_xray(node_name):
     try:
         cmd = f"ssh -o ConnectTimeout=3 -o PasswordAuthentication=no -o StrictHostKeyChecking=no root@{node_ip} 'systemctl is-active xray'"
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        if "active" in res.stdout.strip().lower():
-            return jsonify({"status": "active"})
+        if "active" in res.stdout.strip().lower(): return jsonify({"status": "active"})
         return jsonify({"status": "inactive"})
-    except:
-        return jsonify({"status": "inactive"})
+    except: return jsonify({"status": "inactive"})
 
 @app.route('/add_node', methods=['POST'])
 def add_node():
     n_name = request.form.get('node_name')
     n_ip = request.form.get('node_ip')
     if n_name and n_ip:
-        with open(NODES_LIST, 'a') as f: 
-            f.write(f"\n{n_name} {n_ip}")
+        with open(NODES_LIST, 'a') as f: f.write(f"\n{n_name} {n_ip}")
     return redirect(url_for('node_view', node_name=n_name) + "?newly_added=yes")
-
-@app.route('/edit_node_ip/<node_name>', methods=['POST'])
-def edit_node_ip(node_name):
-    new_ip = request.form.get('new_ip', '').strip()
-    nodes = get_nodes()
-    old_ip = nodes.get(node_name)
-    
-    if old_ip and new_ip:
-        nodes[node_name] = new_ip
-        with open(NODES_LIST, 'w') as f:
-            for n, ip in nodes.items():
-                f.write(f"{n} {ip}\n")
-                
-        with db_lock:
-            if os.path.exists(USERS_DB):
-                with open(USERS_DB, 'r') as f: db = json.load(f)
-                for uname, info in db.items():
-                    if info.get('node') == node_name:
-                        if 'key' in info:
-                            info['key'] = info['key'].replace(f"@{old_ip}:", f"@{new_ip}:")
-                        info['last_raw_bytes'] = 0
-                with open(USERS_DB, 'w') as f: json.dump(db, f)
-                
-    return redirect(f'/node/{node_name}')
 
 @app.route('/delete_node/<node_name>', methods=['POST'])
 def delete_node(node_name):
     nodes = get_nodes()
     node_ip = nodes.get(node_name)
-    
     if node_ip:
-        cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl stop xray && rm -f /usr/local/etc/xray/config.json' &"
-        os.system(cmd)
-        
+        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl stop xray && rm -f /usr/local/etc/xray/config.json' &")
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f: lines = f.readlines()
         with open(NODES_LIST, 'w') as f:
             for line in lines:
-                if line.strip() and line.split()[0] != node_name:
-                    f.write(line)
-                    
+                if line.strip() and line.split()[0] != node_name: f.write(line)
     config = load_config()
     if node_name in config.get('disabled_nodes', []):
-        config['disabled_nodes'].remove(node_name)
-        save_config(config)
-        
+        config['disabled_nodes'].remove(node_name); save_config(config)
     with db_lock:
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
             users_to_delete = [u for u, info in db.items() if info.get('node') == node_name]
-            for u in users_to_delete:
-                del db[u]
+            for u in users_to_delete: del db[u]
             with open(USERS_DB, 'w') as f: json.dump(db, f)
-            
     return redirect(url_for('dashboard'))
 
 @app.route('/install_node/<node_name>', methods=['POST'])
@@ -255,38 +309,7 @@ def install_node_action(node_name):
     if node_ip:
         script_path = "/root/PanelMaster/install_node.sh"
         if os.path.exists(script_path):
-            cmd = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} 'bash -s' < {script_path}"
-            subprocess.run(cmd, shell=True)
-    return redirect(f'/node/{node_name}')
-
-@app.route('/sync_node/<node_name>', methods=['POST'])
-def sync_node(node_name):
-    nodes = get_nodes()
-    node_ip = nodes.get(node_name)
-    if not node_ip: return redirect(request.referrer)
-    
-    db = {}
-    with db_lock:
-        if os.path.exists(USERS_DB):
-            with open(USERS_DB, 'r') as f: db = json.load(f)
-        
-    commands = []
-    for uname, info in db.items():
-        if info.get('node') == node_name and not info.get('is_blocked', False):
-            uid = info.get('uuid')
-            proto = info.get('protocol', 'v2')
-            port = str(info.get('port', '443'))
-            
-            if proto == 'v2':
-                commands.append(f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}")
-            else:
-                commands.append(f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port}")
-                commands.append(f"ufw allow {port}/tcp && ufw allow {port}/udp")
-                
-    if commands:
-        commands.append("systemctl restart xray")
-        os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{node_ip} \"{' ; '.join(commands)}\"")
-        
+            os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} 'bash -s' < {script_path}")
     return redirect(f'/node/{node_name}')
 
 @app.route('/api/stats/<node_name>')
@@ -304,21 +327,15 @@ def api_stats(node_name):
                 parts = s.get("name", "").split(">>>")
                 val = s.get("value", 0)
                 if len(parts) >= 4:
-                    if parts[0] == "user":
-                        uname = parts[1]
-                        user_bytes[uname] = user_bytes.get(uname, 0) + val
-                    elif parts[0] == "inbound" and parts[1].startswith("out-"):
-                        uname = parts[1][4:]
-                        user_bytes[uname] = user_bytes.get(uname, 0) + val
+                    if parts[0] == "user": user_bytes[parts[1]] = user_bytes.get(parts[1], 0) + val
+                    elif parts[0] == "inbound" and parts[1].startswith("out-"): user_bytes[parts[1][4:]] = user_bytes.get(parts[1][4:], 0) + val
             return jsonify({"status": "ok", "data": user_bytes})
     except: pass
     return jsonify({"status": "error"})
 
 @app.route('/toggle_node/<node_name>', methods=['POST'])
 def toggle_node(node_name):
-    config = load_config()
-    nodes = get_nodes()
-    node_ip = nodes.get(node_name)
+    config = load_config(); nodes = get_nodes(); node_ip = nodes.get(node_name)
     if node_name in config['disabled_nodes']:
         config['disabled_nodes'].remove(node_name)
         if node_ip: os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl start xray'")
@@ -328,7 +345,6 @@ def toggle_node(node_name):
     save_config(config)
     return redirect(f'/node/{node_name}')
 
-# --- 🚀 [UPDATE] Key ထုတ်ရာတွင် Date အစား ရက်အရေအတွက် (Duration) ဖြင့် တွက်ချက်ခြင်း ---
 @app.route('/add_user_manual', methods=['POST'])
 def add_user_manual():
     creation_mode = request.form.get('creation_mode', 'single')
@@ -347,10 +363,8 @@ def add_user_manual():
 
     n_name = request.form.get('node_name')
     gb = float(request.form.get('total_gb', 0))
-    # Date အစား ရက်အရေအတွက် (days) ကို ယူပြီး Date ကို အလိုအလျောက်တွက်မည်
     days = int(request.form.get('expire_days', 30))
     exp = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
-    
     proto = request.form.get('protocol', 'v2')
     nodes = get_nodes(); n_ip = nodes.get(n_name)
     if not n_ip or not usernames: return redirect(f'/node/{n_name}')
@@ -477,38 +491,6 @@ def delete_user(username):
                 del db[username]
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
-
-@app.route('/download_backup')
-def download_backup():
-    if os.path.exists(USERS_DB): return send_file(USERS_DB, as_attachment=True, download_name=f"qito_db_backup.json")
-    return "No DB found."
-
-@app.route('/upload_backup', methods=['POST'])
-def upload_backup():
-    file = request.files.get('backup_file')
-    if file: file.save(USERS_DB)
-    return redirect(url_for('dashboard'))
-
-@app.route('/save_settings_basic', methods=['POST'])
-def save_settings_basic():
-    config = load_config()
-    config['interval'] = int(request.form.get('interval', 12))
-    config['bot_token'] = request.form.get('bot_token', '')
-    save_config(config)
-    return redirect(url_for('dashboard'))
-
-@app.route('/config_action', methods=['POST'])
-def config_action():
-    config = load_config()
-    ctype = request.form.get('type'); action = request.form.get('action')
-    val = request.form.get('val', '').strip()
-    target_list = 'admin_ids' if ctype == 'admin' else 'mod_ids'
-    if action == 'add' and val:
-        if val not in config[target_list]: config[target_list].append(val)
-    elif action == 'del' and val:
-        if val in config[target_list]: config[target_list].remove(val)
-    save_config(config)
-    return redirect(url_for('dashboard'))
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8888)
