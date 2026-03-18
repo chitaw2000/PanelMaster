@@ -1,4 +1,3 @@
-cat << 'EOF_NODE' > /root/PanelMaster/templates/node.html
 <!DOCTYPE html><html><head><title>Node Details</title><script src="https://cdn.tailwindcss.com"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"></head>
 <body class="bg-[#f4f7f6] p-4 md:p-8 font-sans"><div class="max-w-7xl mx-auto"><div class="flex justify-between items-center mb-8">
 <div class="flex items-center gap-4"><a href="/" class="bg-white border border-slate-200 w-10 h-10 flex items-center justify-center rounded-full text-slate-400 hover:text-slate-800 hover:bg-slate-50 transition"><i class="fa-solid fa-arrow-left"></i></a>
@@ -157,4 +156,3 @@ function toggleDelBtn() { const anyChecked = document.querySelectorAll('input[na
 function submitToggle(u) { let f = document.getElementById('actionToggleForm'); f.action = '/toggle_user/' + u; f.submit(); }
 function submitDelete(u) { let f = document.getElementById('actionDeleteForm'); f.action = '/delete_user/' + u; f.submit(); }
 </script></body></html>
-EOF_NODE
