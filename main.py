@@ -37,6 +37,21 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
+# 🚀 THE FIX: Node Health Update Route
+@app.route('/set_node_health/<node_id>', methods=['POST'])
+def set_node_health(node_id):
+    health = request.form.get('health', 'green')
+    with db_lock:
+        ndb = {}
+        if os.path.exists(NODES_DB):
+            try:
+                with open(NODES_DB, 'r') as f: ndb = json.load(f)
+            except: pass
+        if node_id not in ndb: ndb[node_id] = {"used_bytes": 0, "limit_tb": 0, "health": "green"}
+        ndb[node_id]["health"] = health
+        with open(NODES_DB, 'w') as f: json.dump(ndb, f)
+    return redirect(request.referrer)
+
 @app.route('/set_node_traffic/<node_id>', methods=['POST'])
 def set_node_traffic(node_id):
     try: tb = float(request.form.get('limit_tb', 0))
@@ -47,7 +62,7 @@ def set_node_traffic(node_id):
             try:
                 with open(NODES_DB, 'r') as f: ndb = json.load(f)
             except: pass
-        if node_id not in ndb: ndb[node_id] = {"used_bytes": 0, "limit_tb": 0}
+        if node_id not in ndb: ndb[node_id] = {"used_bytes": 0, "limit_tb": 0, "health": "green"}
         ndb[node_id]["limit_tb"] = tb
         with open(NODES_DB, 'w') as f: json.dump(ndb, f)
     return redirect(request.referrer)
@@ -63,20 +78,6 @@ def reset_node_traffic(node_id):
         if node_id in ndb:
             ndb[node_id]["used_bytes"] = 0
             with open(NODES_DB, 'w') as f: json.dump(ndb, f)
-            
-        if os.path.exists(USERS_DB):
-            try:
-                with open(USERS_DB, 'r') as f: db = json.load(f)
-                db_changed = False
-                for uname, info in db.items():
-                    if info.get('node') == node_id:
-                        info['used_bytes'] = 0
-                        info['last_raw_bytes'] = 0
-                        db_changed = True
-                if db_changed:
-                    with open(USERS_DB, 'w') as f: json.dump(db, f)
-            except: pass
-            
     return redirect(request.referrer)
 
 def get_node_backups():
@@ -116,7 +117,7 @@ def dashboard():
     group_stats = []
     
     node_used_bytes = {}
-    group_used_bytes = {} # 🚀 Group Traffic တွက်ရန်
+    group_used_bytes = {}
     
     for uname, uinfo in db.items():
         nid = uinfo.get('node')
@@ -124,6 +125,16 @@ def dashboard():
         if nid: node_used_bytes[nid] = node_used_bytes.get(nid, 0) + float(uinfo.get('used_bytes', 0))
         if gid: group_used_bytes[gid] = group_used_bytes.get(gid, 0) + float(uinfo.get('used_bytes', 0))
     
+    # 🚀 Get Sick Nodes for Global Alert Center
+    all_servers = get_all_servers()
+    sick_nodes = {'blue': [], 'yellow': [], 'orange': [], 'red': []}
+    sick_count = 0
+    for nid, info in all_servers.items():
+        h = ndb.get(nid, {}).get("health", "green")
+        if h in sick_nodes:
+            sick_nodes[h].append({"id": nid, "name": info.get('name', nid), "ip": info.get('ip', '')})
+            sick_count += 1
+            
     for nid, info in nodes.items():
         total_count = sum(1 for i in db.values() if i.get('node') == nid and not i.get('group'))
         live_count = sum(1 for uname, i in db.items() if i.get('node') == nid and not i.get('group') and uname in active_users and not i.get('is_blocked'))
@@ -133,11 +144,12 @@ def dashboard():
         used_gb = node_used_bytes.get(nid, 0) / (1024**3)
         limit_gb = limit_tb * 1024
         is_alarm = limit_gb > 0 and used_gb >= limit_gb
+        health = ninfo.get("health", "green")
 
         node_stats.append({
             "id": nid, "name": info.get('name', nid), "ip": info.get('ip', ''), 
             "total": total_count, "live": live_count, "disabled": nid in config.get('disabled_nodes', []),
-            "used_gb": used_gb, "limit_tb": limit_tb, "is_alarm": is_alarm
+            "used_gb": used_gb, "limit_tb": limit_tb, "is_alarm": is_alarm, "health": health
         })
         
     for gid, gdata in auto_groups.items():
@@ -147,7 +159,7 @@ def dashboard():
         g_used_gb = group_used_bytes.get(gid, 0) / (1024**3)
         group_stats.append({"id": gid, "name": gdata.get("name", gid), "limit": limit, "node_count": len(g_nodes), "total_keys": g_keys, "used_gb": g_used_gb})
 
-    return render_template('dashboard.html', nodes=node_stats, groups=group_stats, config=config, backups=get_node_backups())
+    return render_template('dashboard.html', nodes=node_stats, groups=group_stats, config=config, backups=get_node_backups(), sick_nodes=sick_nodes, sick_count=sick_count)
 
 @app.route('/add_auto_group', methods=['POST'])
 def add_auto_group():
@@ -225,8 +237,9 @@ def group_view(group_id):
         used_gb = node_used_bytes.get(nid, 0) / (1024**3)
         limit_gb = limit_tb * 1024
         is_alarm = limit_gb > 0 and used_gb >= limit_gb
+        health = ninfo.get("health", "green")
         
-        server_stats.append({"id": nid, "ip": nip, "count": counts[nid], "limit": limit, "used_gb": used_gb, "limit_tb": limit_tb, "is_alarm": is_alarm})
+        server_stats.append({"id": nid, "ip": nip, "count": counts[nid], "limit": limit, "used_gb": used_gb, "limit_tb": limit_tb, "is_alarm": is_alarm, "health": health})
         
     return render_template('group.html', group_id=group_id, group=group, users=users, server_stats=server_stats, group_used_gb=group_used_gb)
 
@@ -352,9 +365,10 @@ def node_view(node_id):
     used_gb = node_used_bytes / (1024**3)
     limit_gb = limit_tb * 1024
     is_alarm = limit_tb > 0 and used_gb >= limit_gb
+    health = ninfo.get("health", "green")
             
     other_nodes = [nid for nid in nodes.keys() if nid != node_id]
-    return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, config=config, used_gb=used_gb, limit_tb=limit_tb, is_alarm=is_alarm)
+    return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, config=config, used_gb=used_gb, limit_tb=limit_tb, is_alarm=is_alarm, health=health)
 
 @app.route('/add_node', methods=['POST'])
 def add_node():
