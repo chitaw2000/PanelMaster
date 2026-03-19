@@ -15,16 +15,16 @@ def fetch_geoip(ip):
     try:
         url = f"http://ip-api.com/json/{ip}?fields=status,country,city,isp"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=5) as response:
+        with urllib.request.urlopen(req, timeout=4) as response:
             data = json.loads(response.read().decode())
             if data.get("status") == "success":
                 city = data.get('city', '')
                 country = data.get('country', '')
                 isp = data.get('isp', '')
                 loc = f"{city}, {country}" if city else country
-                loc_str = f"{loc} ({isp})"
-                IP_CACHE[ip] = loc_str
-                return loc_str
+                res = f"{loc} ({isp})"
+                IP_CACHE[ip] = res
+                return res
     except:
         pass
     return "Unknown Location"
@@ -35,7 +35,7 @@ def get_active_ips(node_ip, port, protocol, username):
     try:
         if protocol == 'out': 
             # 🚀 Shadowsocks အတွက်
-            cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"ss -tn state established | grep ':{port}'\""
+            cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"ss -tnp state established 2>/dev/null | grep ':{port}'\""
             res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
             for line in res.stdout.splitlines():
                 parts = line.split()
@@ -45,15 +45,15 @@ def get_active_ips(node_ip, port, protocol, username):
                     active_ips.add(ip)
         else: 
             # 🚀 VLESS အတွက် (Regex ဖြင့် တိကျစွာ ဆွဲထုတ်မည်)
-            cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"cat /var/log/xray/access.log 2>/dev/null | tail -n 3000 | grep 'accepted' | grep '{username}'\""
-            res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=15)
+            cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"cat /var/log/xray/access.log 2>/dev/null | tail -n 5000 | grep 'accepted' | grep '{username}'\""
+            res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
             for line in res.stdout.splitlines():
                 # ဥပမာ - 1.2.3.4:56789 accepted tcp:...
                 match = re.search(r'([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}):\d+\s+accepted', line)
                 if match:
                     active_ips.add(match.group(1))
     except Exception as e:
-        pass
+        print(f"IP Fetch Error: {e}")
         
     # Local IP များကို ဖယ်ရှားမည်
     clean_ips = set()
@@ -82,15 +82,15 @@ def get_active_ips(node_ip, port, protocol, username):
                 db_changed = True
             else:
                 history_dict[ip]["last_seen"] = now_str
-                if history_dict[ip]["location"] == "Unknown Location" or not history_dict[ip]["location"]:
+                if history_dict[ip].get("location", "Unknown Location") == "Unknown Location":
                     history_dict[ip]["location"] = fetch_geoip(ip)
                 db_changed = True
                 
         # နောက်ဆုံးဝင်ထားသော IP ၁၅ ခုကို အချိန်အလိုက်စီပြီး သိမ်းမည်
-        sorted_history = sorted(history_dict.values(), key=lambda x: x['last_seen'], reverse=True)[:15] 
-        ips_db[username] = sorted_history
+        sorted_history = sorted(history_dict.values(), key=lambda x: x.get('last_seen', ''), reverse=True)[:15] 
         
-        if db_changed:
+        if db_changed or not user_history:
+            ips_db[username] = sorted_history
             with open(IPS_DB, 'w') as f: json.dump(ips_db, f)
             
         return sorted_history
