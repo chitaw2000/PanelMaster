@@ -1,4 +1,4 @@
-import os, threading, base64
+import os, threading
 
 try:
     from config import NODES_LIST
@@ -48,29 +48,9 @@ def check_live_status(db):
         except: pass
     return active
 
-# 🚀 THE FATAL BUG FIXED: အရင်က အလုပ်လုပ်ခဲ့သော Xray Config မှ တိုက်ရိုက် ဖြတ်ချမည့် Base64 Python Script ကို ပြန်လည်အသက်သွင်းလိုက်ပါပြီ!!
+# 🚀 THE FIX: Xray အား Crash ဖြစ်စေသော Python Script ကို ဖြုတ်ချပြီး echo 'y' ဖြင့် အသေအချာ Run မည့်စနစ်ကို ပြောင်းလဲအသုံးပြုသည်
 def get_safe_delete_cmd(username, protocol, port):
-    py_script = f"""
-import json
-try:
-    with open('/usr/local/etc/xray/config.json', 'r') as f: c = json.load(f)
-    new_inbounds = []
-    for inb in c.get('inbounds', []):
-        if 'settings' in inb and 'clients' in inb['settings']:
-            inb['settings']['clients'] = [cl for cl in inb['settings']['clients'] if str(cl.get('email', '')) != '{username}']
-        if str(inb.get('port', '')) == '{port}' and str(inb.get('protocol', '')) == 'shadowsocks':
-            continue
-        new_inbounds.append(inb)
-    c['inbounds'] = new_inbounds
-    with open('/usr/local/etc/xray/config.json', 'w') as f: json.dump(c, f, indent=2)
-except Exception: pass
-"""
-    b64_script = base64.b64encode(py_script.strip().encode()).decode().strip()
-    
-    if protocol == 'v2': 
-        bash_cmd = f"/usr/local/bin/v2ray-node-del-vless '{username}' || true"
-    else: 
-        bash_cmd = f"/usr/local/bin/v2ray-node-del-out '{username}' {port} || true ; ufw delete allow {port}/tcp || true ; ufw delete allow {port}/udp || true"
-        
-    # 🚀 Config အား တိုက်ရိုက်ပြင်ဆင်မည့် Python Code အား Server ပေါ်တွင် Execute လုပ်မည်
-    return f"{bash_cmd} ; echo {b64_script} | base64 -d | python3"
+    if protocol == 'v2':
+        return f"echo 'y' | /usr/local/bin/v2ray-node-del-vless '{username}' || true"
+    else:
+        return f"echo 'y' | /usr/local/bin/v2ray-node-del-out '{username}' {port} || true ; ufw delete allow {port}/tcp || true ; ufw delete allow {port}/udp || true"
