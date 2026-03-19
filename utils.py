@@ -49,8 +49,8 @@ def check_live_status(db):
     return active
 
 def get_safe_delete_cmd(username, protocol, port):
-    # 🚀 UPDATE: yes | နှင့် || true အားပေါင်းစပ်၍ Script မှ Prompt တောင်းပါက ကျော်ဖြတ်ကာ သေချာပေါက် ဖျက်ချမည်
+    # 🚀 မူရင်းအဟောင်းအတိုင်း အတိအကျ ပြန်လည်အသုံးပြုပါသည်
     if protocol == 'v2':
-        return f"yes | /usr/local/bin/v2ray-node-del-vless {username} || true"
+        return f"/usr/local/bin/v2ray-node-del-vless {username}"
     else:
-        return f"yes | /usr/local/bin/v2ray-node-del-out {username} {port} || true ; ufw delete allow {port}/tcp || true ; ufw delete allow {port}/udp || true"
+        return f"/usr/local/bin/v2ray-node-del-out {username} {port}"
