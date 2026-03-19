@@ -10,12 +10,12 @@ IPS_DB = "/root/PanelMaster/ips_db.json"
 IP_CACHE = {}
 
 def fetch_geoip(ip):
-    """IP မှ နိုင်ငံနှင့် မြို့ကို ရှာဖွေပေးမည့် Free API"""
+    """IP မှ နိုင်ငံနှင့် မြို့ကို ရှာဖွေပေးမည့် API"""
     if ip in IP_CACHE: return IP_CACHE[ip]
     try:
         url = f"http://ip-api.com/json/{ip}?fields=status,country,city,isp"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=5) as response:
+        with urllib.request.urlopen(req, timeout=4) as response:
             data = json.loads(response.read().decode())
             if data.get("status") == "success":
                 city = data.get('city', '')
@@ -25,49 +25,51 @@ def fetch_geoip(ip):
                 loc_str = f"{loc} ({isp})"
                 IP_CACHE[ip] = loc_str
                 return loc_str
+            else:
+                return "Rate Limit/Unknown"
     except:
         pass
     return "Unknown Location"
 
 def get_active_ips(node_ip, port, protocol, username):
-    """ဆာဗာပေါ်တွင် ချိတ်ဆက်ခဲ့သော IP များကို Xray Log မှ တိကျစွာ ရှာဖွေပြီး History တွင် သိမ်းမည်"""
+    """Network Command နှင့် Xray Log နှစ်မျိုးလုံးမှ IP များကို အမိအရ ဆွဲထုတ်မည်"""
     active_ips = set()
+    
     try:
-        # 🚀 THE FIX: Shadowsocks ကော VLESS ကော နှစ်ခုလုံးအတွက် History (Log) ကို ဖတ်မည်
-        # Shadowsocks (out) ဆိုလျှင် Port နံပါတ်ဖြင့် ရှာမည်။ VLESS ဆိုလျှင် Username ဖြင့် ရှာမည်။
-        search_term = str(port) if protocol == 'out' else username
+        # 🚀 ၁။ Shadowsocks အတွက် Live Connection များကို တိုက်ရိုက်ဖမ်းမည်
+        if protocol == 'out': 
+            # ss command ဖြင့် လက်ရှိချိတ်ဆက်နေသော IP ကို တိကျစွာ ဆွဲထုတ်ခြင်း
+            cmd_live = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"ss -tn state established | grep ':{port} ' | awk '{{print \\$5}}' | cut -d: -f1\""
+            res_live = subprocess.run(cmd_live, shell=True, capture_output=True, text=True, timeout=8)
+            for ip in res_live.stdout.splitlines():
+                ip = ip.strip()
+                if ip and ip != "127.0.0.1" and ip != "0.0.0.0" and ip != node_ip:
+                    active_ips.add(ip)
+
+        # 🚀 ၂။ History အတွက် Xray Access Log မှ ပြန်လည်ရှာဖွေမည် (VLESS ကော SS ပါရမည်)
+        # Shadowsocks ဆိုလျှင် ၎င်း၏ Port ဖြင့်ရှာမည်၊ VLESS ဆိုလျှင် Username ဖြင့်ရှာမည်
+        search_pattern = f"{username}|:{port}" if protocol == 'out' else username
         
-        # Access Log နှင့် Journalctl နှစ်ခုလုံးမှ နောက်ဆုံး စာကြောင်း ၅၀၀၀ ကို ရှာဖွေမည်
-        cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"cat /var/log/xray/access.log 2>/dev/null | tail -n 5000 | grep 'accepted' | grep '{search_term}' || journalctl -u xray --no-pager -n 5000 2>/dev/null | grep 'accepted' | grep '{search_term}'\""
+        cmd_log = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"cat /var/log/xray/access.log 2>/dev/null | grep 'accepted' | grep -E '{search_pattern}' | tail -n 1000 || journalctl -u xray --no-pager 2>/dev/null | grep 'accepted' | grep -E '{search_pattern}' | tail -n 1000\""
+        res_log = subprocess.run(cmd_log, shell=True, capture_output=True, text=True, timeout=12)
         
-        res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=15)
-        for line in res.stdout.splitlines():
-            # Xray Log ထဲမှ Client IP ကို Regex ဖြင့် တိကျစွာ ဆွဲထုတ်မည် (ဥပမာ - 1.2.3.4:56789 accepted)
+        # Regex ဖြင့် IP ကိုတိကျစွာ ဖြတ်ထုတ်ခြင်း
+        for line in res_log.stdout.splitlines():
             match = re.search(r'([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}):\d+\s+accepted', line)
             if match:
                 active_ips.add(match.group(1))
-                
-        # 🚀 အပိုဆောင်း ကာကွယ်မှု: Live Connection (ss) ကိုပါ Shadowsocks အတွက် ထပ်စစ်ပေးမည်
-        if protocol == 'out':
-            cmd_ss = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"ss -tn state established | grep ':{port}'\""
-            res_ss = subprocess.run(cmd_ss, shell=True, capture_output=True, text=True, timeout=5)
-            for line in res_ss.stdout.splitlines():
-                parts = line.split()
-                if len(parts) >= 5:
-                    peer_ip = parts[4].rsplit(':', 1)[0]
-                    active_ips.add(peer_ip)
 
     except Exception as e:
-        print(f"IP Fetch Error: {e}")
+        print(f"IP Tracker Error: {e}")
         pass
         
-    # Local IP များနှင့် Private IP များကို ဖယ်ရှားမည်
+    # Local IP များနှင့် Private IP များကို ဖယ်ရှားသန့်စင်မည်
     clean_ips = set()
     for ip in active_ips:
-        if ip and ip != "127.0.0.1" and ip != node_ip and not ip.startswith("10.") and not ip.startswith("192.168."):
+        if ip and not ip.startswith("10.") and not ip.startswith("192.168.") and not ip.startswith("172.") and ip != "127.0.0.1":
             clean_ips.add(ip)
             
-    # 🚀 History DB တွင် အချိန်နှင့်တကွ မှတ်တမ်းတင်ခြင်း
+    # 🚀 ၃။ History DB တွင် အချိန်နှင့်တကွ မှတ်တမ်းတင်ခြင်း
     now_str = datetime.now().strftime("%Y-%m-%d %I:%M %p")
     sorted_history = []
     
@@ -82,7 +84,6 @@ def get_active_ips(node_ip, port, protocol, username):
         history_dict = {entry['ip']: entry for entry in user_history}
         
         db_changed = False
-        # အသစ်ဝင်လာသော IP များကို Update လုပ်မည်
         for ip in clean_ips:
             if ip not in history_dict:
                 loc = fetch_geoip(ip)
@@ -90,12 +91,12 @@ def get_active_ips(node_ip, port, protocol, username):
                 db_changed = True
             else:
                 history_dict[ip]["last_seen"] = now_str
-                # Location Unknown ဖြစ်နေလျှင် ပြန်ရှာပေးမည်
-                if history_dict[ip]["location"] == "Unknown Location" or not history_dict[ip]["location"]:
+                # Location မရခဲ့လျှင် ပြန်ရှာပေးမည်
+                if history_dict[ip]["location"] in ["Unknown Location", "Rate Limit/Unknown", ""]:
                     history_dict[ip]["location"] = fetch_geoip(ip)
                 db_changed = True
                 
-        # နောက်ဆုံးဝင်ထားသော IP ၁၅ ခုကို အချိန်အလိုက် (အသစ်ဆုံးက အပေါ်) စီပြီး သိမ်းမည်
+        # နောက်ဆုံးဝင်ထားသော IP ၁၅ ခုကို အချိန်အလိုက်စီပြီး သိမ်းမည်
         sorted_history = sorted(history_dict.values(), key=lambda x: x.get('last_seen', ''), reverse=True)[:15] 
         
         if db_changed or (len(user_history) != len(sorted_history)):
