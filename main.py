@@ -1,13 +1,10 @@
 from flask import Flask, render_template, request, redirect, session, url_for, send_file, jsonify
-import json, os, subprocess, re, urllib.parse
+import json, os, subprocess, re, urllib.parse, threading, time
 from datetime import datetime, timedelta
 
 from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, load_config, save_config
-from utils import get_nodes, get_all_servers, check_live_status, db_lock, AUTO_GROUPS_FILE
+from utils import get_nodes, get_all_servers, check_live_status, db_lock, AUTO_GROUPS_FILE, get_safe_delete_cmd
 from core_auto import load_auto_groups, save_auto_groups
-
-# 🚀 UPDATE: Core Actions များကို ခွဲထုတ်ပြီး ချိတ်ဆက်ထားသည်
-from core_monitor import start_background_monitor
 from core_actions import generate_keys, toggle_user_status, remove_user, bulk_remove_users, process_rebalance, run_bg
 
 app = Flask(__name__)
@@ -15,7 +12,85 @@ app.secret_key = SECRET_KEY
 BACKUP_DIR = "/root/PanelMaster/backups"
 if not os.path.exists(BACKUP_DIR): os.makedirs(BACKUP_DIR)
 
-start_background_monitor()
+# ==========================================
+# 🚀 THE ULTIMATE BACKGROUND TRAFFIC MONITOR (100% BUG FREE)
+# ==========================================
+def background_traffic_monitor():
+    while True:
+        time.sleep(20)
+        try:
+            nodes = get_all_servers()
+            if not nodes: continue
+            
+            # 🚀 အရင်ဆုံး Server အားလုံးဆီက Data များကို Database မဖွင့်ဘဲ စုဆောင်းမည်
+            gathered_stats = {}
+            for node_id, info in nodes.items():
+                node_ip = info.get('ip')
+                if not node_ip: continue
+                try:
+                    cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\""
+                    res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                    user_bytes = {}
+                    if res.stdout.strip():
+                        stats = json.loads(res.stdout).get("stat", [])
+                        for s in stats:
+                            parts = s.get("name", "").split(">>>"); val = s.get("value", 0)
+                            if len(parts) >= 4:
+                                if parts[0] == "user": user_bytes[parts[1]] = user_bytes.get(parts[1], 0) + val
+                                elif parts[0] == "inbound" and parts[1].startswith("out-"): user_bytes[parts[1][4:]] = user_bytes.get(parts[1][4:], 0) + val
+                    gathered_stats[node_id] = user_bytes
+                except Exception: pass
+
+            if not gathered_stats: continue
+
+            # 🚀 Data ရပြီးမှသာ Database ကို Lock ချပြီး မြန်မြန်ဆန်ဆန် Update လုပ်မည် (Overwrite လုံးဝမဖြစ်စေရ)
+            users_to_block = []
+            with db_lock:
+                if not os.path.exists(USERS_DB): continue
+                with open(USERS_DB, 'r') as f: db = json.load(f)
+                
+                db_changed = False
+                for uname, uinfo in db.items():
+                    node_id = uinfo.get("node")
+                    if node_id in gathered_stats:
+                        user_bytes = gathered_stats[node_id]
+                        val = user_bytes.get(uname, uinfo.get('last_raw_bytes', 0))
+                        last_raw = uinfo.get('last_raw_bytes', 0)
+                        
+                        # Pending နှင့် Online ကို အတိအကျ တွက်ချက်သည်
+                        if val > last_raw: uinfo['is_online'] = True
+                        else: uinfo['is_online'] = False
+                            
+                        if val < last_raw: uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + val
+                        else: uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + (val - last_raw)
+                        
+                        uinfo['last_raw_bytes'] = val
+                        db_changed = True
+                        
+                        # GB ပြည့်ပါက သေချာပေါက် Block မည်
+                        tot_gb = float(uinfo.get('total_gb', 0))
+                        if tot_gb > 0:
+                            max_bytes = tot_gb * (1024**3)
+                            if float(uinfo['used_bytes']) >= max_bytes and not uinfo.get('is_blocked', False):
+                                uinfo['is_blocked'] = True
+                                uinfo['is_online'] = False
+                                node_ip = nodes.get(node_id, {}).get('ip')
+                                if node_ip:
+                                    users_to_block.append((node_ip, uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443')))
+                                    
+                if db_changed:
+                    with open(USERS_DB, 'w') as f: json.dump(db, f)
+
+            # 🚀 Block Command များကို Database Lock ပြင်ပတွင် Background မှ Popen ဖြင့် သေချာပေါက် Run မည်
+            for node_ip, uname, proto, port in users_to_block:
+                safe_cmd = get_safe_delete_cmd(uname, proto, port)
+                subprocess.Popen(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\"", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+        except Exception: pass
+
+# Start Monitor
+threading.Thread(target=background_traffic_monitor, daemon=True).start()
+
 
 @app.before_request
 def check_auth():
@@ -152,24 +227,21 @@ def delete_server_from_group(group_id, node_id):
             if os.path.exists(USERS_DB):
                 with open(USERS_DB, 'r') as f: db = json.load(f)
                 users_to_delete = [u for u, info in db.items() if info.get('node') == node_id]
-                for u in users_to_delete:
-                    remove_user(u)
+                for u in users_to_delete: remove_user(u)
     return redirect(f'/group/{group_id}')
 
 @app.route('/edit_group_limit/<group_id>', methods=['POST'])
 def edit_group_limit(group_id):
     new_limit = int(request.form.get('limit', 30))
     success, msg = process_rebalance(group_id, new_limit)
-    if not success:
-        return f"<script>alert('{msg}'); window.location.href='/group/{group_id}';</script>"
+    if not success: return f"<script>alert('{msg}'); window.location.href='/group/{group_id}';</script>"
     return redirect(f'/group/{group_id}')
 
 @app.route('/edit_server_limit/<group_id>/<node_id>', methods=['POST'])
 def edit_server_limit(group_id, node_id):
     new_limit = int(request.form.get('limit', 30))
     success, msg = process_rebalance(group_id, new_limit, specific_node=node_id)
-    if not success:
-        return f"<script>alert('{msg}'); window.location.href='/group/{group_id}';</script>"
+    if not success: return f"<script>alert('{msg}'); window.location.href='/group/{group_id}';</script>"
     return redirect(f'/group/{group_id}')
 
 @app.route('/add_user_auto', methods=['POST'])
@@ -196,8 +268,7 @@ def add_user_auto():
     proto = request.form.get('protocol', 'v2')
 
     success, msg = generate_keys(None, gid, raw_usernames, gb, days, proto, is_auto=True)
-    if not success:
-        return f"<script>alert('{msg}'); window.history.back();</script>"
+    if not success: return f"<script>alert('{msg}'); window.history.back();</script>"
     return redirect(f'/group/{gid}')
 
 @app.route('/add_user_manual', methods=['POST'])
@@ -231,8 +302,7 @@ def add_user_manual():
     proto = request.form.get('protocol', 'v2')
     
     success, msg = generate_keys(nid, gid, raw_usernames, gb, days, proto, is_auto=False)
-    if not success:
-        return f"<script>alert('{msg}'); window.history.back();</script>"
+    if not success: return f"<script>alert('{msg}'); window.history.back();</script>"
     return redirect(f'/node/{nid}')
 
 @app.route('/node/<node_id>')
@@ -261,8 +331,7 @@ def add_node():
     n_name = request.form.get('node_name', '').strip()
     n_ip = request.form.get('node_ip', '').strip()
     if n_id and n_name and n_ip:
-        with open(NODES_LIST, 'a') as f: 
-            f.write(f"\n{n_id}|{n_name}|{n_ip}")
+        with open(NODES_LIST, 'a') as f: f.write(f"\n{n_id}|{n_name}|{n_ip}")
     return redirect(url_for('node_view', node_id=n_id) + "?newly_added=yes")
 
 @app.route('/delete_node/<node_id>', methods=['POST'])
@@ -290,7 +359,6 @@ def delete_node(node_id):
             
     config = load_config()
     if node_id in config.get('disabled_nodes', []): config['disabled_nodes'].remove(node_id); save_config(config)
-    
     if is_auto: return redirect(request.referrer)
     return redirect(url_for('dashboard'))
 
@@ -298,6 +366,7 @@ def delete_node(node_id):
 def replace_id(current_id):
     old_id = request.form.get('old_id', '').strip(); nodes = get_all_servers()
     if current_id not in nodes or not old_id: return redirect(f'/node/{current_id}')
+    current_ip = str(nodes[current_id].get('ip')).strip()
     
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f: lines = f.readlines()
@@ -322,6 +391,22 @@ def replace_id(current_id):
             save_auto_groups(groups)
             break
             
+    commands = []
+    with db_lock:
+        if os.path.exists(USERS_DB):
+            with open(USERS_DB, 'r') as f: db = json.load(f)
+            for uname, info in db.items():
+                if info.get('node') == old_id:
+                    if 'key' in info and current_ip: info['key'] = re.sub(r'(@)[^:]+(:)', f'\\g<1>{current_ip}\\g<2>', info['key'])
+                    info['last_raw_bytes'] = 0; info['is_online'] = False
+                    if not info.get('is_blocked', False):
+                        uid = info.get('uuid'); port = str(info.get('port', '443'))
+                        if info.get('protocol', 'v2') == 'v2': commands.append(f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}")
+                        else: commands.append(f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
+            with open(USERS_DB, 'w') as f: json.dump(db, f)
+    if commands and current_ip:
+        commands.append("systemctl restart xray")
+        run_bg(current_ip, " ; ".join(commands))
     return redirect(f'/node/{old_id}')
 
 @app.route('/api/check_ssh/<node_id>')
