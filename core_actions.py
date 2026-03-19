@@ -8,7 +8,7 @@ try:
 except ImportError:
     USERS_DB = "/root/PanelMaster/users_db.json"
 
-# 🚀 THE FIX: Background တွင်မလွှတ်တော့ဘဲ Command ကို သေချာပေါက် အလုပ်လုပ်စေမည့် မူရင်းနည်းလမ်း
+# 🚀 THE FIX: Background (`&`) တွင်မလွှတ်တော့ဘဲ Command ကို သေချာပေါက် အဆုံးထိ စောင့်ပြီးမှ အလုပ်လုပ်စေမည့် မူရင်းနည်းလမ်း
 def execute_ssh(ip, cmd):
     subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\"", shell=True)
 
@@ -53,7 +53,8 @@ def generate_keys(node_id, group_id, raw_usernames, total_gb, expire_days, proto
                 raw_ss = f"chacha20-ietf-poly1305:{uid}@{target_ip}:{port}"
                 ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
                 k = f"ss://{ss_conf}#{safe_u}"
-                cmds.append(f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
+                cmds.append(f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port}")
+                cmds.append(f"ufw allow {port}/tcp && ufw allow {port}/udp")
                 
             db[u] = {"node": target_node, "group": group_id, "protocol": proto, "uuid": uid, "port": port, "total_gb": float(total_gb), "expire_date": exp, "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False, "key": k}
         
@@ -80,6 +81,7 @@ def toggle_user_status(username):
                         uid = user['uuid']
                         if user['protocol'] == 'v2': cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
                         else: cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
+                    # 🚀 အဆင့် ၂ ဆင့်ခွဲ၍ သေချာပေါက် Run မည်
                     execute_ssh(ip, cmd)
                     execute_ssh(ip, "systemctl restart xray")
             with open(USERS_DB, 'w') as f: json.dump(db, f)
@@ -175,7 +177,8 @@ def process_rebalance(group_id, new_limit, specific_node=None):
                 raw_ss = f"chacha20-ietf-poly1305:{uid}@{new_node_ip}:{new_port}"
                 ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
                 k = f"ss://{ss_conf}#{safe_u}"
-                cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port} ; ufw allow {new_port}/tcp && ufw allow {new_port}/udp"
+                cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port}"
+                cmds_by_ip.setdefault(new_node_ip, []).append(f"ufw allow {new_port}/tcp && ufw allow {new_port}/udp")
 
             if new_node_ip not in cmds_by_ip: cmds_by_ip[new_node_ip] = []
             cmds_by_ip[new_node_ip].append(cmd_add)
