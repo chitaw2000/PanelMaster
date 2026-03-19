@@ -8,7 +8,6 @@ try:
 except ImportError:
     USERS_DB = "/root/PanelMaster/users_db.json"
 
-# 🚀 100% Bug-Free Background Execution
 def execute_ssh_bg(ip, cmds):
     if not cmds: return
     cmd_str = " ; ".join(cmds)
@@ -29,45 +28,59 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
     db = {}
     with db_lock:
         if os.path.exists(USERS_DB):
-            with open(USERS_DB, 'r') as f: db = json.load(f)
+            try:
+                with open(USERS_DB, 'r') as f: db = json.load(f)
+            except: pass
 
-    if is_auto:
-        target_node, target_ip = find_available_node(group_id, len(usernames), current_db=db)
-        if not target_node: return False, "❌ Error: Limit Reached! No space available in any server for this Auto Node."
-    else:
-        target_node = node_id
-        target_ip = get_all_servers().get(node_id, {}).get('ip')
-        if not target_ip: return False, "❌ Error: Node Server is offline or not found!"
-
-    used_ports = [int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out' and i.get('node') == target_node]
-    max_p = max(used_ports) if used_ports else 10000
-
-    exp = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
-    cmds = []
-    
-    for u in usernames:
-        if u in db: continue
-        uid = str(uuid.uuid4()).strip()
-        safe_u = urllib.parse.quote(u)
-        
-        if proto == 'v2':
-            port = "443"
-            k = f"vless://{uid}@{target_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
-            cmds.append(f"/usr/local/bin/v2ray-node-add-vless {u} {uid}")
+        if is_auto:
+            target_node, target_ip = find_available_node(group_id, len(usernames), current_db=db)
+            if not target_node: return False, "❌ Error: Limit Reached! No space available in any server for this Auto Node."
         else:
-            max_p += 1; port = str(max_p)
-            raw_ss = f"chacha20-ietf-poly1305:{uid}@{target_ip}:{port}"
-            ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
-            k = f"ss://{ss_conf}#{safe_u}"
-            cmds.append(f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
+            target_node = node_id
+            target_ip = get_all_servers().get(node_id, {}).get('ip')
+            if not target_ip: return False, "❌ Error: Node Server is offline or not found!"
+
+        target_ip = str(target_ip).strip()
+        used_ports = [int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out' and i.get('node') == target_node]
+        max_p = max(used_ports) if used_ports else 10000
+
+        # 🚀 THE FIX: Permanent Key ID စနစ် (ဖျက်လိုက်သည့်တိုင် အစားဝင်မည်မဟုတ်ပါ)
+        existing_ids = [int(u.get('key_id', 0)) for u in db.values() if isinstance(u, dict) and str(u.get('key_id', '')).isdigit()]
+        next_id = max(existing_ids) + 1 if existing_ids else 1
+
+        exp = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+        cmds = []
+        
+        for u in usernames:
+            if u in db: continue
+            uid = str(uuid.uuid4()).strip()
+            safe_u = urllib.parse.quote(u)
             
-        db[u] = {"node": target_node, "group": group_id, "protocol": proto, "uuid": uid, "port": port, "total_gb": float(gb), "expire_date": exp, "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False, "key": k}
-    
-    if cmds:
-        with db_lock:
+            if proto == 'v2':
+                port = "443"
+                k = f"vless://{uid}@{target_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
+                cmds.append(f"/usr/local/bin/v2ray-node-add-vless {u} {uid}")
+            else:
+                max_p += 1; port = str(max_p)
+                raw_ss = f"chacha20-ietf-poly1305:{uid}@{target_ip}:{port}"
+                ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
+                k = f"ss://{ss_conf}#{safe_u}"
+                cmds.append(f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
+                
+            db[u] = {
+                "node": target_node, "group": group_id, "protocol": proto, "uuid": uid, 
+                "port": port, "total_gb": float(gb), "expire_date": exp, 
+                "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False, 
+                "key": k, 
+                "key_id": next_id # 🚀 Permanent ID ကို သိမ်းဆည်းသည်
+            }
+            next_id += 1
+        
+        if cmds:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
-        cmds.append("systemctl restart xray")
-        execute_ssh_bg(target_ip, cmds)
+            cmds.append("systemctl restart xray")
+            execute_ssh_bg(target_ip, cmds)
+            
     return True, "Success"
 
 def toggle_key(username):
@@ -85,7 +98,7 @@ def toggle_key(username):
                         uid = user['uuid']
                         if user['protocol'] == 'v2': cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
                         else: cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
-                    execute_ssh_bg(ip, [cmd, "systemctl restart xray"])
+                    execute_ssh_bg(str(ip).strip(), [cmd, "systemctl restart xray"])
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
 
 def edit_key(username, total_gb, expire_date):
@@ -115,7 +128,7 @@ def delete_key(username):
                 info = db[username]; ip = get_all_servers().get(info.get('node'), {}).get('ip')
                 if ip:
                     cmd = get_safe_delete_cmd(username, info.get('protocol', 'v2'), info.get('port', '443'))
-                    execute_ssh_bg(ip, [cmd, "systemctl restart xray"])
+                    execute_ssh_bg(str(ip).strip(), [cmd, "systemctl restart xray"])
                 del db[username]
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
 
@@ -129,6 +142,7 @@ def bulk_delete_keys(usernames):
                 if uname in db:
                     ip = nodes.get(db[uname].get('node'), {}).get('ip')
                     if ip:
+                        ip = str(ip).strip()
                         cmd = get_safe_delete_cmd(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
                         cmds_by_ip.setdefault(ip, []).append(cmd)
                     del db[uname]
@@ -168,13 +182,15 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
         for uname in excess_users:
             uinfo = db[uname]
             old_node = uinfo.get('node')
-            old_ip = get_all_servers().get(old_node, {}).get('ip')
+            old_ip = str(get_all_servers().get(old_node, {}).get('ip')).strip()
             old_port = uinfo.get('port')
             proto = uinfo.get('protocol')
+            old_key_id = uinfo.get('key_id') # 🚀 ID အဟောင်းကို သိမ်းထားမည်
             
             new_node_id, new_node_ip = find_available_node(group_id, 1, current_db=db)
             if not new_node_id: break
             
+            new_node_ip = str(new_node_ip).strip()
             cmd_del = get_safe_delete_cmd(uname, proto, old_port)
             cmds_by_ip.setdefault(old_ip, []).append(cmd_del)
             
@@ -197,6 +213,8 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
             cmds_by_ip.setdefault(new_node_ip, []).append(cmd_add)
             
             db[uname]['node'] = new_node_id; db[uname]['port'] = new_port; db[uname]['key'] = k
+            if old_key_id: db[uname]['key_id'] = old_key_id # 🚀 ပြောင်းရွှေ့ခံရသော်လည်း ID အဟောင်းကို ဆက်လက်ထိန်းသိမ်းမည်
+            
             migrated_count += 1
             
         with open(USERS_DB, 'w') as f: json.dump(db, f)
