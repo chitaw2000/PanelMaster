@@ -4,55 +4,17 @@ from datetime import timedelta, datetime
 
 from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, load_config, save_config
 from utils import get_nodes, get_all_servers, check_live_status, get_safe_delete_cmd, db_lock, AUTO_GROUPS_FILE
+from core_auto import load_auto_groups, save_auto_groups, find_available_node
+# 🚀 UPDATE: Key များကိုထိန်းချုပ်သည့် ဗဟိုစနစ်ကို ချိတ်ဆက်ထားသည်
+from core_keys import start_core_monitor, execute_ssh
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 BACKUP_DIR = "/root/PanelMaster/backups"
 if not os.path.exists(BACKUP_DIR): os.makedirs(BACKUP_DIR)
 
-# ==========================================
-# 🚀 AUTO GROUPS LOGIC
-# ==========================================
-def load_auto_groups():
-    if not os.path.exists(AUTO_GROUPS_FILE): return {}
-    try:
-        with open(AUTO_GROUPS_FILE, 'r') as f: return json.load(f)
-    except: return {}
-
-def save_auto_groups(data):
-    with open(AUTO_GROUPS_FILE, 'w') as f: json.dump(data, f, indent=4)
-
-def find_available_node(group_id, required_qty, current_db=None):
-    groups = load_auto_groups()
-    if group_id not in groups: return None, None
-    group = groups[group_id]
-    nodes = group.get("nodes", {})
-    if not nodes: return None, None
-
-    if current_db is not None: db = current_db
-    else:
-        with db_lock:
-            if os.path.exists(USERS_DB):
-                with open(USERS_DB, 'r') as f: db = json.load(f)
-            else: db = {}
-
-    counts = {nid: 0 for nid in nodes.keys()}
-    for uname, uinfo in db.items():
-        nid = uinfo.get("node")
-        if nid in counts: counts[nid] += 1
-
-    for nid in sorted(nodes.keys()):
-        ndata = nodes[nid]
-        if isinstance(ndata, dict):
-            limit = int(ndata.get("limit", group.get("limit", 30)))
-            nip = str(ndata.get("ip")).strip()
-        else:
-            limit = int(group.get("limit", 30))
-            nip = str(ndata).strip()
-            
-        if counts[nid] + required_qty <= limit:
-            return nid, nip
-    return None, None
+# 🚀 Background Monitor ကို Core Keys ထဲမှ ခေါ်ယူအသုံးပြုသည်
+start_core_monitor()
 
 def sanitize_usernames(raw_list):
     clean = []
@@ -62,79 +24,6 @@ def sanitize_usernames(raw_list):
         if u: clean.append(u)
     return clean
 
-# ==========================================
-# 🚀 BACKGROUND TRAFFIC MONITOR (100% Original Logic)
-# ==========================================
-def background_traffic_monitor():
-    while True:
-        time.sleep(30)
-        try:
-            nodes = get_all_servers()
-            if not nodes: continue
-            with db_lock:
-                if not os.path.exists(USERS_DB): continue
-                with open(USERS_DB, 'r') as f: db = json.load(f)
-            if not db: continue
-            
-            db_changed = False
-            users_to_block = []
-            
-            for node_id, info in nodes.items():
-                node_ip = info.get('ip')
-                if not node_ip: continue
-                try:
-                    cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\""
-                    res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                    user_bytes = {}
-                    if res.stdout.strip():
-                        stats = json.loads(res.stdout).get("stat", [])
-                        for s in stats:
-                            parts = s.get("name", "").split(">>>"); val = s.get("value", 0)
-                            if len(parts) >= 4:
-                                if parts[0] == "user": user_bytes[parts[1]] = user_bytes.get(parts[1], 0) + val
-                                elif parts[0] == "inbound" and parts[1].startswith("out-"): user_bytes[parts[1][4:]] = user_bytes.get(parts[1][4:], 0) + val
-                    
-                    for uname, uinfo in db.items():
-                        if uinfo.get("node") == node_id:
-                            val = user_bytes.get(uname, uinfo.get('last_raw_bytes', 0))
-                            last_raw = uinfo.get('last_raw_bytes', 0)
-                            
-                            # 🚀 UPDATE: Online / Pending စနစ် အတိအကျ
-                            if val > last_raw: uinfo['is_online'] = True
-                            else: uinfo['is_online'] = False
-                                
-                            if val < last_raw: uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + val
-                            else: uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + (val - last_raw)
-                            
-                            uinfo['last_raw_bytes'] = val
-                            db_changed = True
-                            
-                            # 🚀 UPDATE: Block စနစ်
-                            tot_gb = float(uinfo.get('total_gb', 0))
-                            if tot_gb > 0:
-                                max_bytes = tot_gb * (1024**3)
-                                if float(uinfo['used_bytes']) >= max_bytes and not uinfo.get('is_blocked', False):
-                                    uinfo['is_blocked'] = True
-                                    uinfo['is_online'] = False
-                                    users_to_block.append((node_ip, uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443')))
-                except Exception: pass
-            
-            if db_changed:
-                with db_lock:
-                    with open(USERS_DB, 'w') as f: json.dump(db, f)
-            
-            # 🚀 UPDATE: မူရင်း code အတိုင်း နောက်ကွယ်မှ run ရန် `&` သင်္ကေတ ပြန်ထည့်ထားသည်
-            for node_ip, uname, proto, port in users_to_block:
-                safe_cmd = get_safe_delete_cmd(uname, proto, port)
-                os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\" &")
-                
-        except Exception: pass
-
-threading.Thread(target=background_traffic_monitor, daemon=True).start()
-
-# ==========================================
-# 🌐 WEB ROUTES
-# ==========================================
 @app.before_request
 def check_auth():
     if request.endpoint not in ['login', 'static', 'api_stats'] and not session.get('logged_in'): return redirect(url_for('login'))
@@ -273,10 +162,10 @@ def delete_server_from_group(group_id, node_id):
                 for u in users_to_delete:
                     info = db[u]
                     cmd = get_safe_delete_cmd(u, info.get('protocol', 'v2'), info.get('port', '443'))
-                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"{cmd}\" &")
+                    execute_ssh(node_ip, [cmd])
                     del db[u]
                 if users_to_delete:
-                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"systemctl restart xray\" &")
+                    execute_ssh(node_ip, ["systemctl restart xray"])
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(f'/group/{group_id}')
 
@@ -354,8 +243,8 @@ def edit_group_limit(group_id):
         with open(USERS_DB, 'w') as f: json.dump(db, f)
 
     for ip, cmds in cmds_by_ip.items():
-        if cmds:
-            os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"{' ; '.join(cmds)} ; systemctl restart xray\" &")
+        cmds.append("systemctl restart xray")
+        execute_ssh(ip, cmds)
 
     if migrated_count < len(excess_users):
         return f"<script>alert('Limit Updated. Migrated {migrated_count} keys. Could not migrate {len(excess_users) - migrated_count} keys due to lack of space in other servers!'); window.location.href='/group/{group_id}';</script>"
@@ -429,8 +318,8 @@ def edit_server_limit(group_id, node_id):
             with open(USERS_DB, 'w') as f: json.dump(db, f)
 
         for ip, cmds in cmds_by_ip.items():
-            if cmds:
-                os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"{' ; '.join(cmds)} ; systemctl restart xray\" &")
+            cmds.append("systemctl restart xray")
+            execute_ssh(ip, cmds)
         
         if migrated_count < excess_count:
             return f"<script>alert('Limit Updated. Migrated {migrated_count} keys. Could not migrate {excess_count - migrated_count} keys due to lack of space in other servers!'); window.location.href='/group/{group_id}';</script>"
@@ -491,7 +380,8 @@ def add_user_auto():
     if cmds:
         with db_lock:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
-        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"{' ; '.join(cmds)} ; systemctl restart xray\" &")
+        cmds.append("systemctl restart xray")
+        execute_ssh(node_ip, cmds)
     return redirect(f'/group/{gid}')
 
 @app.route('/node/<node_id>')
@@ -529,7 +419,7 @@ def delete_node(node_id):
     nodes = get_all_servers()
     if node_id in nodes:
         node_ip = nodes[node_id].get('ip')
-        if node_ip: os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl stop xray' &")
+        if node_ip: execute_ssh(node_ip, ["systemctl stop xray"])
     
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f: lines = f.readlines()
@@ -596,7 +486,8 @@ def replace_id(current_id):
                         else: commands.append(f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
             with open(USERS_DB, 'w') as f: json.dump(db, f)
     if commands and current_ip:
-        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{current_ip} \"{' ; '.join(commands)} ; systemctl restart xray\" &")
+        commands.append("systemctl restart xray")
+        execute_ssh(current_ip, commands)
     return redirect(f'/node/{old_id}')
 
 @app.route('/api/check_ssh/<node_id>')
@@ -639,7 +530,7 @@ def api_stats(node_id):
 def install_node_action(node_id):
     ip = get_all_servers().get(node_id, {}).get('ip')
     if ip and os.path.exists("/root/PanelMaster/install_node.sh"):
-        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'bash -s' < /root/PanelMaster/install_node.sh &")
+        execute_ssh(ip, ["bash -s < /root/PanelMaster/install_node.sh"])
     return redirect(request.referrer)
 
 @app.route('/toggle_node/<node_id>', methods=['POST'])
@@ -649,10 +540,10 @@ def toggle_node(node_id):
     ip = get_all_servers().get(node_id, {}).get('ip')
     if node_id in config['disabled_nodes']:
         config['disabled_nodes'].remove(node_id)
-        if ip: os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'systemctl start xray' &")
+        if ip: execute_ssh(ip, ["systemctl start xray"])
     else:
         config['disabled_nodes'].append(node_id)
-        if ip: os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'systemctl stop xray' &")
+        if ip: execute_ssh(ip, ["systemctl stop xray"])
     save_config(config); return redirect(request.referrer)
 
 @app.route('/add_user_manual', methods=['POST'])
@@ -709,7 +600,8 @@ def add_user_manual():
     if cmds:
         with db_lock:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
-        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{nip} \"{' ; '.join(cmds)} ; systemctl restart xray\" &")
+        cmds.append("systemctl restart xray")
+        execute_ssh(nip, cmds)
     return redirect(request.referrer)
 
 @app.route('/toggle_user/<username>', methods=['POST'])
@@ -728,7 +620,7 @@ def toggle_user(username):
                         uid = user['uuid']
                         if user['protocol'] == 'v2': cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
                         else: cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
-                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\" &")
+                    execute_ssh(ip, [cmd, "systemctl restart xray"])
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
 
@@ -765,7 +657,7 @@ def delete_user(username):
                 info = db[username]; ip = get_all_servers().get(info.get('node'), {}).get('ip')
                 if ip:
                     cmd = get_safe_delete_cmd(username, info.get('protocol', 'v2'), info.get('port', '443'))
-                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\" &")
+                    execute_ssh(ip, [cmd, "systemctl restart xray"])
                 del db[username]
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
@@ -782,7 +674,7 @@ def bulk_delete():
                     ip = nodes.get(db[uname].get('node'), {}).get('ip')
                     if ip:
                         cmd = get_safe_delete_cmd(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
-                        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\" &")
+                        execute_ssh(ip, [cmd, "systemctl restart xray"])
                     del db[uname]
             with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
