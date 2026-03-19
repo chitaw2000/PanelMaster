@@ -12,6 +12,13 @@
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
         .glass { background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
         .glass-dark { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+        
+        /* Health Badge Colors */
+        .h-green { background: #ecfdf5; color: #10b981; border: 1px solid #a7f3d0; }
+        .h-blue { background: #eff6ff; color: #3b82f6; border: 1px solid #bfdbfe; }
+        .h-yellow { background: #fefce8; color: #eab308; border: 1px solid #fef08a; }
+        .h-orange { background: #fff7ed; color: #f97316; border: 1px solid #fed7aa; }
+        .h-red { background: #fef2f2; color: #ef4444; border: 1px solid #fecaca; }
     </style>
 </head>
 <body class="bg-[#f8fafc] font-sans pb-16 text-slate-800 selection:bg-indigo-100 selection:text-indigo-900">
@@ -38,6 +45,15 @@
             <p class="text-sm font-bold text-slate-500">Monitor and manage your custom nodes, auto nodes, and global traffic.</p>
         </div>
         <div class="flex flex-wrap gap-3">
+            <button onclick="document.getElementById('globalHealthModal').classList.remove('hidden')" class="bg-white text-slate-700 hover:text-indigo-600 border border-slate-200 hover:border-indigo-200 px-6 py-3.5 rounded-2xl text-sm font-black shadow-sm hover:shadow-md transition-all hover:-translate-y-0.5 flex items-center gap-2 relative">
+                <i class="fa-solid fa-heart-pulse"></i> Health Center
+                {% if sick_count > 0 %}
+                <span class="absolute -top-2 -right-2 bg-red-500 text-white w-6 h-6 rounded-full text-[10px] flex items-center justify-center animate-bounce shadow-md">{{ sick_count }}</span>
+                {% else %}
+                <span class="bg-emerald-100 text-emerald-600 text-[10px] px-2 py-0.5 rounded-full ml-1"><i class="fa-solid fa-check mr-1"></i> All Good</span>
+                {% endif %}
+            </button>
+            
             <button onclick="document.getElementById('addAutoGroupModal').classList.remove('hidden')" class="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white px-6 py-3.5 rounded-2xl text-sm font-bold shadow-lg shadow-indigo-200 transition-all hover:-translate-y-0.5 flex items-center">
                 <i class="fa-solid fa-layer-group mr-2"></i> Create Auto Node
             </button>
@@ -65,8 +81,12 @@
             </div>
             
             <a href="/node/{{ node.id }}" class="block flex-1">
-                <div class="text-right absolute top-6 right-6 md:group-hover:hidden transition-opacity"><span class="bg-slate-100/80 text-slate-500 border border-slate-200/80 px-2.5 py-1 rounded-md text-[10px] font-black uppercase font-mono shadow-sm">{{ node.id }}</span></div>
-                <h2 class="text-2xl font-black text-slate-800 mb-1.5 truncate pr-16">{{ node.name }}</h2>
+                <div class="absolute top-6 right-6 flex flex-col items-end gap-2">
+                    <span class="bg-slate-100/80 text-slate-500 border border-slate-200/80 px-2.5 py-1 rounded-md text-[10px] font-black uppercase font-mono shadow-sm md:group-hover:hidden transition-opacity">{{ node.id }}</span>
+                    <button type="button" onclick="event.preventDefault(); openHealthModal('{{ node.id }}', '{{ node.health }}')" class="h-{{ node.health }} px-2.5 py-1 rounded-md text-[10px] font-black uppercase shadow-sm flex items-center gap-1.5 transition-transform hover:scale-105"><i class="fa-solid fa-circle text-[8px]"></i> {{ node.health }}</button>
+                </div>
+                
+                <h2 class="text-2xl font-black text-slate-800 mb-1.5 truncate pr-24">{{ node.name }}</h2>
                 <p class="text-sm font-mono font-bold text-slate-400 mb-6 truncate flex items-center gap-1.5"><i class="fa-solid fa-globe text-indigo-400"></i> {{ node.ip }}</p>
                 <div class="flex items-center justify-between bg-slate-50 rounded-2xl p-4 mb-6 border border-slate-100/80">
                     <div><p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Total Keys</p><p class="text-xl font-black text-slate-700">{{ node.total }}</p></div>
@@ -130,50 +150,81 @@
         {% endfor %}
     </div>
 
-    <div id="tab-backups" class="hidden space-y-5 max-w-4xl mx-auto">
-        {% for nid, files in backups.items() %}
-        <div class="bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-            <div class="px-6 py-5 cursor-pointer hover:bg-slate-50 transition-colors flex justify-between items-center" onclick="document.getElementById('backup_{{nid}}').classList.toggle('hidden')">
-                <div class="flex items-center gap-5">
-                    <div class="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center text-xl shadow-sm border border-emerald-100/50"><i class="fa-solid fa-database"></i></div>
-                    <div><p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">NODE DATABASE</p><h3 class="text-lg font-black text-slate-800 font-mono uppercase">{{ nid }}</h3></div>
-                </div>
-                <div class="flex items-center gap-4">
-                    <span class="bg-slate-100 text-slate-600 text-xs font-black px-4 py-1.5 rounded-full shadow-sm">{{ files|length }} Backup Files</span>
-                    <i class="fa-solid fa-chevron-down text-slate-400 text-sm"></i>
-                </div>
-            </div>
-            <div id="backup_{{nid}}" class="hidden border-t border-slate-100 bg-slate-50/50 p-6">
-                <div class="mb-6 pb-6 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
-                    <div>
-                        <h4 class="text-sm font-black text-red-600 mb-1"><i class="fa-solid fa-triangle-exclamation mr-1.5"></i> Danger Zone</h4>
-                        <p class="text-xs text-slate-500 font-bold">Permanently delete all keys and backups for this node database.</p>
-                    </div>
-                    <form action="/purge_node/{{ nid }}" method="POST" onsubmit="return confirm('⚠️ WARNING: Purge all data for Node: {{ nid }}?');" class="m-0 shrink-0 w-full sm:w-auto">
-                        <button type="submit" class="w-full sm:w-auto bg-red-50 hover:bg-red-500 text-red-600 hover:text-white px-5 py-2.5 rounded-xl text-xs font-black transition-colors border border-red-200 hover:border-red-500 shadow-sm">Purge All Data</button>
-                    </form>
-                </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {% for f in files %}
-                    <div class="flex items-center justify-between bg-white border border-slate-200 p-4 rounded-2xl shadow-sm hover:shadow-md transition-shadow group">
-                        <div class="truncate mr-4">
-                            <p class="text-sm font-bold text-slate-700 truncate group-hover:text-indigo-600 transition-colors"><i class="fa-regular fa-file-code text-indigo-400 mr-2"></i>{{ f.filename }}</p>
-                            <p class="text-[10px] font-mono font-bold text-slate-400 mt-1.5">{{ f.time }} <span class="mx-1">•</span> {{ f.size }}</p>
-                        </div>
-                        <div class="flex gap-2 shrink-0">
-                            <a href="/download_backup/{{ f.filename }}" class="bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white w-9 h-9 rounded-xl flex items-center justify-center transition-colors"><i class="fa-solid fa-download text-sm"></i></a>
-                            <form action="/delete_backup/{{ f.filename }}" method="POST" onsubmit="return confirm('Delete this backup?');" class="m-0">
-                                <button type="submit" class="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white w-9 h-9 rounded-xl flex items-center justify-center transition-colors"><i class="fa-solid fa-trash-can text-sm"></i></button>
-                            </form>
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-            </div>
+    </div>
+
+<div id="globalHealthModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-[70] transition-all">
+    <div class="bg-white rounded-3xl p-6 md:p-8 w-full max-w-4xl shadow-2xl border border-slate-100 max-h-[85vh] flex flex-col relative overflow-hidden">
+        <div class="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
+            <h2 class="text-2xl font-black text-slate-800 flex items-center gap-3"><i class="fa-solid fa-heart-pulse text-red-500 animate-pulse"></i> Node Health Center</h2>
+            <button type="button" onclick="document.getElementById('globalHealthModal').classList.add('hidden')" class="w-8 h-8 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-full flex items-center justify-center transition-colors"><i class="fa-solid fa-xmark"></i></button>
         </div>
-        {% else %}
-        <div class="text-center py-16 bg-white rounded-3xl border border-slate-200 shadow-sm"><div class="w-16 h-16 bg-slate-50 text-slate-300 rounded-full flex items-center justify-center text-3xl mx-auto mb-4"><i class="fa-solid fa-box-open"></i></div><p class="text-sm text-slate-500 font-bold">No backups available.</p></div>
-        {% endfor %}
+        
+        <div class="overflow-y-auto pr-2 space-y-8 flex-1">
+            {% if sick_count == 0 %}
+            <div class="text-center py-16">
+                <div class="w-20 h-20 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center text-4xl mx-auto mb-4"><i class="fa-regular fa-face-smile-beam"></i></div>
+                <h3 class="text-lg font-black text-slate-800 mb-1">All Systems Green</h3>
+                <p class="text-sm font-bold text-slate-500">No nodes are currently marked with warning or critical health states.</p>
+            </div>
+            {% endif %}
+            
+            {% for color, snodes in sick_nodes.items() %}
+                {% if snodes|length > 0 %}
+                <div>
+                    <h3 class="text-xs font-black uppercase tracking-widest mb-4 flex items-center gap-2 h-{{ color }} w-fit px-3 py-1.5 rounded-lg shadow-sm">
+                        <i class="fa-solid fa-circle text-[8px]"></i> {{ color }} Status ({{ snodes|length }})
+                    </h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {% for n in snodes %}
+                        <div class="bg-slate-50 border border-slate-200 rounded-2xl p-4 hover:shadow-md transition-shadow relative">
+                            <a href="/node/{{ n.id }}" class="block">
+                                <h4 class="font-black text-slate-800 text-lg mb-1 truncate pr-8">{{ n.name }}</h4>
+                                <p class="text-xs font-mono font-bold text-slate-500 mb-3">{{ n.ip }}</p>
+                                <span class="bg-white border border-slate-200 text-slate-400 text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded shadow-sm">{{ n.id }}</span>
+                            </a>
+                            <button type="button" onclick="document.getElementById('globalHealthModal').classList.add('hidden'); openHealthModal('{{ n.id }}', '{{ n.health }}');" class="absolute top-4 right-4 text-slate-400 hover:text-indigo-600 bg-white p-2 rounded-lg shadow-sm border border-slate-200 transition-colors"><i class="fa-solid fa-pen text-xs"></i></button>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<div id="setHealthModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-[80] transition-all">
+    <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100 transform scale-100">
+        <h2 class="text-xl font-black mb-2 text-slate-800">Set Node Health</h2>
+        <p class="text-xs text-slate-500 mb-6 font-bold">Assign status for <span id="healthNodeId" class="text-indigo-600 uppercase font-black"></span></p>
+        <form id="setHealthForm" method="POST">
+            <div class="space-y-2 mb-8">
+                <label class="flex items-center gap-3 p-3 rounded-xl cursor-pointer hover:bg-emerald-50 transition border border-transparent hover:border-emerald-100">
+                    <input type="radio" name="health" value="green" class="w-4 h-4 text-emerald-600 focus:ring-emerald-500">
+                    <span class="h-green px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest flex items-center gap-2"><i class="fa-solid fa-circle text-[8px]"></i> Green (Good)</span>
+                </label>
+                <label class="flex items-center gap-3 p-3 rounded-xl cursor-pointer hover:bg-blue-50 transition border border-transparent hover:border-blue-100">
+                    <input type="radio" name="health" value="blue" class="w-4 h-4 text-blue-600 focus:ring-blue-500">
+                    <span class="h-blue px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest flex items-center gap-2"><i class="fa-solid fa-circle text-[8px]"></i> Blue (Maintain)</span>
+                </label>
+                <label class="flex items-center gap-3 p-3 rounded-xl cursor-pointer hover:bg-yellow-50 transition border border-transparent hover:border-yellow-100">
+                    <input type="radio" name="health" value="yellow" class="w-4 h-4 text-yellow-500 focus:ring-yellow-500">
+                    <span class="h-yellow px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest flex items-center gap-2"><i class="fa-solid fa-circle text-[8px]"></i> Yellow (Slow)</span>
+                </label>
+                <label class="flex items-center gap-3 p-3 rounded-xl cursor-pointer hover:bg-orange-50 transition border border-transparent hover:border-orange-100">
+                    <input type="radio" name="health" value="orange" class="w-4 h-4 text-orange-500 focus:ring-orange-500">
+                    <span class="h-orange px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest flex items-center gap-2"><i class="fa-solid fa-circle text-[8px]"></i> Orange (Critical)</span>
+                </label>
+                <label class="flex items-center gap-3 p-3 rounded-xl cursor-pointer hover:bg-red-50 transition border border-transparent hover:border-red-100">
+                    <input type="radio" name="health" value="red" class="w-4 h-4 text-red-600 focus:ring-red-500">
+                    <span class="h-red px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest flex items-center gap-2"><i class="fa-solid fa-circle text-[8px]"></i> Red (Dead)</span>
+                </label>
+            </div>
+            <div class="flex justify-end gap-3">
+                <button type="button" onclick="document.getElementById('setHealthModal').classList.add('hidden')" class="px-5 py-2.5 font-bold text-slate-500 hover:text-slate-800 transition">Cancel</button>
+                <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl font-bold shadow-md shadow-indigo-200 transition">Save Status</button>
+            </div>
+        </form>
     </div>
 </div>
 
@@ -194,37 +245,6 @@
     </div>
 </div>
 
-<div id="addNodeModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-[60]">
-    <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100">
-        <h2 class="text-xl font-black mb-6 text-slate-800">Add Custom Node</h2>
-        <form action="/add_node" method="POST">
-            <div class="space-y-4 mb-8">
-                <input type="text" name="node_id" placeholder="Node ID (e.g. sg_01)" class="w-full bg-slate-50 border border-slate-200 p-3.5 rounded-xl font-mono text-sm focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition" required>
-                <input type="text" name="node_name" placeholder="Display Name" class="w-full bg-slate-50 border border-slate-200 p-3.5 rounded-xl text-sm font-bold text-slate-800 focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition" required>
-                <input type="text" name="node_ip" placeholder="Server IP Address" class="w-full bg-slate-50 border border-slate-200 p-3.5 rounded-xl font-mono text-sm focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition" required>
-            </div>
-            <div class="flex justify-end gap-3"><button type="button" onclick="document.getElementById('addNodeModal').classList.add('hidden')" class="px-5 py-2.5 font-bold text-slate-500 hover:text-slate-800 transition">Cancel</button><button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl font-bold shadow-md shadow-indigo-200 transition">Add Node</button></div>
-        </form>
-    </div>
-</div>
-
-<div id="addAutoGroupModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-[60]">
-    <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100">
-        <h2 class="text-xl font-black mb-6 text-slate-800">Create Auto Node</h2>
-        <form action="/add_auto_group" method="POST">
-            <div class="space-y-4 mb-8">
-                <input type="text" name="group_id" placeholder="Auto ID (e.g. auto_sg)" class="w-full bg-purple-50/50 border border-purple-100 p-3.5 rounded-xl font-mono text-sm focus:outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 transition" required>
-                <input type="text" name="group_name" placeholder="Display Name" class="w-full bg-purple-50/50 border border-purple-100 p-3.5 rounded-xl text-sm font-bold text-slate-800 focus:outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 transition" required>
-                <div class="relative">
-                    <input type="number" name="limit" value="30" class="w-full bg-purple-50/50 border border-purple-100 p-3.5 rounded-xl font-mono text-sm font-black text-purple-600 pr-24 focus:outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 transition" required>
-                    <span class="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-purple-400 uppercase tracking-wider">Keys / Node</span>
-                </div>
-            </div>
-            <div class="flex justify-end gap-3"><button type="button" onclick="document.getElementById('addAutoGroupModal').classList.add('hidden')" class="px-5 py-2.5 font-bold text-slate-500 hover:text-slate-800 transition">Cancel</button><button type="submit" class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2.5 rounded-xl font-bold shadow-md shadow-purple-200 transition">Create</button></div>
-        </form>
-    </div>
-</div>
-
 <script>
 function switchTab(tab) {
     ['nodes', 'auto', 'backups'].forEach(t => {
@@ -241,6 +261,21 @@ function openTbModal(nodeId, currentLimit) {
     document.getElementById('tbInput').value = currentLimit;
     document.getElementById('setTbForm').action = "/set_node_traffic/" + nodeId;
     document.getElementById('setTbModal').classList.remove('hidden');
+}
+
+// 🚀 Open Health Modal
+function openHealthModal(nodeId, currentHealth) {
+    document.getElementById('healthNodeId').innerText = nodeId;
+    const form = document.getElementById('setHealthForm');
+    form.action = "/set_node_health/" + nodeId;
+    
+    // Check the current radio button
+    const radios = form.querySelectorAll('input[name="health"]');
+    radios.forEach(r => {
+        r.checked = (r.value === currentHealth);
+    });
+    
+    document.getElementById('setHealthModal').classList.remove('hidden');
 }
 </script>
 </body>
