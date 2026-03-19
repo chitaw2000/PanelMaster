@@ -52,7 +52,7 @@ def set_node_traffic(node_id):
         with open(NODES_DB, 'w') as f: json.dump(ndb, f)
     return redirect(request.referrer)
 
-# 🚀 THE FIX: Node Traffic အား Reset ချပါက ထို Node အောက်ရှိ Key အားလုံး၏ Data များကိုပါ 0 သို့ ပြောင်းမည်
+# 🚀 THE FIX: Node Traffic ကိုသာ သီးသန့် Reset ချမည် (Key များကို လုံးဝ မထိပါ)
 @app.route('/reset_node_traffic/<node_id>', methods=['POST'])
 def reset_node_traffic(node_id):
     with db_lock:
@@ -64,19 +64,6 @@ def reset_node_traffic(node_id):
         if node_id in ndb:
             ndb[node_id]["used_bytes"] = 0
             with open(NODES_DB, 'w') as f: json.dump(ndb, f)
-            
-        if os.path.exists(USERS_DB):
-            try:
-                with open(USERS_DB, 'r') as f: db = json.load(f)
-                db_changed = False
-                for uname, info in db.items():
-                    if info.get('node') == node_id:
-                        info['used_bytes'] = 0
-                        info['last_raw_bytes'] = 0
-                        db_changed = True
-                if db_changed:
-                    with open(USERS_DB, 'w') as f: json.dump(db, f)
-            except: pass
             
     return redirect(request.referrer)
 
@@ -116,20 +103,14 @@ def dashboard():
     node_stats = []
     group_stats = []
     
-    # 🚀 THE FIX: Node တစ်ခုချင်းစီအတွက် Key များ၏ Used Bytes အားလုံးကို ပေါင်းမည်
-    node_used_bytes = {}
-    for uname, uinfo in db.items():
-        nid = uinfo.get('node')
-        if nid:
-            node_used_bytes[nid] = node_used_bytes.get(nid, 0) + float(uinfo.get('used_bytes', 0))
-    
     for nid, info in nodes.items():
         total_count = sum(1 for i in db.values() if i.get('node') == nid and not i.get('group'))
         live_count = sum(1 for uname, i in db.items() if i.get('node') == nid and not i.get('group') and uname in active_users and not i.get('is_blocked'))
         
         ninfo = ndb.get(nid, {})
         limit_tb = float(ninfo.get("limit_tb", 0))
-        used_gb = node_used_bytes.get(nid, 0) / (1024**3)
+        # 🚀 Node DB မှ သီးသန့်မှတ်ထားသော Data ကိုသာ ပြသမည်
+        used_gb = ninfo.get("used_bytes", 0) / (1024**3)
         limit_gb = limit_tb * 1024
         is_alarm = limit_gb > 0 and used_gb >= limit_gb
 
@@ -189,8 +170,6 @@ def group_view(group_id):
     g_nodes = group.get("nodes", {})
     counts = {nid: 0 for nid in g_nodes.keys()}
     
-    # 🚀 THE FIX: Node တစ်ခုချင်းစီအတွက် Key များ၏ Used Bytes အားလုံးကို ပေါင်းမည်
-    node_used_bytes = {}
     for uname, info in db.items():
         if info.get('group') == group_id:
             info['used_bytes'] = float(info.get('used_bytes', 0))
@@ -203,7 +182,6 @@ def group_view(group_id):
             
             nid = info.get('node')
             if nid in counts: counts[nid] += 1
-            if nid: node_used_bytes[nid] = node_used_bytes.get(nid, 0) + info['used_bytes']
             
     users = sorted(users, key=lambda x: int(x.get('key_id', 0)))
             
@@ -217,7 +195,7 @@ def group_view(group_id):
             
         ninfo = ndb.get(nid, {})
         limit_tb = float(ninfo.get("limit_tb", 0))
-        used_gb = node_used_bytes.get(nid, 0) / (1024**3)
+        used_gb = ninfo.get("used_bytes", 0) / (1024**3)
         limit_gb = limit_tb * 1024
         is_alarm = limit_gb > 0 and used_gb >= limit_gb
         
@@ -330,7 +308,7 @@ def node_view(node_id):
     config = load_config()
     active_users = check_live_status(db)
     users = []
-    node_used_bytes = 0
+    
     for uname, info in db.items():
         if info.get('node') == node_id:
             info['used_bytes'] = float(info.get('used_bytes', 0))
@@ -340,11 +318,10 @@ def node_view(node_id):
             info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             users.append(info)
-            node_used_bytes += info['used_bytes']
             
     ninfo = ndb.get(node_id, {})
     limit_tb = float(ninfo.get("limit_tb", 0))
-    used_gb = node_used_bytes / (1024**3)
+    used_gb = ninfo.get("used_bytes", 0) / (1024**3)
     limit_gb = limit_tb * 1024
     is_alarm = limit_tb > 0 and used_gb >= limit_gb
             
