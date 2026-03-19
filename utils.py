@@ -48,9 +48,9 @@ def check_live_status(db):
         except: pass
     return active
 
-# 🚀 SSH Hang ဖြစ်စေသော yes | ကိုဖြုတ်ကာ Custom Node ၏ မူလ Script အဟောင်းအတိုင်း အတိအကျပြန်ထားသည်
+# 🚀 SSH Hang ဖြစ်စေသော || true များကိုဖြုတ်ကာ Custom Node ၏ မူလ Script အဟောင်းအတိုင်း အတိအကျပြန်ထားသည်
 def get_safe_delete_cmd(username, protocol, port):
     if protocol == 'v2':
         return f"/usr/local/bin/v2ray-node-del-vless {username}"
     else:
-        return f"/usr/local/bin/v2ray-node-del-out {username} {port} ; ufw delete allow {port}/tcp ; ufw delete allow {port}/udp"
+        return f"/usr/local/bin/v2ray-node-del-out {username} {port}"
