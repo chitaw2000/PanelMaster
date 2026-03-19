@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, redirect, session, url_for, send_file, jsonify
-import json, os, re, subprocess
+import json, os, re
 from datetime import datetime
 
 from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, load_config, save_config
@@ -12,6 +12,24 @@ app = Flask(__name__)
 app.secret_key = SECRET_KEY
 BACKUP_DIR = "/root/PanelMaster/backups"
 if not os.path.exists(BACKUP_DIR): os.makedirs(BACKUP_DIR)
+
+# 🚀 THE FIX: App စစချင်းမှာ Database ထဲက Key အဟောင်းတွေ အားလုံးကို Permanent ID (အသေ) သတ်မှတ်ပေးမည်
+try:
+    with db_lock:
+        if os.path.exists(USERS_DB):
+            with open(USERS_DB, 'r') as f: db = json.load(f)
+            db_changed = False
+            existing_ids = [int(u.get('key_id', 0)) for u in db.values() if isinstance(u, dict) and str(u.get('key_id', '')).isdigit()]
+            next_id = max(existing_ids) + 1 if existing_ids else 1
+            for uname in sorted(db.keys()):
+                if 'key_id' not in db[uname]:
+                    db[uname]['key_id'] = next_id
+                    next_id += 1
+                    db_changed = True
+            if db_changed:
+                with open(USERS_DB, 'w') as f: json.dump(db, f)
+except Exception as e:
+    pass
 
 start_background_monitor()
 
@@ -110,6 +128,7 @@ def group_view(group_id):
             if info.get('node') in counts: counts[info.get('node')] += 1
             
     users = sorted(users, key=lambda x: (x.get('node', ''), x.get('username', '')))
+            
     for nid, ndata in g_nodes.items():
         if isinstance(ndata, dict):
             nip = str(ndata.get("ip")).strip()
@@ -130,7 +149,7 @@ def add_server_to_group(group_id):
     if group_id in groups and nid and nip:
         groups[group_id]["nodes"][nid] = {"ip": nip, "limit": limit}
         save_auto_groups(groups)
-    return redirect(f"/group/{group_id}?newly_added={nid}")
+    return redirect(f'/group/{group_id}?newly_added={nid}')
 
 @app.route('/delete_server_from_group/<group_id>/<node_id>', methods=['POST'])
 def delete_server_from_group(group_id, node_id):
@@ -210,7 +229,6 @@ def node_view(node_id):
     other_nodes = [nid for nid in nodes.keys() if nid != node_id]
     return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, config=config)
 
-# 🚀 THE FIX: Add Node Error ရှင်းလင်းပြီး File မရှိလျှင် အလိုအလျောက် Create မည်
 @app.route('/add_node', methods=['POST'])
 def add_node():
     n_id = request.form.get('node_id', '').strip().replace(" ", "_")
@@ -282,7 +300,6 @@ def replace_id(current_id):
             
     return redirect(f'/node/{old_id}')
 
-# 🚀 THE FIX: API တွင် IP ကို အမြဲ Strip လုပ်၍ Xray/SSH စစ်ဆေးခြင်း အမြဲ မှန်ကန်စေမည်
 @app.route('/api/check_ssh/<node_id>')
 def check_ssh(node_id):
     ip = get_all_servers().get(node_id, {}).get('ip')
