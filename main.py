@@ -63,7 +63,7 @@ def sanitize_usernames(raw_list):
     return clean
 
 # ==========================================
-# 🚀 BACKGROUND TRAFFIC MONITOR
+# 🚀 BACKGROUND TRAFFIC MONITOR (100% Original Logic)
 # ==========================================
 def background_traffic_monitor():
     while True:
@@ -99,6 +99,7 @@ def background_traffic_monitor():
                             val = user_bytes.get(uname, uinfo.get('last_raw_bytes', 0))
                             last_raw = uinfo.get('last_raw_bytes', 0)
                             
+                            # 🚀 UPDATE: Online / Pending စနစ် အတိအကျ
                             if val > last_raw: uinfo['is_online'] = True
                             else: uinfo['is_online'] = False
                                 
@@ -108,6 +109,7 @@ def background_traffic_monitor():
                             uinfo['last_raw_bytes'] = val
                             db_changed = True
                             
+                            # 🚀 UPDATE: Block စနစ်
                             tot_gb = float(uinfo.get('total_gb', 0))
                             if tot_gb > 0:
                                 max_bytes = tot_gb * (1024**3)
@@ -121,10 +123,10 @@ def background_traffic_monitor():
                 with db_lock:
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
             
+            # 🚀 UPDATE: မူရင်း code အတိုင်း နောက်ကွယ်မှ run ရန် `&` သင်္ကေတ ပြန်ထည့်ထားသည်
             for node_ip, uname, proto, port in users_to_block:
                 safe_cmd = get_safe_delete_cmd(uname, proto, port)
-                # 🚀 SSH Command တစ်ကြောင်းတည်းပေါင်း၍ သေချာပေါက် Run မည်
-                subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\"", shell=True)
+                os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\" &")
                 
         except Exception: pass
 
@@ -227,7 +229,6 @@ def group_view(group_id):
             users.append(info)
             if info.get('node') in counts: counts[info.get('node')] += 1
             
-    # 🚀 UPDATE: Key No. အား Group တစ်ခုလုံးအတွက် Global Index (Sequential) ဖြင့် အစဉ်လိုက် သတ်မှတ်မည်
     users = sorted(users, key=lambda x: (x.get('node', ''), x.get('username', '')))
     for idx, u in enumerate(users, start=1):
         u['global_key_idx'] = idx
@@ -272,10 +273,10 @@ def delete_server_from_group(group_id, node_id):
                 for u in users_to_delete:
                     info = db[u]
                     cmd = get_safe_delete_cmd(u, info.get('protocol', 'v2'), info.get('port', '443'))
-                    subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{node_ip} \"{cmd}\"", shell=True)
+                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"{cmd}\" &")
                     del db[u]
                 if users_to_delete:
-                    subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{node_ip} \"systemctl restart xray\"", shell=True)
+                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"systemctl restart xray\" &")
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(f'/group/{group_id}')
 
@@ -354,7 +355,7 @@ def edit_group_limit(group_id):
 
     for ip, cmds in cmds_by_ip.items():
         if cmds:
-            subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"{' ; '.join(cmds)} ; systemctl restart xray\"", shell=True)
+            os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"{' ; '.join(cmds)} ; systemctl restart xray\" &")
 
     if migrated_count < len(excess_users):
         return f"<script>alert('Limit Updated. Migrated {migrated_count} keys. Could not migrate {len(excess_users) - migrated_count} keys due to lack of space in other servers!'); window.location.href='/group/{group_id}';</script>"
@@ -429,7 +430,7 @@ def edit_server_limit(group_id, node_id):
 
         for ip, cmds in cmds_by_ip.items():
             if cmds:
-                subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"{' ; '.join(cmds)} ; systemctl restart xray\"", shell=True)
+                os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"{' ; '.join(cmds)} ; systemctl restart xray\" &")
         
         if migrated_count < excess_count:
             return f"<script>alert('Limit Updated. Migrated {migrated_count} keys. Could not migrate {excess_count - migrated_count} keys due to lack of space in other servers!'); window.location.href='/group/{group_id}';</script>"
@@ -490,7 +491,7 @@ def add_user_auto():
     if cmds:
         with db_lock:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
-        subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{node_ip} \"{' ; '.join(cmds)} ; systemctl restart xray\"", shell=True)
+        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"{' ; '.join(cmds)} ; systemctl restart xray\" &")
     return redirect(f'/group/{gid}')
 
 @app.route('/node/<node_id>')
@@ -528,7 +529,7 @@ def delete_node(node_id):
     nodes = get_all_servers()
     if node_id in nodes:
         node_ip = nodes[node_id].get('ip')
-        if node_ip: subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl stop xray'", shell=True)
+        if node_ip: os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl stop xray' &")
     
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f: lines = f.readlines()
@@ -595,7 +596,7 @@ def replace_id(current_id):
                         else: commands.append(f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
             with open(USERS_DB, 'w') as f: json.dump(db, f)
     if commands and current_ip:
-        subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{current_ip} \"{' ; '.join(commands)} ; systemctl restart xray\"", shell=True)
+        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{current_ip} \"{' ; '.join(commands)} ; systemctl restart xray\" &")
     return redirect(f'/node/{old_id}')
 
 @app.route('/api/check_ssh/<node_id>')
@@ -603,7 +604,7 @@ def check_ssh(node_id):
     ip = get_all_servers().get(node_id, {}).get('ip')
     if not ip: return jsonify({"status": "error"})
     try:
-        res = subprocess.run(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'echo ok'", shell=True, capture_output=True, text=True)
+        res = subprocess.run(f"ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no root@{ip} 'echo ok'", shell=True, capture_output=True, text=True)
         if "ok" in res.stdout: return jsonify({"status": "success"})
     except: pass
     return jsonify({"status": "error"})
@@ -613,7 +614,7 @@ def check_xray(node_id):
     ip = get_all_servers().get(node_id, {}).get('ip')
     if not ip: return jsonify({"status": "inactive"})
     try:
-        res = subprocess.run(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'systemctl is-active xray'", shell=True, capture_output=True, text=True)
+        res = subprocess.run(f"ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no root@{ip} 'systemctl is-active xray'", shell=True, capture_output=True, text=True)
         if "active" in res.stdout.strip().lower(): return jsonify({"status": "active"})
     except: pass
     return jsonify({"status": "inactive"})
@@ -623,7 +624,7 @@ def api_stats(node_id):
     ip = get_all_servers().get(node_id, {}).get('ip')
     if not ip: return jsonify({"status": "error"})
     try:
-        res = subprocess.run(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\"", shell=True, capture_output=True, text=True)
+        res = subprocess.run(f"ssh -o ConnectTimeout=2 -o StrictHostKeyChecking=no root@{ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\"", shell=True, capture_output=True, text=True)
         stats = json.loads(res.stdout).get("stat", [])
         data = {}
         for s in stats:
@@ -638,7 +639,7 @@ def api_stats(node_id):
 def install_node_action(node_id):
     ip = get_all_servers().get(node_id, {}).get('ip')
     if ip and os.path.exists("/root/PanelMaster/install_node.sh"):
-        subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} 'bash -s' < /root/PanelMaster/install_node.sh", shell=True)
+        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'bash -s' < /root/PanelMaster/install_node.sh &")
     return redirect(request.referrer)
 
 @app.route('/toggle_node/<node_id>', methods=['POST'])
@@ -648,10 +649,10 @@ def toggle_node(node_id):
     ip = get_all_servers().get(node_id, {}).get('ip')
     if node_id in config['disabled_nodes']:
         config['disabled_nodes'].remove(node_id)
-        if ip: subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} 'systemctl start xray'", shell=True)
+        if ip: os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'systemctl start xray' &")
     else:
         config['disabled_nodes'].append(node_id)
-        if ip: subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} 'systemctl stop xray'", shell=True)
+        if ip: os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'systemctl stop xray' &")
     save_config(config); return redirect(request.referrer)
 
 @app.route('/add_user_manual', methods=['POST'])
@@ -708,7 +709,7 @@ def add_user_manual():
     if cmds:
         with db_lock:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
-        subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{nip} \"{' ; '.join(cmds)} ; systemctl restart xray\"", shell=True)
+        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{nip} \"{' ; '.join(cmds)} ; systemctl restart xray\" &")
     return redirect(request.referrer)
 
 @app.route('/toggle_user/<username>', methods=['POST'])
@@ -727,7 +728,7 @@ def toggle_user(username):
                         uid = user['uuid']
                         if user['protocol'] == 'v2': cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
                         else: cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
-                    subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\"", shell=True)
+                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\" &")
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
 
@@ -764,7 +765,7 @@ def delete_user(username):
                 info = db[username]; ip = get_all_servers().get(info.get('node'), {}).get('ip')
                 if ip:
                     cmd = get_safe_delete_cmd(username, info.get('protocol', 'v2'), info.get('port', '443'))
-                    subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\"", shell=True)
+                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\" &")
                 del db[username]
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
@@ -781,7 +782,7 @@ def bulk_delete():
                     ip = nodes.get(db[uname].get('node'), {}).get('ip')
                     if ip:
                         cmd = get_safe_delete_cmd(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
-                        subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\"", shell=True)
+                        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} \"{cmd} ; systemctl restart xray\" &")
                     del db[uname]
             with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
