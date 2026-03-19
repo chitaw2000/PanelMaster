@@ -1,8 +1,6 @@
 import time, json, subprocess, os, threading
 from utils import get_all_servers, db_lock, NODES_DB
-
-# 🚀 လုံးဝ ထပ်မထိတော့မည့် Engine ဆီမှ ချိတ်ဆက်ခေါ်ယူခြင်း
-from core_engine import execute_ssh_isolated, get_safe_delete_script
+from core_engine import execute_ssh_bg, get_safe_delete_cmd
 
 try:
     from config import USERS_DB
@@ -81,7 +79,7 @@ def background_traffic_monitor():
                                 uinfo['is_online'] = False
                                 node_ip = nodes.get(node_id, {}).get('ip')
                                 if node_ip:
-                                    cmd_str = get_safe_delete_script(uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443'))
+                                    cmd_str = get_safe_delete_cmd(uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443'))
                                     users_to_block_by_ip.setdefault(node_ip, []).append(cmd_str)
                 
                 if db_changed:
@@ -89,10 +87,9 @@ def background_traffic_monitor():
                 if ndb_changed:
                     with open(NODES_DB, 'w') as f: json.dump(ndb, f)
 
-            # 🚀 Isolated Engine ဖြင့် သေချာပေါက် Restart ချမည် (ဆာဗာမ Hang စေရန် sleep 1 ခံထားသည်)
             for node_ip, cmds in users_to_block_by_ip.items():
-                safe_cmds_str = " ; sleep 1 ; ".join(cmds)
-                execute_ssh_isolated(node_ip, f"{safe_cmds_str} ; systemctl restart xray")
+                cmds.append("systemctl restart xray")
+                execute_ssh_bg(node_ip, cmds)
                 
         except: pass
 
