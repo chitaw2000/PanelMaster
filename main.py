@@ -6,7 +6,6 @@ from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, lo
 from utils import get_nodes, get_all_servers, check_live_status, db_lock, AUTO_GROUPS_FILE, NODES_DB
 from core_auto import load_auto_groups, save_auto_groups
 
-# 🚀 THE FIX: Import များကို အလွဲအမှားမရှိစေရန် အတိအကျ ချိတ်ဆက်ထားသည်
 from core_engine import execute_ssh_bg, get_safe_delete_cmd
 from core_monitor import start_background_monitor
 from core_node import add_keys, toggle_key, delete_key, bulk_delete_keys, renew_key, edit_key, rebalance_auto_node
@@ -53,6 +52,7 @@ def set_node_traffic(node_id):
         with open(NODES_DB, 'w') as f: json.dump(ndb, f)
     return redirect(request.referrer)
 
+# 🚀 THE FIX: Node Traffic အား Reset ချပါက ထို Node အောက်ရှိ Key အားလုံး၏ Data များကိုပါ 0 သို့ ပြောင်းမည်
 @app.route('/reset_node_traffic/<node_id>', methods=['POST'])
 def reset_node_traffic(node_id):
     with db_lock:
@@ -64,6 +64,20 @@ def reset_node_traffic(node_id):
         if node_id in ndb:
             ndb[node_id]["used_bytes"] = 0
             with open(NODES_DB, 'w') as f: json.dump(ndb, f)
+            
+        if os.path.exists(USERS_DB):
+            try:
+                with open(USERS_DB, 'r') as f: db = json.load(f)
+                db_changed = False
+                for uname, info in db.items():
+                    if info.get('node') == node_id:
+                        info['used_bytes'] = 0
+                        info['last_raw_bytes'] = 0
+                        db_changed = True
+                if db_changed:
+                    with open(USERS_DB, 'w') as f: json.dump(db, f)
+            except: pass
+            
     return redirect(request.referrer)
 
 def get_node_backups():
@@ -102,19 +116,27 @@ def dashboard():
     node_stats = []
     group_stats = []
     
+    # 🚀 THE FIX: Node တစ်ခုချင်းစီအတွက် Key များ၏ Used Bytes အားလုံးကို ပေါင်းမည်
+    node_used_bytes = {}
+    for uname, uinfo in db.items():
+        nid = uinfo.get('node')
+        if nid:
+            node_used_bytes[nid] = node_used_bytes.get(nid, 0) + float(uinfo.get('used_bytes', 0))
+    
     for nid, info in nodes.items():
         total_count = sum(1 for i in db.values() if i.get('node') == nid and not i.get('group'))
         live_count = sum(1 for uname, i in db.items() if i.get('node') == nid and not i.get('group') and uname in active_users and not i.get('is_blocked'))
         
         ninfo = ndb.get(nid, {})
-        used_tb = ninfo.get("used_bytes", 0) / (1024**4)
         limit_tb = float(ninfo.get("limit_tb", 0))
-        is_alarm = limit_tb > 0 and used_tb >= limit_tb
+        used_gb = node_used_bytes.get(nid, 0) / (1024**3)
+        limit_gb = limit_tb * 1024
+        is_alarm = limit_gb > 0 and used_gb >= limit_gb
 
         node_stats.append({
             "id": nid, "name": info.get('name', nid), "ip": info.get('ip', ''), 
             "total": total_count, "live": live_count, "disabled": nid in config.get('disabled_nodes', []),
-            "used_tb": used_tb, "limit_tb": limit_tb, "is_alarm": is_alarm
+            "used_gb": used_gb, "limit_tb": limit_tb, "is_alarm": is_alarm
         })
         
     for gid, gdata in auto_groups.items():
@@ -167,6 +189,8 @@ def group_view(group_id):
     g_nodes = group.get("nodes", {})
     counts = {nid: 0 for nid in g_nodes.keys()}
     
+    # 🚀 THE FIX: Node တစ်ခုချင်းစီအတွက် Key များ၏ Used Bytes အားလုံးကို ပေါင်းမည်
+    node_used_bytes = {}
     for uname, info in db.items():
         if info.get('group') == group_id:
             info['used_bytes'] = float(info.get('used_bytes', 0))
@@ -176,8 +200,10 @@ def group_view(group_id):
             info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             users.append(info)
-            if info.get('node') in counts: 
-                counts[info.get('node')] += 1
+            
+            nid = info.get('node')
+            if nid in counts: counts[nid] += 1
+            if nid: node_used_bytes[nid] = node_used_bytes.get(nid, 0) + info['used_bytes']
             
     users = sorted(users, key=lambda x: int(x.get('key_id', 0)))
             
@@ -190,11 +216,12 @@ def group_view(group_id):
             limit = int(group.get("limit", 30))
             
         ninfo = ndb.get(nid, {})
-        used_tb = ninfo.get("used_bytes", 0) / (1024**4)
         limit_tb = float(ninfo.get("limit_tb", 0))
-        is_alarm = limit_tb > 0 and used_tb >= limit_tb
+        used_gb = node_used_bytes.get(nid, 0) / (1024**3)
+        limit_gb = limit_tb * 1024
+        is_alarm = limit_gb > 0 and used_gb >= limit_gb
         
-        server_stats.append({"id": nid, "ip": nip, "count": counts[nid], "limit": limit, "used_tb": used_tb, "limit_tb": limit_tb, "is_alarm": is_alarm})
+        server_stats.append({"id": nid, "ip": nip, "count": counts[nid], "limit": limit, "used_gb": used_gb, "limit_tb": limit_tb, "is_alarm": is_alarm})
         
     return render_template('group.html', group_id=group_id, group=group, users=users, server_stats=server_stats)
 
@@ -303,6 +330,7 @@ def node_view(node_id):
     config = load_config()
     active_users = check_live_status(db)
     users = []
+    node_used_bytes = 0
     for uname, info in db.items():
         if info.get('node') == node_id:
             info['used_bytes'] = float(info.get('used_bytes', 0))
@@ -312,14 +340,16 @@ def node_view(node_id):
             info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             users.append(info)
+            node_used_bytes += info['used_bytes']
             
     ninfo = ndb.get(node_id, {})
-    used_tb = ninfo.get("used_bytes", 0) / (1024**4)
     limit_tb = float(ninfo.get("limit_tb", 0))
-    is_alarm = limit_tb > 0 and used_tb >= limit_tb
+    used_gb = node_used_bytes / (1024**3)
+    limit_gb = limit_tb * 1024
+    is_alarm = limit_tb > 0 and used_gb >= limit_gb
             
     other_nodes = [nid for nid in nodes.keys() if nid != node_id]
-    return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, config=config, used_tb=used_tb, limit_tb=limit_tb, is_alarm=is_alarm)
+    return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, config=config, used_gb=used_gb, limit_tb=limit_tb, is_alarm=is_alarm)
 
 @app.route('/add_node', methods=['POST'])
 def add_node():
