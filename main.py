@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, load_config, save_config
 from utils import get_nodes, get_all_servers, check_live_status, db_lock, AUTO_GROUPS_FILE
 from core_auto import load_auto_groups, save_auto_groups
+
+# 🚀 UPDATE: Core Actions များကို ခွဲထုတ်ပြီး ချိတ်ဆက်ထားသည်
 from core_monitor import start_background_monitor
 from core_actions import generate_keys, toggle_user_status, remove_user, bulk_remove_users, process_rebalance, run_bg
 
@@ -198,7 +200,6 @@ def add_user_auto():
         return f"<script>alert('{msg}'); window.history.back();</script>"
     return redirect(f'/group/{gid}')
 
-# 🚀 UPDATE: Custom Node အတွက် Key ထုတ်မည့် လမ်းကြောင်း (Error ကင်းစင်အောင် ပြင်ဆင်ပြီး)
 @app.route('/add_user_manual', methods=['POST'])
 def add_user_manual():
     nid = request.form.get('node_id', '').strip()
@@ -297,7 +298,6 @@ def delete_node(node_id):
 def replace_id(current_id):
     old_id = request.form.get('old_id', '').strip(); nodes = get_all_servers()
     if current_id not in nodes or not old_id: return redirect(f'/node/{current_id}')
-    current_ip = str(nodes[current_id].get('ip')).strip()
     
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f: lines = f.readlines()
@@ -322,22 +322,6 @@ def replace_id(current_id):
             save_auto_groups(groups)
             break
             
-    commands = []
-    with db_lock:
-        if os.path.exists(USERS_DB):
-            with open(USERS_DB, 'r') as f: db = json.load(f)
-            for uname, info in db.items():
-                if info.get('node') == old_id:
-                    if 'key' in info and current_ip: info['key'] = re.sub(r'(@)[^:]+(:)', f'\\g<1>{current_ip}\\g<2>', info['key'])
-                    info['last_raw_bytes'] = 0; info['is_online'] = False
-                    if not info.get('is_blocked', False):
-                        uid = info.get('uuid'); port = str(info.get('port', '443'))
-                        if info.get('protocol', 'v2') == 'v2': commands.append(f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}")
-                        else: commands.append(f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
-            with open(USERS_DB, 'w') as f: json.dump(db, f)
-    if commands and current_ip:
-        commands.append("systemctl restart xray")
-        run_bg(current_ip, " ; ".join(commands))
     return redirect(f'/node/{old_id}')
 
 @app.route('/api/check_ssh/<node_id>')
