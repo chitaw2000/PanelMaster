@@ -49,13 +49,13 @@ def check_live_status(db):
         except: pass
     return active
 
+# 🚀 THE ULTIMATE FIX: Script Hang မဖြစ်စေရန် `yes |` ဖြင့် auto-confirm လုပ်ပြီး အမှားတက်လည်း ဆက်သွားရန် `|| true` ထည့်ထားသည်
 def get_safe_delete_cmd(username, protocol, port):
     if protocol == 'v2':
-        return f"/usr/local/bin/v2ray-node-del-vless '{username}'"
+        return f"yes | /usr/local/bin/v2ray-node-del-vless '{username}' >/dev/null 2>&1 || true"
     else:
-        return f"/usr/local/bin/v2ray-node-del-out '{username}' {port}"
+        return f"yes | /usr/local/bin/v2ray-node-del-out '{username}' {port} >/dev/null 2>&1 || true ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true"
 
-# 🚀 THE ULTIMATE FIX: Bulk Key ထုတ်ခြင်းနှင့် Block ခြင်းများကို လုံးဝ (၁၀၀%) သေချာပေါက် အလုပ်လုပ်စေမည့် Base64 Execution
 def execute_ssh_bg(ip, cmds):
     if not cmds: return
     script_content = "\n".join(cmds)
