@@ -16,7 +16,6 @@ BACKUP_DIR = "/root/PanelMaster/backups"
 if not os.path.exists(BACKUP_DIR): 
     os.makedirs(BACKUP_DIR)
 
-# App စတင်ချိန်တွင် Key အဟောင်းများအား Permanent ID သတ်မှတ်ပေးမည်
 try:
     with db_lock:
         if os.path.exists(USERS_DB):
@@ -175,6 +174,12 @@ def add_server_to_group(group_id):
     nip = request.form.get('node_ip', '').strip()
     limit = int(request.form.get('limit', 30))
     groups = load_auto_groups()
+    nodes = get_all_servers()
+    
+    # 🚀 Duplicate Node Check
+    if nid in nodes:
+        return f"<script>alert('Error: Server ID [{nid}] already exists!'); window.history.back();</script>"
+        
     if group_id in groups and nid and nip:
         groups[group_id]["nodes"][nid] = {"ip": nip, "limit": limit}
         save_auto_groups(groups)
@@ -283,7 +288,13 @@ def add_node():
     n_id = request.form.get('node_id', '').strip().replace(" ", "_")
     n_name = request.form.get('node_name', '').strip()
     n_ip = request.form.get('node_ip', '').strip()
+    
     if n_id and n_name and n_ip:
+        nodes = get_all_servers()
+        # 🚀 Duplicate Node Check
+        if n_id in nodes:
+            return f"<script>alert('Error: Node ID [{n_id}] already exists!'); window.history.back();</script>"
+            
         if not os.path.exists(NODES_LIST):
             with open(NODES_LIST, 'w') as f: 
                 f.write("")
@@ -585,7 +596,6 @@ def save_settings_basic():
     save_config(config)
     return redirect(url_for('dashboard'))
 
-# 🚀 THE FATAL BUG FIXED HERE (Indentation was broken in the previous version)
 @app.route('/config_action', methods=['POST'])
 def config_action():
     config = load_config()
