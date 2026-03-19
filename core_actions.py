@@ -8,9 +8,9 @@ try:
 except ImportError:
     USERS_DB = "/root/PanelMaster/users_db.json"
 
-# 🚀 SSH Command များကို UI မစောင့်စေဘဲ Background တွင် အလုပ်လုပ်စေမည်
-def run_bg(ip, cmd):
-    subprocess.Popen(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\"", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+# 🚀 THE FIX: Background တွင်မလွှတ်တော့ဘဲ Command ကို သေချာပေါက် အလုပ်လုပ်စေမည့် မူရင်းနည်းလမ်း
+def execute_ssh(ip, cmd):
+    subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\"", shell=True)
 
 def generate_keys(node_id, group_id, raw_usernames, total_gb, expire_days, proto, is_auto=False):
     clean = []
@@ -59,8 +59,8 @@ def generate_keys(node_id, group_id, raw_usernames, total_gb, expire_days, proto
         
         if cmds:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
-            cmds.append("systemctl restart xray")
-            run_bg(target_ip, " ; ".join(cmds))
+            execute_ssh(target_ip, " ; ".join(cmds))
+            execute_ssh(target_ip, "systemctl restart xray")
             
     return True, "Success"
 
@@ -80,7 +80,8 @@ def toggle_user_status(username):
                         uid = user['uuid']
                         if user['protocol'] == 'v2': cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
                         else: cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
-                    run_bg(ip, f"{cmd} ; systemctl restart xray")
+                    execute_ssh(ip, cmd)
+                    execute_ssh(ip, "systemctl restart xray")
             with open(USERS_DB, 'w') as f: json.dump(db, f)
 
 def remove_user(username):
@@ -92,7 +93,8 @@ def remove_user(username):
                 ip = get_all_servers().get(info.get('node'), {}).get('ip')
                 if ip:
                     cmd = get_safe_delete_cmd(username, info.get('protocol', 'v2'), info.get('port', '443'))
-                    run_bg(ip, f"{cmd} ; systemctl restart xray")
+                    execute_ssh(ip, cmd)
+                    execute_ssh(ip, "systemctl restart xray")
                 del db[username]
             with open(USERS_DB, 'w') as f: json.dump(db, f)
 
@@ -112,8 +114,8 @@ def bulk_remove_users(usernames):
                     del db[uname]
             with open(USERS_DB, 'w') as f: json.dump(db, f)
             for ip, cmds in cmds_by_ip.items():
-                cmds.append("systemctl restart xray")
-                run_bg(ip, " ; ".join(cmds))
+                execute_ssh(ip, " ; ".join(cmds))
+                execute_ssh(ip, "systemctl restart xray")
 
 def process_rebalance(group_id, new_limit, specific_node=None):
     groups = load_auto_groups()
@@ -186,8 +188,8 @@ def process_rebalance(group_id, new_limit, specific_node=None):
         with open(USERS_DB, 'w') as f: json.dump(db, f)
 
         for ip, cmds in cmds_by_ip.items():
-            cmds.append("systemctl restart xray")
-            run_bg(ip, " ; ".join(cmds))
+            execute_ssh(ip, " ; ".join(cmds))
+            execute_ssh(ip, "systemctl restart xray")
 
         if migrated_count < len(excess_users):
             return False, f"Limit Updated. Migrated {migrated_count} keys. Could not migrate {len(excess_users) - migrated_count} keys due to lack of space in other servers!"
