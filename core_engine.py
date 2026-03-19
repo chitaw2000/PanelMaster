@@ -1,19 +1,27 @@
 import subprocess
 import threading
+import base64
 
-# 🚀 THE UNTOUCHABLE SSH ENGINE (Background တွင် အေးဆေးစွာ အလုပ်လုပ်မည်)
-def _ssh_task(ip, cmd):
-    # Command မပြတ်ကျစေရန် Thread ဖြင့် သေချာပေါက် အဆုံးထိ စောင့် Run မည်
-    full_cmd = f"ssh -o ConnectTimeout=20 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\""
-    subprocess.run(full_cmd, shell=True)
+# 🚀 THE UNTOUCHABLE SSH ENGINE: Command များကို Base64 ပြောင်း၍ Bash Script အဖြစ် သေချာပေါက် Run မည်
+def _ssh_task(ip, script_content):
+    try:
+        b64 = base64.b64encode(script_content.encode('utf-8')).decode('utf-8')
+        full_cmd = f"ssh -o ConnectTimeout=20 -o StrictHostKeyChecking=no root@{ip} \"echo {b64} | base64 -d > /tmp/pm_task.sh && bash /tmp/pm_task.sh\""
+        subprocess.run(full_cmd, shell=True)
+    except Exception:
+        pass
 
-def execute_ssh_isolated(ip, cmd):
-    """ဒီ Function က UI ကို မစောင့်စေဘဲ နောက်ကွယ်ကနေ သေချာပေါက် Command များကို အလုပ်လုပ်ပေးမည်"""
-    threading.Thread(target=_ssh_task, args=(ip, cmd), daemon=True).start()
-
-# 🚀 မူရင်းအတိုင်း ၁၀၀% အလုပ်လုပ်ခဲ့သော Safe Delete Script
-def get_safe_delete_script(username, protocol, port):
-    if protocol == 'v2':
-        return f"/usr/local/bin/v2ray-node-del-vless '{username}'"
+def execute_ssh_bg(ip, cmds):
+    if not cmds: return
+    if isinstance(cmds, list):
+        script_content = "\n".join(cmds)
     else:
-        return f"/usr/local/bin/v2ray-node-del-out '{username}' {port} ; ufw delete allow {port}/tcp ; ufw delete allow {port}/udp"
+        script_content = cmds
+    threading.Thread(target=_ssh_task, args=(ip, script_content), daemon=True).start()
+
+# 🚀 မူရင်းအတိုင်း ၁၀၀% အလုပ်လုပ်ခဲ့သော Safe Delete Script (Hang မဖြစ်ရန် ကာကွယ်ထားသည်)
+def get_safe_delete_cmd(username, protocol, port):
+    if protocol == 'v2':
+        return f"yes | /usr/local/bin/v2ray-node-del-vless '{username}' >/dev/null 2>&1 || true"
+    else:
+        return f"yes | /usr/local/bin/v2ray-node-del-out '{username}' {port} >/dev/null 2>&1 || true ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true"
