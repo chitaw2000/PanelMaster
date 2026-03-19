@@ -47,7 +47,6 @@
                 </div>
                 <span class="text-[10px] font-mono text-slate-400 mb-4">{{ s.ip }}</span>
                 <div class="mb-4 flex gap-2">
-                    <!-- 🚀 THE FIX: Xray Restart Button for Auto Nodes -->
                     <form action="/restart_xray/{{ s.id }}" method="POST" class="flex-1 m-0"><button type="submit" class="w-full bg-slate-100 hover:bg-blue-50 text-blue-600 text-[10px] font-bold py-2 rounded-xl transition uppercase tracking-widest"><i class="fa-solid fa-rotate-right mr-1"></i> Restart</button></form>
                     <a href="/node/{{ s.id }}" class="flex-1 block text-center bg-purple-50 hover:bg-purple-100 text-purple-600 text-[10px] font-bold py-2 rounded-xl transition uppercase tracking-widest"><i class="fa-solid fa-arrow-up-right-from-square mr-1"></i> Panel</a>
                 </div>
@@ -78,7 +77,6 @@
         <td class="p-6 text-center"><input type="checkbox" name="usernames" value="{{ u.username }}" class="w-4 h-4 cursor-pointer accent-blue-600" onchange="updateBulkUI()"></td>
         <td class="p-6"><span class="bg-purple-50 text-purple-600 font-mono text-[10px] font-bold px-2 py-1 rounded uppercase tracking-widest">{{ u.node }}</span></td>
         
-        <!-- 🚀 THE FIX: Key ID အား Permanent အဖြစ်ပြသမည် -->
         <td class="p-6 text-slate-400 font-black text-sm">#{{ u.key_id if u.key_id else loop.index }}</td>
         
         <td class="p-6"><div class="flex items-center gap-3">
@@ -162,6 +160,28 @@
 <div id="m" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100"><h2 class="text-lg font-black mb-6 text-slate-800" id="mu"></h2><form id="ef" method="POST"><input type="hidden" name="node_name" value="{{ node_id }}"><input type="number" step="0.1" name="total_gb" id="mg" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-4"><input type="date" name="expire_date" id="md" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-8"><div class="flex justify-end gap-3"><button type="button" onclick="closeM()" class="px-4 py-2 font-bold text-slate-400">Cancel</button><button class="bg-blue-600 text-white px-4 py-2 rounded-xl font-bold">Save</button></div></form></div></div>
 <div id="rm" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100"><h2 class="text-lg font-black mb-6 text-emerald-600">Renew: <span id="ru"></span></h2><form id="rf" method="POST"><input type="hidden" name="node_name" value="{{ node_id }}"><input type="number" step="0.1" name="add_gb" value="50" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-4"><input type="number" name="add_days" value="30" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-8"><div class="flex justify-end gap-3"><button type="button" onclick="closeRenew()" class="px-4 py-2 font-bold text-slate-400">Cancel</button><button class="bg-emerald-500 text-white px-4 py-2 rounded-xl font-bold">Renew</button></div></form></div></div>
 
+<!-- 🚀 THE FIX: Xray Install Modal is fully restored for Auto Nodes -->
+<div id="installPromptModal" class="hidden fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+    <div class="bg-white rounded-3xl p-8 w-[450px] shadow-2xl text-center">
+        <h2 class="text-2xl font-black mb-2 text-slate-800">Server Added!</h2>
+        <p class="text-slate-500 text-sm font-bold mb-6">Let's setup Xray-Core automatically.</p>
+        <div id="sshCheckArea" class="mb-6 p-4 rounded-xl bg-slate-50 border border-slate-200 text-sm">
+            <p id="sshStatusText" class="font-bold text-slate-600"><i class="fa-solid fa-spinner fa-spin mr-2"></i> Checking SSH Connection...</p>
+            <div id="sshInstructions" class="hidden mt-2 text-left">
+                <p class="text-red-500 font-bold text-sm mb-2">SSH Not Connected!</p>
+                <p class="text-slate-500 text-xs">Add Master Server's Public Key to Node.</p>
+                <button type="button" onclick="checkSSH()" class="mt-4 bg-slate-800 text-white px-6 py-2 rounded-xl text-xs font-bold transition">Check Again</button>
+            </div>
+        </div>
+        <form id="installForm" method="POST" onsubmit="document.getElementById('installBtn').innerHTML = '<i class=\'fa-solid fa-spinner fa-spin mr-2\'></i> Installing...'; document.getElementById('installBtn').classList.add('opacity-50', 'cursor-not-allowed');">
+            <div class="flex gap-3 justify-center">
+                <button type="button" onclick="document.getElementById('installPromptModal').classList.add('hidden')" class="px-6 py-3 font-bold text-slate-500 transition">Not Now</button>
+                <button type="submit" id="installBtn" disabled class="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold opacity-50 cursor-not-allowed transition">Install Xray</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 function updateBulkUI() {
     const checked = document.querySelectorAll('input[name="usernames"]:checked').length;
@@ -185,14 +205,43 @@ function switchGroupTab(tab) {
 
 let checkNodeId = '';
 document.addEventListener('DOMContentLoaded', () => {
+    // 🚀 Check if newly added
     const urlParams = new URLSearchParams(window.location.search);
     const newlyAdded = urlParams.get('newly_added');
     if(newlyAdded) {
         checkNodeId = newlyAdded;
-        document.getElementById('addServerModal').classList.remove('hidden');
+        let modal = document.getElementById('installPromptModal');
+        if(modal) {
+            modal.classList.remove('hidden');
+            document.getElementById('installForm').action = "/install_node/" + checkNodeId;
+            checkSSH();
+        }
         window.history.replaceState({}, document.title, window.location.pathname);
     }
 });
+
+async function checkSSH() {
+    if(!checkNodeId) return;
+    document.getElementById('sshStatusText').innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2 text-blue-500"></i> Checking SSH Connection...';
+    document.getElementById('sshInstructions').classList.add('hidden');
+    document.getElementById('installBtn').disabled = true;
+    document.getElementById('installBtn').classList.add('opacity-50', 'cursor-not-allowed');
+    try {
+        const res = await fetch('/api/check_ssh/' + checkNodeId);
+        const json = await res.json();
+        if(json.status === 'success') {
+            document.getElementById('sshStatusText').innerHTML = '<i class="fa-solid fa-circle-check text-emerald-500 mr-2"></i> SSH Connected Successfully!';
+            document.getElementById('installBtn').disabled = false;
+            document.getElementById('installBtn').classList.remove('opacity-50', 'cursor-not-allowed');
+        } else {
+            document.getElementById('sshStatusText').innerHTML = '<i class="fa-solid fa-circle-xmark text-red-500 mr-2"></i> SSH Connection Failed';
+            document.getElementById('sshInstructions').classList.remove('hidden');
+        }
+    } catch(e) {
+        document.getElementById('sshStatusText').innerHTML = '<i class="fa-solid fa-circle-xmark text-red-500 mr-2"></i> Error checking SSH';
+        document.getElementById('sshInstructions').classList.remove('hidden');
+    }
+}
 
 function openEditLimit(nid, currentLimit) {
     document.getElementById('editLimitDesc').innerText = "Node: " + nid + "\nIf you decrease this limit, excess keys will be automatically migrated to other servers in this group.";
