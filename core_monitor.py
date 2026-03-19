@@ -1,5 +1,5 @@
 import time, json, subprocess, os, threading
-from utils import get_all_servers, db_lock, get_safe_delete_cmd, execute_ssh_bg, NODES_DB
+from utils import get_all_servers, db_lock, get_safe_delete_cmd, NODES_DB
 
 try:
     from config import USERS_DB
@@ -34,7 +34,8 @@ def background_traffic_monitor():
 
             if not gathered_stats: continue
 
-            users_to_block_by_ip = {}
+            # 🚀 အရင်က အလုပ်လုပ်ခဲ့သော မူရင်းစနစ်အတိုင်း ပြန်လည်အသက်သွင်းခြင်း
+            users_to_block = []
             
             with db_lock:
                 if not os.path.exists(USERS_DB): continue
@@ -65,12 +66,11 @@ def background_traffic_monitor():
                         uinfo['last_raw_bytes'] = val
                         db_changed = True
                         
-                        # 🚀 Node Traffic (TB) Update လုပ်မည်
                         if node_id not in ndb: ndb[node_id] = {"used_bytes": 0, "limit_tb": 0}
                         ndb[node_id]["used_bytes"] += delta
                         ndb_changed = True
                         
-                        # 🚀 GB ပြည့်သူများကို Block List ထဲ သွင်းမည်
+                        # GB ပြည့်သူများကို စစ်ဆေးခြင်း
                         tot_gb = float(uinfo.get('total_gb', 0))
                         if tot_gb > 0:
                             max_bytes = tot_gb * (1024**3)
@@ -79,18 +79,18 @@ def background_traffic_monitor():
                                 uinfo['is_online'] = False
                                 node_ip = nodes.get(node_id, {}).get('ip')
                                 if node_ip:
-                                    cmd_str = get_safe_delete_cmd(uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443'))
-                                    users_to_block_by_ip.setdefault(node_ip, []).append(cmd_str)
+                                    # 🚀 List ထဲသို့ IP များနှင့်တကွ တိုက်ရိုက်သိမ်းမည် (Batch မလုပ်တော့ပါ)
+                                    users_to_block.append((node_ip, uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443')))
                 
                 if db_changed:
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
                 if ndb_changed:
                     with open(NODES_DB, 'w') as f: json.dump(ndb, f)
 
-            # 🚀 Base64 စနစ်ဖြင့် သေချာပေါက် Block + Restart လုပ်မည် (Rate limit မထိတော့ပါ)
-            for node_ip, cmds in users_to_block_by_ip.items():
-                cmds.append("systemctl restart xray")
-                execute_ssh_bg(node_ip, cmds)
+            # 🚀 THE ORIGINAL FIX: အရင်က အလုပ်လုပ်ခဲ့သော Direct SSH (os.system) စနစ်ကို အတိအကျ ပြန်သုံးထားသည်
+            for node_ip, uname, proto, port in users_to_block:
+                safe_cmd = get_safe_delete_cmd(uname, proto, port)
+                os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\" >/dev/null 2>&1 &")
                 
         except: pass
 
