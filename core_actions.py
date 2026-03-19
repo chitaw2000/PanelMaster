@@ -1,4 +1,4 @@
-import json, os, uuid, base64, urllib.parse
+import json, os, subprocess, uuid, base64, urllib.parse
 from datetime import datetime, timedelta
 from utils import db_lock, get_all_servers, get_safe_delete_cmd
 from core_auto import find_available_node, load_auto_groups, save_auto_groups
@@ -8,9 +8,9 @@ try:
 except ImportError:
     USERS_DB = "/root/PanelMaster/users_db.json"
 
-# 🚀 SSH ကို UI မစောင့်စေဘဲ Background မှ လုံခြုံစွာ Run မည့်စနစ်
+# 🚀 SSH Command များကို UI မစောင့်စေဘဲ Background တွင် အလုပ်လုပ်စေမည်
 def run_bg(ip, cmd):
-    os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\" >/dev/null 2>&1 &")
+    subprocess.Popen(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\"", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def generate_keys(node_id, group_id, raw_usernames, total_gb, expire_days, proto, is_auto=False):
     clean = []
@@ -20,7 +20,6 @@ def generate_keys(node_id, group_id, raw_usernames, total_gb, expire_days, proto
         if u: clean.append(u)
     if not clean: return False, "❌ No valid usernames provided!"
 
-    # 🚀 Database ဖွင့်ချိန်တွင် အခြားအရာများမနှောက်ယှက်ရန် အစအဆုံး Lock လုပ်ထားသည်
     with db_lock:
         db = {}
         if os.path.exists(USERS_DB):
