@@ -1,7 +1,10 @@
 import json, os, uuid, base64, urllib.parse
 from datetime import datetime, timedelta
-from utils import db_lock, get_all_servers, get_safe_delete_cmd, execute_ssh_bg
+from utils import db_lock, get_all_servers
 from core_auto import find_available_node, load_auto_groups, save_auto_groups
+
+# 🚀 လုံးဝ ထပ်မထိတော့မည့် Engine ဆီမှ ချိတ်ဆက်ခေါ်ယူခြင်း
+from core_engine import execute_ssh_isolated, get_safe_delete_script
 
 try:
     from config import USERS_DB
@@ -18,7 +21,7 @@ def sanitize_usernames(raw_list):
 
 def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
     usernames = sanitize_usernames(raw_usernames)
-    if not usernames: return False, "No valid usernames provided!"
+    if not usernames: return False, "❌ No valid usernames provided!"
 
     db = {}
     with db_lock:
@@ -59,8 +62,7 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 raw_ss = f"chacha20-ietf-poly1305:{uid}@{target_ip}:{port}"
                 ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
                 k = f"ss://{ss_conf}#{safe_u}"
-                cmds.append(f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port}")
-                cmds.append(f"ufw allow {port}/tcp && ufw allow {port}/udp")
+                cmds.append(f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
                 
             db[u] = {
                 "node": target_node, "group": group_id, "protocol": proto, "uuid": uid, 
@@ -72,8 +74,9 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
         
         if cmds:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
-            cmds.append("systemctl restart xray")
-            execute_ssh_bg(target_ip, cmds)
+            # 🚀 THE FIX: Bulk Key ထုတ်လျှင် ဆာဗာမ Hang စေရန် ၁ စက္ကန့်စီ ခွဲ၍ ဖြည်းဖြည်းချင်း အလုပ်လုပ်စေမည်
+            safe_cmds_str = " ; sleep 1 ; ".join(cmds)
+            execute_ssh_isolated(target_ip, f"{safe_cmds_str} ; systemctl restart xray")
             
     return True, "Success"
 
@@ -87,12 +90,12 @@ def toggle_key(username):
                 if ip:
                     if user['is_blocked']: 
                         user['is_online'] = False
-                        cmd = get_safe_delete_cmd(username, user.get('protocol', 'v2'), user.get('port', '443'))
+                        cmd = get_safe_delete_script(username, user.get('protocol', 'v2'), user.get('port', '443'))
                     else:
                         uid = user['uuid']
                         if user['protocol'] == 'v2': cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
                         else: cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
-                    execute_ssh_bg(str(ip).strip(), [cmd, "systemctl restart xray"])
+                    execute_ssh_isolated(str(ip).strip(), f"{cmd} ; systemctl restart xray")
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
 
 def edit_key(username, total_gb, expire_date):
@@ -121,8 +124,8 @@ def delete_key(username):
             if username in db:
                 info = db[username]; ip = get_all_servers().get(info.get('node'), {}).get('ip')
                 if ip:
-                    cmd = get_safe_delete_cmd(username, info.get('protocol', 'v2'), info.get('port', '443'))
-                    execute_ssh_bg(str(ip).strip(), [cmd, "systemctl restart xray"])
+                    cmd = get_safe_delete_script(username, info.get('protocol', 'v2'), info.get('port', '443'))
+                    execute_ssh_isolated(str(ip).strip(), f"{cmd} ; systemctl restart xray")
                 del db[username]
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
 
@@ -137,13 +140,13 @@ def bulk_delete_keys(usernames):
                     ip = nodes.get(db[uname].get('node'), {}).get('ip')
                     if ip:
                         ip = str(ip).strip()
-                        cmd = get_safe_delete_cmd(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
+                        cmd = get_safe_delete_script(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
                         cmds_by_ip.setdefault(ip, []).append(cmd)
                     del db[uname]
             with open(USERS_DB, 'w') as f: json.dump(db, f)
             for ip, cmds in cmds_by_ip.items():
-                cmds.append("systemctl restart xray")
-                execute_ssh_bg(ip, cmds)
+                safe_cmds_str = " ; sleep 1 ; ".join(cmds)
+                execute_ssh_isolated(ip, f"{safe_cmds_str} ; systemctl restart xray")
 
 def rebalance_auto_node(group_id, new_limit, specific_node=None):
     groups = load_auto_groups()
@@ -185,7 +188,7 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
             if not new_node_id: break
             
             new_node_ip = str(new_node_ip).strip()
-            cmd_del = get_safe_delete_cmd(uname, proto, old_port)
+            cmd_del = get_safe_delete_script(uname, proto, old_port)
             cmds_by_ip.setdefault(old_ip, []).append(cmd_del)
             
             used_ports = [int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out' and i.get('node') == new_node_id]
@@ -202,8 +205,7 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
                 raw_ss = f"chacha20-ietf-poly1305:{uid}@{new_node_ip}:{new_port}"
                 ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
                 k = f"ss://{ss_conf}#{safe_u}"
-                cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port}"
-                cmds_by_ip.setdefault(new_node_ip, []).append(f"ufw allow {new_port}/tcp && ufw allow {new_port}/udp")
+                cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port} ; ufw allow {new_port}/tcp && ufw allow {new_port}/udp"
 
             cmds_by_ip.setdefault(new_node_ip, []).append(cmd_add)
             
@@ -215,8 +217,8 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
         with open(USERS_DB, 'w') as f: json.dump(db, f)
 
         for ip, cmds in cmds_by_ip.items():
-            cmds.append("systemctl restart xray")
-            execute_ssh_bg(ip, cmds)
+            safe_cmds_str = " ; sleep 1 ; ".join(cmds)
+            execute_ssh_isolated(ip, f"{safe_cmds_str} ; systemctl restart xray")
             
         if migrated_count < len(excess_users):
             return False, f"Limit Updated. Migrated {migrated_count} keys. Failed to migrate {len(excess_users) - migrated_count} keys (No space)."
