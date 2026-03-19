@@ -1,4 +1,4 @@
-import os, threading, base64
+import os, threading
 
 try:
     from config import NODES_LIST
@@ -48,16 +48,3 @@ def check_live_status(db):
                 active.add(uname)
         except: pass
     return active
-
-# 🚀 THE ULTIMATE FIX: Script Hang မဖြစ်စေရန် `yes |` ဖြင့် auto-confirm လုပ်ပြီး အမှားတက်လည်း ဆက်သွားရန် `|| true` ထည့်ထားသည်
-def get_safe_delete_cmd(username, protocol, port):
-    if protocol == 'v2':
-        return f"yes | /usr/local/bin/v2ray-node-del-vless '{username}' >/dev/null 2>&1 || true"
-    else:
-        return f"yes | /usr/local/bin/v2ray-node-del-out '{username}' {port} >/dev/null 2>&1 || true ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true"
-
-def execute_ssh_bg(ip, cmds):
-    if not cmds: return
-    script_content = "\n".join(cmds)
-    b64 = base64.b64encode(script_content.encode('utf-8')).decode('utf-8')
-    os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"echo {b64} | base64 -d > /tmp/pm_task.sh && bash /tmp/pm_task.sh\" >/dev/null 2>&1 &")
