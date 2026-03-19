@@ -1,5 +1,8 @@
 import time, json, subprocess, os, threading
-from utils import get_all_servers, db_lock, get_safe_delete_cmd, NODES_DB
+from utils import get_all_servers, db_lock, NODES_DB
+
+# 🚀 လုံးဝ ထပ်မထိတော့မည့် Engine ဆီမှ ချိတ်ဆက်ခေါ်ယူခြင်း
+from core_engine import execute_ssh_isolated, get_safe_delete_script
 
 try:
     from config import USERS_DB
@@ -34,8 +37,7 @@ def background_traffic_monitor():
 
             if not gathered_stats: continue
 
-            # 🚀 အရင်က အလုပ်လုပ်ခဲ့သော မူရင်းစနစ်အတိုင်း ပြန်လည်အသက်သွင်းခြင်း
-            users_to_block = []
+            users_to_block_by_ip = {}
             
             with db_lock:
                 if not os.path.exists(USERS_DB): continue
@@ -70,7 +72,7 @@ def background_traffic_monitor():
                         ndb[node_id]["used_bytes"] += delta
                         ndb_changed = True
                         
-                        # GB ပြည့်သူများကို စစ်ဆေးခြင်း
+                        # 🚀 GB ပြည့်ပါက သေချာပေါက် ပိတ်မည်
                         tot_gb = float(uinfo.get('total_gb', 0))
                         if tot_gb > 0:
                             max_bytes = tot_gb * (1024**3)
@@ -79,18 +81,18 @@ def background_traffic_monitor():
                                 uinfo['is_online'] = False
                                 node_ip = nodes.get(node_id, {}).get('ip')
                                 if node_ip:
-                                    # 🚀 List ထဲသို့ IP များနှင့်တကွ တိုက်ရိုက်သိမ်းမည် (Batch မလုပ်တော့ပါ)
-                                    users_to_block.append((node_ip, uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443')))
+                                    cmd_str = get_safe_delete_script(uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443'))
+                                    users_to_block_by_ip.setdefault(node_ip, []).append(cmd_str)
                 
                 if db_changed:
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
                 if ndb_changed:
                     with open(NODES_DB, 'w') as f: json.dump(ndb, f)
 
-            # 🚀 THE ORIGINAL FIX: အရင်က အလုပ်လုပ်ခဲ့သော Direct SSH (os.system) စနစ်ကို အတိအကျ ပြန်သုံးထားသည်
-            for node_ip, uname, proto, port in users_to_block:
-                safe_cmd = get_safe_delete_cmd(uname, proto, port)
-                os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\" >/dev/null 2>&1 &")
+            # 🚀 Isolated Engine ဖြင့် သေချာပေါက် Restart ချမည် (ဆာဗာမ Hang စေရန် sleep 1 ခံထားသည်)
+            for node_ip, cmds in users_to_block_by_ip.items():
+                safe_cmds_str = " ; sleep 1 ; ".join(cmds)
+                execute_ssh_isolated(node_ip, f"{safe_cmds_str} ; systemctl restart xray")
                 
         except: pass
 
