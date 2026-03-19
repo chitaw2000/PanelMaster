@@ -10,9 +10,6 @@ app.secret_key = SECRET_KEY
 BACKUP_DIR = "/root/PanelMaster/backups"
 if not os.path.exists(BACKUP_DIR): os.makedirs(BACKUP_DIR)
 
-# ==========================================
-# 🚀 AUTO GROUPS HELPER FUNCTIONS
-# ==========================================
 def load_auto_groups():
     if not os.path.exists(AUTO_GROUPS_FILE): return {}
     try:
@@ -65,11 +62,10 @@ def sanitize_usernames(raw_list):
 def execute_ssh_bg(ip, cmds):
     if not cmds: return
     cmd_str = " ; ".join(cmds)
-    # 🚀 UI မစောင့်စေရန် မူရင်း Background System ကိုသုံးသည်
     os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"{cmd_str}\" >/dev/null 2>&1 &")
 
 # ==========================================
-# 🚀 100% ORIGINAL BACKGROUND TRAFFIC MONITOR
+# 🚀 BACKGROUND TRAFFIC MONITOR & BLOCK SYSTEM
 # ==========================================
 def background_traffic_monitor():
     while True:
@@ -121,6 +117,7 @@ def background_traffic_monitor():
                         uinfo['last_raw_bytes'] = val
                         db_changed = True
                         
+                        # 🚀 GB ပြည့်ပါက သေချာပေါက် Block စာရင်းသွင်းမည်
                         tot_gb = float(uinfo.get('total_gb', 0))
                         if tot_gb > 0:
                             max_bytes = tot_gb * (1024**3)
@@ -134,11 +131,10 @@ def background_traffic_monitor():
                 if db_changed:
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
 
-            # 🚀 GB ပြည့်သူများကို သေချာပေါက် ပိတ်ချမည့် မူရင်းနည်းလမ်း
+            # 🚀 အစွမ်းထက်သော Base64 Script အား အသုံးပြု၍ Xray Config မှ အပြီးတိုင် ဖြတ်ချမည်
             for node_ip, uname, proto, port in users_to_block:
                 safe_cmd = get_safe_delete_cmd(uname, proto, port)
-                subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd}\"", shell=True)
-                subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{node_ip} \"systemctl restart xray\"", shell=True)
+                os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\" >/dev/null 2>&1 &")
                 
         except: pass
 
@@ -282,13 +278,15 @@ def delete_server_from_group(group_id, node_id):
             if os.path.exists(USERS_DB):
                 with open(USERS_DB, 'r') as f: db = json.load(f)
                 users_to_delete = [u for u, info in db.items() if info.get('node') == node_id]
+                cmds = []
                 for u in users_to_delete:
                     info = db[u]
-                    cmd = get_safe_delete_cmd(u, info.get('protocol', 'v2'), info.get('port', '443'))
-                    execute_ssh_bg(node_ip, [cmd, "systemctl restart xray"])
+                    cmds.append(get_safe_delete_cmd(u, info.get('protocol', 'v2'), info.get('port', '443')))
                     del db[u]
                 if users_to_delete:
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
+                    cmds.append("systemctl restart xray")
+                    execute_ssh_bg(node_ip, cmds)
     return redirect(f'/group/{group_id}')
 
 @app.route('/edit_group_limit/<group_id>', methods=['POST'])
@@ -480,7 +478,6 @@ def add_user_auto():
             if u in db: continue
             uid = str(uuid.uuid4()).strip()
             
-            # 🚀 THE FIX: Custom Node မူရင်း Outline Format အတိအကျ
             if proto == 'v2':
                 port = "443"
                 safe_u = urllib.parse.quote(u)
@@ -704,7 +701,6 @@ def add_user_manual():
             if u in db: continue
             uid = str(uuid.uuid4()).strip()
             
-            # 🚀 THE FIX: Custom Node ၏ မူရင်း Format
             if proto == 'v2':
                 port = "443"
                 safe_u = urllib.parse.quote(u)
