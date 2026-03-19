@@ -1,9 +1,9 @@
 from flask import Flask, render_template, request, redirect, session, url_for, send_file, jsonify
 import json, os, re, subprocess, urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, load_config, save_config
-from utils import get_nodes, get_all_servers, check_live_status, db_lock, AUTO_GROUPS_FILE
+from utils import get_nodes, get_all_servers, check_live_status, db_lock, AUTO_GROUPS_FILE, NODES_DB
 from core_auto import load_auto_groups, save_auto_groups
 
 from core_monitor import start_background_monitor
@@ -15,28 +15,6 @@ BACKUP_DIR = "/root/PanelMaster/backups"
 
 if not os.path.exists(BACKUP_DIR): 
     os.makedirs(BACKUP_DIR)
-
-try:
-    with db_lock:
-        if os.path.exists(USERS_DB):
-            with open(USERS_DB, 'r') as f: 
-                db = json.load(f)
-            
-            db_changed = False
-            existing_ids = [int(u.get('key_id', 0)) for u in db.values() if isinstance(u, dict) and str(u.get('key_id', '')).isdigit()]
-            next_id = max(existing_ids) + 1 if existing_ids else 1
-            
-            for uname in sorted(db.keys()):
-                if 'key_id' not in db[uname]:
-                    db[uname]['key_id'] = next_id
-                    next_id += 1
-                    db_changed = True
-                    
-            if db_changed:
-                with open(USERS_DB, 'w') as f: 
-                    json.dump(db, f)
-except Exception as e:
-    pass
 
 start_background_monitor()
 
@@ -58,6 +36,35 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
+# 🚀 THE FIX: Node TB Limits and Resets
+@app.route('/set_node_traffic/<node_id>', methods=['POST'])
+def set_node_traffic(node_id):
+    try: tb = float(request.form.get('limit_tb', 0))
+    except: tb = 0.0
+    with db_lock:
+        ndb = {}
+        if os.path.exists(NODES_DB):
+            try:
+                with open(NODES_DB, 'r') as f: ndb = json.load(f)
+            except: pass
+        if node_id not in ndb: ndb[node_id] = {"used_bytes": 0, "limit_tb": 0}
+        ndb[node_id]["limit_tb"] = tb
+        with open(NODES_DB, 'w') as f: json.dump(ndb, f)
+    return redirect(request.referrer)
+
+@app.route('/reset_node_traffic/<node_id>', methods=['POST'])
+def reset_node_traffic(node_id):
+    with db_lock:
+        ndb = {}
+        if os.path.exists(NODES_DB):
+            try:
+                with open(NODES_DB, 'r') as f: ndb = json.load(f)
+            except: pass
+        if node_id in ndb:
+            ndb[node_id]["used_bytes"] = 0
+            with open(NODES_DB, 'w') as f: json.dump(ndb, f)
+    return redirect(request.referrer)
+
 def get_node_backups():
     backups = {}
     if os.path.exists(BACKUP_DIR):
@@ -66,8 +73,7 @@ def get_node_backups():
                 parts = f.split('_')
                 if len(parts) >= 3:
                     nid = parts[1]
-                    if nid not in backups: 
-                        backups[nid] = []
+                    if nid not in backups: backups[nid] = []
                     path = os.path.join(BACKUP_DIR, f)
                     size = os.path.getsize(path) / 1024
                     ctime = datetime.fromtimestamp(os.path.getctime(path)).strftime('%Y-%m-%d %H:%M:%S')
@@ -79,13 +85,16 @@ def dashboard():
     nodes = get_nodes()
     auto_groups = load_auto_groups()
     db = {}
+    ndb = {}
     with db_lock:
         if os.path.exists(USERS_DB):
             try:
-                with open(USERS_DB, 'r') as f: 
-                    db = json.load(f)
-            except: 
-                pass
+                with open(USERS_DB, 'r') as f: db = json.load(f)
+            except: pass
+        if os.path.exists(NODES_DB):
+            try:
+                with open(NODES_DB, 'r') as f: ndb = json.load(f)
+            except: pass
                 
     config = load_config()
     active_users = check_live_status(db)
@@ -95,7 +104,17 @@ def dashboard():
     for nid, info in nodes.items():
         total_count = sum(1 for i in db.values() if i.get('node') == nid and not i.get('group'))
         live_count = sum(1 for uname, i in db.items() if i.get('node') == nid and not i.get('group') and uname in active_users and not i.get('is_blocked'))
-        node_stats.append({"id": nid, "name": info.get('name', nid), "ip": info.get('ip', ''), "total": total_count, "live": live_count, "disabled": nid in config.get('disabled_nodes', [])})
+        
+        ninfo = ndb.get(nid, {})
+        used_tb = ninfo.get("used_bytes", 0) / (1024**4)
+        limit_tb = float(ninfo.get("limit_tb", 0))
+        is_alarm = limit_tb > 0 and used_tb >= limit_tb
+
+        node_stats.append({
+            "id": nid, "name": info.get('name', nid), "ip": info.get('ip', ''), 
+            "total": total_count, "live": live_count, "disabled": nid in config.get('disabled_nodes', []),
+            "used_tb": used_tb, "limit_tb": limit_tb, "is_alarm": is_alarm
+        })
         
     for gid, gdata in auto_groups.items():
         limit = gdata.get("limit", 30)
@@ -132,10 +151,14 @@ def group_view(group_id):
         
     group = groups[group_id]
     db = {}
+    ndb = {}
     with db_lock:
         if os.path.exists(USERS_DB):
-            with open(USERS_DB, 'r') as f: 
-                db = json.load(f)
+            with open(USERS_DB, 'r') as f: db = json.load(f)
+        if os.path.exists(NODES_DB):
+            try:
+                with open(NODES_DB, 'r') as f: ndb = json.load(f)
+            except: pass
             
     active_users = check_live_status(db)
     users = []
@@ -155,7 +178,6 @@ def group_view(group_id):
             if info.get('node') in counts: 
                 counts[info.get('node')] += 1
             
-    # 🚀 THE FIX: Key ID အတိုင်း အစဉ်လိုက် စီစဉ်ပေးမည် (1, 2, 3...)
     users = sorted(users, key=lambda x: int(x.get('key_id', 0)))
             
     for nid, ndata in g_nodes.items():
@@ -165,7 +187,13 @@ def group_view(group_id):
         else:
             nip = str(ndata).strip()
             limit = int(group.get("limit", 30))
-        server_stats.append({"id": nid, "ip": nip, "count": counts[nid], "limit": limit})
+            
+        ninfo = ndb.get(nid, {})
+        used_tb = ninfo.get("used_bytes", 0) / (1024**4)
+        limit_tb = float(ninfo.get("limit_tb", 0))
+        is_alarm = limit_tb > 0 and used_tb >= limit_tb
+        
+        server_stats.append({"id": nid, "ip": nip, "count": counts[nid], "limit": limit, "used_tb": used_tb, "limit_tb": limit_tb, "is_alarm": is_alarm})
         
     return render_template('group.html', group_id=group_id, group=group, users=users, server_stats=server_stats)
 
@@ -260,11 +288,15 @@ def node_view(node_id):
         
     node_info = nodes[node_id]
     db = {}
+    ndb = {}
     with db_lock:
         if os.path.exists(USERS_DB):
             try:
-                with open(USERS_DB, 'r') as f: 
-                    db = json.load(f)
+                with open(USERS_DB, 'r') as f: db = json.load(f)
+            except: pass
+        if os.path.exists(NODES_DB):
+            try:
+                with open(NODES_DB, 'r') as f: ndb = json.load(f)
             except: pass
             
     config = load_config()
@@ -280,8 +312,13 @@ def node_view(node_id):
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             users.append(info)
             
+    ninfo = ndb.get(node_id, {})
+    used_tb = ninfo.get("used_bytes", 0) / (1024**4)
+    limit_tb = float(ninfo.get("limit_tb", 0))
+    is_alarm = limit_tb > 0 and used_tb >= limit_tb
+            
     other_nodes = [nid for nid in nodes.keys() if nid != node_id]
-    return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, config=config)
+    return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, config=config, used_tb=used_tb, limit_tb=limit_tb, is_alarm=is_alarm)
 
 @app.route('/add_node', methods=['POST'])
 def add_node():
