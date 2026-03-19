@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, redirect, session, url_for, send_file, jsonify
-import json, os, subprocess, re
+import json, os, subprocess, re, urllib.parse
 from datetime import datetime, timedelta
 
 from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, load_config, save_config
@@ -172,7 +172,7 @@ def edit_server_limit(group_id, node_id):
 
 @app.route('/add_user_auto', methods=['POST'])
 def add_user_auto():
-    gid = request.form.get('group_id', '')
+    gid = request.form.get('group_id', '').strip()
     mode = request.form.get('creation_mode', 'single')
     
     raw_usernames = []
@@ -180,18 +180,59 @@ def add_user_auto():
     elif mode == 'list': raw_usernames = re.split(r'[,\n\r]+', request.form.get('list_usernames', ''))
     elif mode == 'pattern':
         base = request.form.get('base_name', '').strip()
-        start = int(request.form.get('start_num', 1))
-        qty = int(request.form.get('qty', 1))
+        try: start = int(request.form.get('start_num') or 1)
+        except: start = 1
+        try: qty = int(request.form.get('qty') or 1)
+        except: qty = 1
         raw_usernames = [f"{base}{start+i}" for i in range(qty)]
 
-    gb = request.form.get('total_gb', 0)
-    days = int(request.form.get('expire_days', 30))
+    try: gb = float(request.form.get('total_gb') or 0)
+    except: gb = 0.0
+    try: days = int(request.form.get('expire_days') or 30)
+    except: days = 30
+    
     proto = request.form.get('protocol', 'v2')
 
     success, msg = generate_keys(None, gid, raw_usernames, gb, days, proto, is_auto=True)
     if not success:
         return f"<script>alert('{msg}'); window.history.back();</script>"
     return redirect(f'/group/{gid}')
+
+# 🚀 UPDATE: Custom Node အတွက် Key ထုတ်မည့် လမ်းကြောင်း (Error ကင်းစင်အောင် ပြင်ဆင်ပြီး)
+@app.route('/add_user_manual', methods=['POST'])
+def add_user_manual():
+    nid = request.form.get('node_id', '').strip()
+    nip = get_all_servers().get(nid, {}).get('ip')
+    if not nip: return redirect(f'/node/{nid}')
+    
+    gid = ""
+    groups = load_auto_groups()
+    for g_id, gdata in groups.items():
+        if nid in gdata.get("nodes", {}): gid = g_id; break
+
+    mode = request.form.get('creation_mode', 'single')
+    raw_usernames = []
+    if mode == 'single': raw_usernames = [request.form.get('single_username', '')]
+    elif mode == 'list': raw_usernames = re.split(r'[,\n\r]+', request.form.get('list_usernames', ''))
+    elif mode == 'pattern':
+        base = request.form.get('base_name', '').strip()
+        try: start = int(request.form.get('start_num') or 1)
+        except: start = 1
+        try: qty = int(request.form.get('qty') or 1)
+        except: qty = 1
+        raw_usernames = [f"{base}{start+i}" for i in range(qty)]
+
+    try: gb = float(request.form.get('total_gb') or 0)
+    except: gb = 0.0
+    try: days = int(request.form.get('expire_days') or 30)
+    except: days = 30
+    
+    proto = request.form.get('protocol', 'v2')
+    
+    success, msg = generate_keys(nid, gid, raw_usernames, gb, days, proto, is_auto=False)
+    if not success:
+        return f"<script>alert('{msg}'); window.history.back();</script>"
+    return redirect(f'/node/{nid}')
 
 @app.route('/node/<node_id>')
 def node_view(node_id):
@@ -256,6 +297,7 @@ def delete_node(node_id):
 def replace_id(current_id):
     old_id = request.form.get('old_id', '').strip(); nodes = get_all_servers()
     if current_id not in nodes or not old_id: return redirect(f'/node/{current_id}')
+    current_ip = str(nodes[current_id].get('ip')).strip()
     
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f: lines = f.readlines()
@@ -280,6 +322,22 @@ def replace_id(current_id):
             save_auto_groups(groups)
             break
             
+    commands = []
+    with db_lock:
+        if os.path.exists(USERS_DB):
+            with open(USERS_DB, 'r') as f: db = json.load(f)
+            for uname, info in db.items():
+                if info.get('node') == old_id:
+                    if 'key' in info and current_ip: info['key'] = re.sub(r'(@)[^:]+(:)', f'\\g<1>{current_ip}\\g<2>', info['key'])
+                    info['last_raw_bytes'] = 0; info['is_online'] = False
+                    if not info.get('is_blocked', False):
+                        uid = info.get('uuid'); port = str(info.get('port', '443'))
+                        if info.get('protocol', 'v2') == 'v2': commands.append(f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}")
+                        else: commands.append(f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
+            with open(USERS_DB, 'w') as f: json.dump(db, f)
+    if commands and current_ip:
+        commands.append("systemctl restart xray")
+        run_bg(current_ip, " ; ".join(commands))
     return redirect(f'/node/{old_id}')
 
 @app.route('/api/check_ssh/<node_id>')
@@ -338,30 +396,6 @@ def toggle_node(node_id):
         if ip: run_bg(ip, "systemctl stop xray")
     save_config(config); return redirect(request.referrer)
 
-@app.route('/add_user_manual', methods=['POST'])
-def add_user_manual():
-    nid = request.form.get('node_id'); nip = get_all_servers().get(nid, {}).get('ip')
-    if not nip: return redirect(f'/node/{nid}')
-    
-    gid = ""
-    groups = load_auto_groups()
-    for g_id, gdata in groups.items():
-        if nid in gdata.get("nodes", {}): gid = g_id; break
-
-    mode = request.form.get('creation_mode', 'single')
-    raw_usernames = []
-    if mode == 'single': raw_usernames = [request.form.get('single_username', '')]
-    elif mode == 'list': raw_usernames = re.split(r'[,\n\r]+', request.form.get('list_usernames', ''))
-    elif mode == 'pattern':
-        base = request.form.get('base_name', '').strip(); start = int(request.form.get('start_num', 1)); qty = int(request.form.get('qty', 1))
-        raw_usernames = [f"{base}{start+i}" for i in range(qty)]
-
-    gb = request.form.get('total_gb', 0); days = int(request.form.get('expire_days', 30))
-    proto = request.form.get('protocol', 'v2')
-    
-    generate_keys(nid, gid, raw_usernames, gb, days, proto, is_auto=False)
-    return redirect(request.referrer)
-
 @app.route('/toggle_user/<username>', methods=['POST'])
 def toggle_user(username):
     toggle_user_status(username)
@@ -373,14 +407,19 @@ def edit_user(username):
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
             if username in db:
-                db[username]['total_gb'] = float(request.form.get('total_gb', 0))
+                try: db[username]['total_gb'] = float(request.form.get('total_gb', 0))
+                except: pass
                 db[username]['expire_date'] = request.form.get('expire_date', '')
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
     return redirect(request.referrer)
 
 @app.route('/renew_user/<username>', methods=['POST'])
 def renew_user(username):
-    add_gb = float(request.form.get('add_gb', 50)); add_days = int(request.form.get('add_days', 30))
+    try: add_gb = float(request.form.get('add_gb') or 50)
+    except: add_gb = 50.0
+    try: add_days = int(request.form.get('add_days') or 30)
+    except: add_days = 30
+    
     with db_lock:
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
