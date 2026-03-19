@@ -9,7 +9,6 @@
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
         .glass { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
         .glass-dark { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(16px); }
         .h-green { color: #10b981; } .h-blue { color: #3b82f6; } .h-yellow { color: #eab308; } .h-orange { color: #f97316; } .h-red { color: #ef4444; }
@@ -17,28 +16,19 @@
 </head>
 <body class="bg-[#f8fafc] font-sans pb-16 text-slate-800">
 
-<!-- 🚀 Top Navigation -->
+<!-- 🚀 Top Navigation with Right Menu Bar -->
 <nav class="glass border-b border-slate-200/60 sticky top-0 z-40 mb-10 shadow-sm">
     <div class="max-w-7xl mx-auto px-6 lg:px-8 py-4 flex justify-between items-center">
-        <a href="/" class="text-sm font-bold text-slate-600 hover:text-purple-600 transition flex items-center bg-white px-4 py-2 rounded-xl shadow-sm border border-slate-100">
-            <i class="fa-solid fa-arrow-left mr-2"></i> Dashboard
-        </a>
+        <a href="/" class="text-sm font-bold text-slate-600 hover:text-purple-600 transition flex items-center bg-white px-4 py-2 rounded-xl shadow-sm border border-slate-100"><i class="fa-solid fa-arrow-left mr-2"></i> Dashboard</a>
         <div class="relative dropdown-container">
             <button onclick="toggleDropdown()" class="flex items-center gap-3 bg-white border border-slate-200 hover:border-purple-300 px-4 py-2 rounded-2xl shadow-sm hover:shadow-md transition-all">
-                <div class="flex flex-col text-right">
-                    <span class="text-xs font-black text-slate-800">Admin</span>
-                    <span class="text-[10px] font-bold text-emerald-500">Online</span>
-                </div>
-                <div class="w-8 h-8 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center">
-                    <i class="fa-solid fa-user-astronaut"></i>
-                </div>
+                <div class="flex flex-col text-right"><span class="text-xs font-black text-slate-800">Admin</span><span class="text-[10px] font-bold text-emerald-500">Online</span></div>
+                <div class="w-8 h-8 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center"><i class="fa-solid fa-user-astronaut"></i></div>
                 <i class="fa-solid fa-chevron-down text-xs text-slate-400 ml-1"></i>
             </button>
             <div id="topMenu" class="hidden absolute right-0 mt-3 w-56 bg-white rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.1)] border border-slate-100 overflow-hidden transform origin-top-right transition-all">
                 <div class="p-2 space-y-1">
-                    <a href="/logout" class="w-full text-left px-4 py-3 text-sm font-bold text-red-500 hover:bg-red-50 rounded-xl transition-colors flex items-center gap-3">
-                        <i class="fa-solid fa-right-from-bracket w-5 text-center"></i> Logout
-                    </a>
+                    <a href="/logout" class="w-full text-left px-4 py-3 text-sm font-bold text-red-500 hover:bg-red-50 rounded-xl transition-colors flex items-center gap-3"><i class="fa-solid fa-right-from-bracket w-5 text-center"></i> Logout</a>
                 </div>
             </div>
         </div>
@@ -46,7 +36,6 @@
 </nav>
 
 <div class="max-w-7xl mx-auto px-6 lg:px-8">
-    <!-- 🚀 Group Header -->
     <div class="bg-gradient-to-r from-purple-600 via-fuchsia-600 to-indigo-600 p-8 rounded-3xl shadow-lg text-white border border-white/10 relative overflow-hidden mb-10">
         <div class="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none"></div>
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 relative z-10">
@@ -79,7 +68,6 @@
         </div>
     </div>
 
-    <!-- 🚀 Tabs -->
     <div class="flex gap-2 overflow-x-auto whitespace-nowrap mb-8 bg-slate-200/50 p-1.5 rounded-2xl w-fit">
         <button id="groupTabBtn-servers" onclick="switchGroupTab('servers')" class="px-6 py-2.5 text-sm font-black rounded-xl transition-all shadow-sm bg-white text-purple-600">
             <i class="fa-solid fa-server mr-2"></i> Node Servers
@@ -89,7 +77,6 @@
         </button>
     </div>
 
-    <!-- 🚀 Servers Tab -->
     <div id="group-tab-servers">
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-8">
             {% for s in server_stats %}
@@ -166,7 +153,6 @@
         </div>
     </div>
 
-    <!-- 🚀 Keys Tab -->
     <div id="group-tab-keys" class="hidden">
         <form id="bulkForm" action="/bulk_delete" method="POST" onsubmit="return confirm('Delete selected keys?');">
             <div id="bulkActions" class="hidden mb-6 p-4 bg-red-50 border border-red-100 rounded-2xl flex justify-between items-center shadow-sm">
@@ -231,8 +217,10 @@
                                 <textarea id="k_{{ loop.index }}" class="hidden">{{ u.actual_key }}</textarea>
                                 <button type="button" onclick="copyK('k_{{ loop.index }}')" class="bg-slate-100 hover:bg-purple-600 hover:text-white text-slate-600 px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-colors">Copy</button>
                             </td>
-                            <td class="p-6 text-center flex justify-center gap-3 items-center">
-                                <label class="relative inline-flex items-center cursor-pointer mr-2">
+                            <td class="p-6 text-center flex justify-center gap-2 items-center">
+                                <!-- 🚀 THE FIX: View IP Button added here -->
+                                <button type="button" onclick="openIpModal('{{ u.username }}')" class="bg-purple-50 text-purple-600 hover:bg-purple-600 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="View Active IPs"><i class="fa-solid fa-location-dot text-xs"></i></button>
+                                <label class="relative inline-flex items-center cursor-pointer mx-1">
                                     <input type="checkbox" class="sr-only peer" {% if not u.is_blocked %}checked{% endif %} onchange="submitToggle('{{ u.username }}')">
                                     <div class="w-9 h-5 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
                                 </label>
@@ -253,7 +241,6 @@
 <form id="actionToggleForm" action="" method="POST" class="hidden"></form>
 <form id="actionDeleteForm" action="" method="POST" class="hidden"></form>
 
-<!-- Add Server Modal -->
 <div id="addServerModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-50">
     <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100">
         <h2 class="text-xl font-black mb-6 text-slate-800">Add Node Server</h2>
@@ -274,7 +261,6 @@
     </div>
 </div>
 
-<!-- Edit Global Limit Modal -->
 <div id="editGlobalLimitModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-50">
     <div class="bg-white rounded-3xl p-8 w-[400px] shadow-2xl border border-slate-100">
         <h2 class="text-xl font-black mb-2 text-slate-800">Edit Global Limit</h2>
@@ -292,7 +278,6 @@
     </div>
 </div>
 
-<!-- Edit Server Limit Modal -->
 <div id="editLimitModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-50">
     <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100">
         <h2 class="text-xl font-black mb-2 text-slate-800">Edit Server Limit</h2>
@@ -310,7 +295,6 @@
     </div>
 </div>
 
-<!-- Set TB Modal -->
 <div id="setTbModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-50">
     <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100">
         <h2 class="text-xl font-black mb-2 text-slate-800">Traffic Limit</h2>
@@ -328,7 +312,6 @@
     </div>
 </div>
 
-<!-- Add User Modal -->
 <div id="addUserModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-50">
     <div class="bg-white rounded-3xl p-8 w-[420px] shadow-2xl border border-slate-100">
         <h2 class="text-xl font-black mb-6 text-slate-800">Generate Keys</h2>
@@ -370,7 +353,6 @@
     </div>
 </div>
 
-<!-- Edit Key Modal -->
 <div id="m" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-50">
     <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100">
         <h2 class="text-lg font-black mb-6 text-slate-800" id="mu"></h2>
@@ -392,7 +374,6 @@
     </div>
 </div>
 
-<!-- Renew Key Modal -->
 <div id="rm" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-50">
     <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100">
         <h2 class="text-xl font-black mb-4 text-emerald-600">Renew Key</h2>
@@ -411,30 +392,29 @@
     </div>
 </div>
 
-<!-- Set Health Modal -->
 <div id="setHealthModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-50">
     <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100">
         <h2 class="text-xl font-black mb-6 text-slate-800">Set Health Status</h2>
         <form id="setHealthForm" method="POST">
             <div class="space-y-2 mb-8">
                 <label class="flex items-center gap-3 p-3 rounded-xl cursor-pointer bg-slate-50 border border-slate-100">
-                    <input type="radio" name="health" value="green" class="w-4 h-4 text-emerald-600">
+                    <input type="radio" name="health" value="green" class="w-4 h-4">
                     <span class="h-green font-black text-xs uppercase">Green (Good)</span>
                 </label>
                 <label class="flex items-center gap-3 p-3 rounded-xl cursor-pointer bg-slate-50 border border-slate-100">
-                    <input type="radio" name="health" value="blue" class="w-4 h-4 text-blue-600">
+                    <input type="radio" name="health" value="blue" class="w-4 h-4">
                     <span class="h-blue font-black text-xs uppercase">Blue (Maintain)</span>
                 </label>
                 <label class="flex items-center gap-3 p-3 rounded-xl cursor-pointer bg-slate-50 border border-slate-100">
-                    <input type="radio" name="health" value="yellow" class="w-4 h-4 text-yellow-500">
+                    <input type="radio" name="health" value="yellow" class="w-4 h-4">
                     <span class="h-yellow font-black text-xs uppercase">Yellow (Slow)</span>
                 </label>
                 <label class="flex items-center gap-3 p-3 rounded-xl cursor-pointer bg-slate-50 border border-slate-100">
-                    <input type="radio" name="health" value="orange" class="w-4 h-4 text-orange-500">
+                    <input type="radio" name="health" value="orange" class="w-4 h-4">
                     <span class="h-orange font-black text-xs uppercase">Orange (Critical)</span>
                 </label>
                 <label class="flex items-center gap-3 p-3 rounded-xl cursor-pointer bg-slate-50 border border-slate-100">
-                    <input type="radio" name="health" value="red" class="w-4 h-4 text-red-600">
+                    <input type="radio" name="health" value="red" class="w-4 h-4">
                     <span class="h-red font-black text-xs uppercase">Red (Dead)</span>
                 </label>
             </div>
@@ -446,7 +426,6 @@
     </div>
 </div>
 
-<!-- Install Node Modal -->
 <div id="installPromptModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-50">
     <div class="bg-white rounded-3xl p-8 w-[400px] shadow-2xl text-center border border-slate-100">
         <h2 class="text-2xl font-black mb-2">Node Added!</h2>
@@ -465,6 +444,20 @@
                 <button type="submit" id="installBtn" disabled class="bg-purple-600 text-white px-8 py-3 rounded-xl font-bold w-full opacity-50">Install Xray</button>
             </div>
         </form>
+    </div>
+</div>
+
+<!-- 🚀 THE FIX: IP Tracker Modal Box -->
+<div id="ipModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-[90] transition-all">
+    <div class="bg-white rounded-3xl p-8 w-[400px] shadow-2xl border border-slate-100">
+        <h2 class="text-xl font-black mb-2 text-slate-800 flex items-center gap-2"><i class="fa-solid fa-location-dot text-purple-500"></i> Active Connections</h2>
+        <p class="text-xs font-bold text-slate-500 mb-6 bg-slate-50 p-2 rounded truncate border border-slate-100">User: <span id="ipModalUser" class="text-purple-600 font-black tracking-wider"></span></p>
+        <div id="ipModalContent" class="space-y-3 min-h-[100px] max-h-[300px] overflow-y-auto pr-1">
+            <!-- Dynamic Content -->
+        </div>
+        <div class="mt-6 flex justify-end border-t border-slate-100 pt-4">
+            <button type="button" onclick="document.getElementById('ipModal').classList.add('hidden')" class="bg-slate-100 hover:bg-slate-200 text-slate-600 px-6 py-2.5 rounded-xl font-bold transition shadow-sm">Close</button>
+        </div>
     </div>
 </div>
 
@@ -521,7 +514,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function checkSSH() {
     if (!checkNodeId) return;
-    document.getElementById('sshStatusText').innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2 text-indigo-500"></i> Checking SSH...';
+    document.getElementById('sshStatusText').innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2 text-purple-500"></i> Checking SSH...';
     document.getElementById('sshInstructions').classList.add('hidden');
     document.getElementById('installBtn').disabled = true;
     document.getElementById('installBtn').classList.add('opacity-50');
@@ -563,6 +556,36 @@ function openHealthModal(nid, ch) {
         r.checked = (r.value === ch);
     });
     document.getElementById('setHealthModal').classList.remove('hidden');
+}
+
+// 🚀 THE FIX: IP Tracker Async Function
+async function openIpModal(username) {
+    document.getElementById('ipModalUser').innerText = username;
+    document.getElementById('ipModalContent').innerHTML = '<div class="flex flex-col items-center justify-center py-6 text-slate-400"><i class="fa-solid fa-circle-notch fa-spin text-2xl mb-3 text-purple-500"></i><p class="text-xs font-bold uppercase tracking-widest">Scanning Network...</p></div>';
+    document.getElementById('ipModal').classList.remove('hidden');
+    try {
+        const res = await fetch('/api/user_ip/' + username);
+        const json = await res.json();
+        let html = '';
+        if(json.status === 'success' && json.data.length > 0) {
+            json.data.forEach(item => {
+                html += `<div class="bg-slate-50 border border-slate-100 p-3 rounded-xl flex items-center gap-3 hover:bg-purple-50 transition-colors">
+                            <div class="w-8 h-8 rounded-lg bg-purple-100 text-purple-500 flex items-center justify-center shrink-0 shadow-inner"><i class="fa-solid fa-globe text-xs"></i></div>
+                            <div class="truncate">
+                                <p class="text-sm font-black text-slate-700 font-mono">${item.ip}</p>
+                                <p class="text-[10px] font-bold text-slate-500 truncate mt-0.5">${item.location}</p>
+                            </div>
+                         </div>`;
+            });
+        } else if (json.status === 'success') {
+            html = '<div class="text-center py-6"><div class="w-12 h-12 bg-slate-100 text-slate-300 rounded-full flex items-center justify-center mx-auto mb-2 text-xl shadow-inner"><i class="fa-solid fa-ghost"></i></div><p class="text-xs font-bold text-slate-400 uppercase tracking-widest">No Active Connections</p></div>';
+        } else {
+            html = '<p class="text-xs font-bold text-red-500 text-center py-4 bg-red-50 rounded-xl"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Data Error</p>';
+        }
+        document.getElementById('ipModalContent').innerHTML = html;
+    } catch(e) {
+        document.getElementById('ipModalContent').innerHTML = '<p class="text-xs font-bold text-red-500 text-center py-4 bg-red-50 rounded-xl"><i class="fa-solid fa-wifi mr-1"></i> Connection Timeout</p>';
+    }
 }
 
 function copyK(id) {
