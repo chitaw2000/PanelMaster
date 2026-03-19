@@ -1,6 +1,5 @@
 import time, json, subprocess, os, threading
-from utils import get_all_servers, db_lock, get_safe_delete_cmd
-from core_node import execute_ssh_bg
+from utils import get_all_servers, db_lock, get_safe_delete_cmd, execute_ssh_bg, NODES_DB
 
 try:
     from config import USERS_DB
@@ -35,12 +34,21 @@ def background_traffic_monitor():
 
             if not gathered_stats: continue
 
-            users_to_block = []
+            users_to_block_by_ip = {}
+            
             with db_lock:
                 if not os.path.exists(USERS_DB): continue
                 with open(USERS_DB, 'r') as f: db = json.load(f)
                 
+                ndb = {}
+                if os.path.exists(NODES_DB):
+                    try:
+                        with open(NODES_DB, 'r') as f: ndb = json.load(f)
+                    except: pass
+                
                 db_changed = False
+                ndb_changed = False
+                
                 for uname, uinfo in db.items():
                     node_id = uinfo.get("node")
                     if node_id in gathered_stats:
@@ -48,15 +56,21 @@ def background_traffic_monitor():
                         val = user_bytes.get(uname, uinfo.get('last_raw_bytes', 0))
                         last_raw = uinfo.get('last_raw_bytes', 0)
                         
+                        delta = val - last_raw if val >= last_raw else val
+                        
                         if val > last_raw: uinfo['is_online'] = True
                         else: uinfo['is_online'] = False
                             
-                        if val < last_raw: uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + val
-                        else: uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + (val - last_raw)
-                        
+                        uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + delta
                         uinfo['last_raw_bytes'] = val
                         db_changed = True
                         
+                        # 🚀 Node Traffic (TB) Update လုပ်မည်
+                        if node_id not in ndb: ndb[node_id] = {"used_bytes": 0, "limit_tb": 0}
+                        ndb[node_id]["used_bytes"] += delta
+                        ndb_changed = True
+                        
+                        # 🚀 GB ပြည့်သူများကို Block List ထဲ သွင်းမည်
                         tot_gb = float(uinfo.get('total_gb', 0))
                         if tot_gb > 0:
                             max_bytes = tot_gb * (1024**3)
@@ -65,15 +79,18 @@ def background_traffic_monitor():
                                 uinfo['is_online'] = False
                                 node_ip = nodes.get(node_id, {}).get('ip')
                                 if node_ip:
-                                    users_to_block.append((node_ip, uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443')))
+                                    cmd_str = get_safe_delete_cmd(uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443'))
+                                    users_to_block_by_ip.setdefault(node_ip, []).append(cmd_str)
                 
                 if db_changed:
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
+                if ndb_changed:
+                    with open(NODES_DB, 'w') as f: json.dump(ndb, f)
 
-            # 🚀 GB ပြည့်သူများကို သေချာပေါက် ပိတ်ချမည့် မူရင်း Background နည်းလမ်း
-            for node_ip, uname, proto, port in users_to_block:
-                safe_cmd = get_safe_delete_cmd(uname, proto, port)
-                execute_ssh_bg(node_ip, [safe_cmd, "systemctl restart xray"])
+            # 🚀 Base64 စနစ်ဖြင့် သေချာပေါက် Block + Restart လုပ်မည် (Rate limit မထိတော့ပါ)
+            for node_ip, cmds in users_to_block_by_ip.items():
+                cmds.append("systemctl restart xray")
+                execute_ssh_bg(node_ip, cmds)
                 
         except: pass
 
