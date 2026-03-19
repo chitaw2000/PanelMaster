@@ -9,7 +9,6 @@ from core_auto import load_auto_groups, save_auto_groups
 from core_engine import execute_ssh_bg, get_safe_delete_cmd
 from core_monitor import start_background_monitor
 from core_node import add_keys, toggle_key, delete_key, bulk_delete_keys, renew_key, edit_key, rebalance_auto_node
-# 🚀 THE FIX: IP Tracker ကို သီးသန့် ဖိုင်မှ ချိတ်ဆက်ခေါ်ယူခြင်း
 from core_ip import get_active_ips
 
 app = Flask(__name__)
@@ -39,7 +38,6 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
-# 🚀 THE FIX: IP နှင့် Location ကြည့်ရန် API Route အသစ်
 @app.route('/api/user_ip/<username>')
 def api_user_ip(username):
     with db_lock:
@@ -61,6 +59,23 @@ def api_user_ip(username):
     
     ips_info = get_active_ips(node_ip, port, proto, username)
     return jsonify({"status": "success", "data": ips_info})
+
+# 🚀 THE FIX: Master Panel မှနေ၍ Node ၏ Log ကို လှမ်းဖွင့်ပေးမည့် စနစ်
+@app.route('/fix_node_logs/<node_id>', methods=['POST'])
+def fix_node_logs(node_id):
+    nodes = get_all_servers()
+    ip = nodes.get(node_id, {}).get('ip')
+    if ip:
+        # ထပ်ခါတလဲလဲ နှိပ်မိလျှင်လည်း Error မတက်စေရန် ကာကွယ်ထားသည်
+        cmds = [
+            "mkdir -p /var/log/xray",
+            "touch /var/log/xray/access.log",
+            "chmod 777 /var/log/xray/access.log",
+            "grep -q 'access.log' /usr/local/etc/xray/config.json || sed -i 's/\"log\": {/\"log\": {\\n    \"access\": \"\\/var\\/log\\/xray\\/access.log\",/g' /usr/local/etc/xray/config.json",
+            "systemctl restart xray"
+        ]
+        execute_ssh_bg(str(ip).strip(), cmds)
+    return redirect(request.referrer)
 
 @app.route('/set_node_health/<node_id>', methods=['POST'])
 def set_node_health(node_id):
