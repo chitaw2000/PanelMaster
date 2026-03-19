@@ -155,7 +155,8 @@ def group_view(group_id):
             if info.get('node') in counts: 
                 counts[info.get('node')] += 1
             
-    users = sorted(users, key=lambda x: (x.get('node', ''), x.get('username', '')))
+    # 🚀 THE FIX: Key ID အတိုင်း အစဉ်လိုက် စီစဉ်ပေးမည် (1, 2, 3...)
+    users = sorted(users, key=lambda x: int(x.get('key_id', 0)))
             
     for nid, ndata in g_nodes.items():
         if isinstance(ndata, dict):
@@ -176,7 +177,6 @@ def add_server_to_group(group_id):
     groups = load_auto_groups()
     nodes = get_all_servers()
     
-    # 🚀 Duplicate Node Check
     if nid in nodes:
         return f"<script>alert('Error: Server ID [{nid}] already exists!'); window.history.back();</script>"
         
@@ -291,7 +291,6 @@ def add_node():
     
     if n_id and n_name and n_ip:
         nodes = get_all_servers()
-        # 🚀 Duplicate Node Check
         if n_id in nodes:
             return f"<script>alert('Error: Node ID [{n_id}] already exists!'); window.history.back();</script>"
             
