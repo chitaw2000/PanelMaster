@@ -31,7 +31,7 @@
 
     <form id="bulkForm" action="/bulk_delete" method="POST" onsubmit="return confirm('Delete keys?');"><input type="hidden" name="node_name" value="{{ node_id }}">
     <div class="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-x-auto"><table class="w-full text-left whitespace-nowrap">
-    <thead><tr class="bg-slate-50 border-b border-slate-100 text-[10px] font-black uppercase text-slate-400">
+    <thead><tr class="bg-slate-50 border-b border-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-400">
     <th class="p-6 w-10 text-center"><input type="checkbox" id="selectAll" class="w-4 h-4 cursor-pointer accent-blue-600" onclick="const cb=document.querySelectorAll('input[name=\\'usernames\\']'); cb.forEach(c=>c.checked=this.checked); document.getElementById('delSelectedBtn').classList.toggle('hidden', document.querySelectorAll('input[name=\\'usernames\\']:checked').length===0);"></th>
     <th class="p-6">No.</th><th class="p-6">Profile</th><th class="p-6">Usage</th><th class="p-6">Expiry</th><th class="p-6 text-center">VPN Key</th><th class="p-6 text-center">Actions <button type="submit" id="delSelectedBtn" class="hidden ml-2 bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded text-xs font-bold shadow-sm">Del</button></th></tr></thead>
     <tbody class="divide-y divide-slate-50">
@@ -41,10 +41,12 @@
     <td class="p-6"><div class="flex items-center gap-3">
         {% if u.is_blocked %}<div class="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center"><i class="fa-solid fa-ban"></i></div>
         {% elif u.is_active %}<div class="w-10 h-10 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center relative shadow-inner"><i class="fa-solid fa-bolt"></i></div>
+        {% elif u.used_bytes == 0 %}<div class="w-10 h-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center"><i class="fa-solid fa-hourglass-half"></i></div>
         {% else %}<div class="w-10 h-10 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center"><i class="fa-solid fa-user"></i></div>{% endif %}
         <div><div class="flex items-center gap-2"><p class="font-black text-slate-800 {% if u.is_blocked %}line-through{% endif %}">{{ u.username }}</p><span id="speed_{{ u.username }}" class="live-speed-tag hidden bg-blue-50 text-blue-500 px-2 py-0.5 rounded text-[10px] font-black">0 KB/s</span></div>
             {% if u.is_blocked %}<p class="text-[10px] font-bold text-red-500 uppercase tracking-widest">🚫 Blocked</p>
             {% elif u.is_active %}<p class="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">🟢 Online</p>
+            {% elif u.used_bytes == 0 %}<p class="text-[10px] font-bold text-amber-500 uppercase tracking-widest">🟡 Pending</p>
             {% else %}<p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">⚪ Offline</p>{% endif %}
         </div></div></td>
     <td class="p-6"><div class="flex flex-col"><span class="font-black text-slate-700 text-sm">{{ u.used_gb_str }} / {{ u.total_gb }} GB</span><div class="w-24 h-1.5 bg-slate-100 rounded-full mt-2 overflow-hidden"><div class="h-full bg-blue-500 rounded-full" style="width: {{ (u.used_bytes / (u.total_gb * 1024**3) * 100) if u.total_gb > 0 else 0 }}%"></div></div></div></td>
