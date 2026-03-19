@@ -24,17 +24,25 @@
 <div class="max-w-7xl mx-auto px-6 lg:px-8">
     <div class="flex flex-col md:flex-row justify-between items-start md:items-end mb-10 gap-6 bg-gradient-to-r from-purple-600 via-fuchsia-600 to-indigo-600 p-8 rounded-3xl shadow-[0_10px_40px_rgba(147,51,234,0.15)] text-white border border-white/10 relative overflow-hidden">
         <div class="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none"></div>
-        <div class="relative z-10">
+        <div class="relative z-10 w-full flex-1">
             <div class="flex items-center gap-3 mb-3"><span class="bg-white/20 backdrop-blur-md font-mono text-[10px] px-3 py-1.5 rounded-lg uppercase tracking-widest border border-white/10 shadow-sm">Auto Node ID: {{ group_id }}</span></div>
             <h1 class="text-4xl font-black uppercase mb-2 tracking-tight">{{ group.name }}</h1>
-            <div class="flex items-center gap-3">
-                <p class="text-sm font-bold text-purple-100 flex items-center bg-black/20 px-3 py-1.5 rounded-lg backdrop-blur-sm border border-white/10"><i class="fa-solid fa-key mr-2 opacity-70"></i> Global Limit: {{ group.limit }} keys / server</p>
-                <button onclick="document.getElementById('editGlobalLimitModal').classList.remove('hidden')" class="bg-white/20 hover:bg-white/40 text-white w-8 h-8 rounded-lg flex items-center justify-center transition border border-white/10 shadow-sm"><i class="fa-solid fa-pen text-xs"></i></button>
+            <div class="flex flex-col sm:flex-row items-start sm:items-center gap-4 mt-4">
+                <div class="flex items-center gap-2">
+                    <p class="text-sm font-bold text-purple-100 flex items-center bg-black/20 px-3 py-1.5 rounded-lg backdrop-blur-sm border border-white/10"><i class="fa-solid fa-key mr-2 opacity-70"></i> Global Limit: {{ group.limit }} keys / server</p>
+                    <button onclick="document.getElementById('editGlobalLimitModal').classList.remove('hidden')" class="bg-white/20 hover:bg-white/40 text-white w-8 h-8 rounded-lg flex items-center justify-center transition border border-white/10 shadow-sm"><i class="fa-solid fa-pen text-xs"></i></button>
+                </div>
+                <div class="sm:border-l border-white/20 sm:pl-4">
+                    <p class="text-[10px] font-black text-purple-200 uppercase tracking-widest mb-0.5">Total Traffic Used</p>
+                    <p class="text-2xl font-black">{{ "%.2f"|format(group_used_gb) }} GB</p>
+                </div>
             </div>
         </div>
-        <div class="flex gap-3 items-center flex-wrap justify-end relative z-10 w-full md:w-auto mt-4 md:mt-0 pt-4 md:pt-0 border-t border-white/10 md:border-none">
-            <button onclick="document.getElementById('addServerModal').classList.remove('hidden')" class="bg-white/10 hover:bg-white/20 text-white px-5 py-3 rounded-xl text-sm font-bold transition flex items-center backdrop-blur-md border border-white/20 shadow-sm w-full sm:w-auto justify-center"><i class="fa-solid fa-server mr-2"></i> Add Node Server</button>
-            <button onclick="document.getElementById('addUserModal').classList.remove('hidden')" class="bg-white text-purple-600 hover:bg-purple-50 px-8 py-3 rounded-xl text-sm font-black shadow-lg transition hover:-translate-y-0.5 w-full sm:w-auto justify-center"><i class="fa-solid fa-wand-magic-sparkles mr-2"></i> Auto-Generate Keys</button>
+        
+        <!-- 🚀 THE FIX: Responsive Action Buttons Bar -->
+        <div class="flex flex-wrap gap-3 items-center justify-start md:justify-end relative z-10 w-full md:w-auto mt-2 md:mt-0 pt-6 md:pt-0 border-t border-white/10 md:border-none">
+            <button onclick="document.getElementById('addServerModal').classList.remove('hidden')" class="bg-white/10 hover:bg-white/20 text-white px-5 py-3 rounded-xl text-sm font-bold transition flex items-center backdrop-blur-md border border-white/20 shadow-sm"><i class="fa-solid fa-server mr-2"></i> Add Node Server</button>
+            <button onclick="document.getElementById('addUserModal').classList.remove('hidden')" class="bg-white text-purple-600 hover:bg-purple-50 px-8 py-3 rounded-xl text-sm font-black shadow-lg transition hover:-translate-y-0.5"><i class="fa-solid fa-wand-magic-sparkles mr-2"></i> Auto-Generate Keys</button>
         </div>
     </div>
 
@@ -52,7 +60,13 @@
                         <span class="text-sm font-black text-slate-800 uppercase tracking-tight">{{ s.id }}</span>
                         <button type="button" onclick="openEditLimit('{{ s.id }}', '{{ s.limit }}')" class="text-purple-400 hover:text-purple-600 bg-purple-50 w-7 h-7 rounded-lg flex items-center justify-center transition-colors" title="Edit Custom Limit"><i class="fa-solid fa-pen text-[10px]"></i></button>
                     </div>
-                    <form action="/delete_server_from_group/{{ group_id }}/{{ s.id }}" method="POST" onsubmit="return confirm('Remove server from group?');" class="m-0 z-10 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"><button type="submit" class="text-slate-300 hover:text-red-500 bg-slate-50 hover:bg-red-50 w-7 h-7 rounded-lg flex items-center justify-center transition-colors"><i class="fa-solid fa-trash-can text-[10px]"></i></button></form>
+                    
+                    <div class="flex items-center gap-1.5 z-10 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                        <!-- 🚀 THE FIX: Node Traffic Reset in Auto Group -->
+                        <button type="button" onclick="openTbModal('{{ s.id }}', '{{ s.limit_tb }}')" class="text-indigo-400 hover:text-indigo-600 bg-indigo-50 w-7 h-7 rounded-lg flex items-center justify-center transition-colors" title="Edit Traffic TB"><i class="fa-solid fa-tachometer-alt text-[10px]"></i></button>
+                        <form action="/reset_node_traffic/{{ s.id }}" method="POST" onsubmit="return confirm('Reset traffic to 0 for {{ s.id }}?');" class="m-0"><button type="submit" class="text-amber-500 hover:text-amber-600 bg-amber-50 w-7 h-7 rounded-lg flex items-center justify-center transition-colors" title="Reset Traffic"><i class="fa-solid fa-rotate-left text-[10px]"></i></button></form>
+                        <form action="/delete_server_from_group/{{ group_id }}/{{ s.id }}" method="POST" onsubmit="return confirm('Remove server from group?');" class="m-0"><button type="submit" class="text-red-400 hover:text-red-600 bg-red-50 hover:bg-red-100 w-7 h-7 rounded-lg flex items-center justify-center transition-colors"><i class="fa-solid fa-trash-can text-[10px]"></i></button></form>
+                    </div>
                 </div>
                 <span class="text-xs font-mono font-bold text-slate-400 mb-6 flex items-center gap-1.5"><i class="fa-solid fa-globe text-purple-300"></i> {{ s.ip }}</span>
                 <div class="mb-6 flex gap-2">
@@ -60,7 +74,7 @@
                     <a href="/node/{{ s.id }}" class="flex-1 block text-center bg-purple-50 hover:bg-purple-600 hover:text-white border border-purple-100 text-purple-600 text-[10px] font-black py-2.5 rounded-xl transition uppercase tracking-widest shadow-sm"><i class="fa-solid fa-arrow-up-right-from-square mr-1"></i> Panel</a>
                 </div>
                 
-                <div class="mt-auto space-y-5">
+                <div class="mt-auto space-y-5 border-t border-slate-50 pt-4">
                     <div>
                         <div class="flex justify-between text-[10px] font-black text-slate-500 mb-1.5 uppercase tracking-widest">
                             <span class="{% if s.is_alarm %}text-red-500{% endif %}">{{ "%.2f"|format(s.used_gb) }} GB</span>
@@ -151,6 +165,23 @@
     </div>
 </div>
 
+<div id="setTbModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-[60] transition-all">
+    <div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100 transform scale-100">
+        <h2 class="text-xl font-black mb-2 text-slate-800">Node Traffic Limit</h2>
+        <p class="text-xs text-slate-500 mb-6 font-bold">Set max limit (TB) for <span id="tbNodeId" class="text-indigo-600 uppercase font-black"></span></p>
+        <form id="setTbForm" method="POST">
+            <div class="relative mb-8">
+                <input type="number" step="0.1" name="limit_tb" id="tbInput" class="w-full bg-slate-50 border border-slate-200 p-4 rounded-xl font-mono text-sm font-black text-indigo-600 pr-12 focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition-all" required>
+                <span class="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-black text-slate-400">TB</span>
+            </div>
+            <div class="flex justify-end gap-3">
+                <button type="button" onclick="document.getElementById('setTbModal').classList.add('hidden')" class="px-5 py-2.5 font-bold text-slate-500 hover:text-slate-800 transition">Cancel</button>
+                <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl font-bold shadow-md shadow-indigo-200 transition">Save Limit</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <div id="editGlobalLimitModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-[60]">
     <div class="bg-white rounded-3xl p-8 w-[400px] shadow-2xl border border-slate-100">
         <h2 class="text-xl font-black mb-2 text-slate-800">Edit Global Limit</h2>
@@ -189,7 +220,7 @@
             <div id="mode_list" class="hidden mb-5"><textarea name="list_usernames" rows="3" placeholder="Paste comma separated usernames here..." class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm focus:ring-2 focus:ring-purple-100 focus:border-purple-400 transition"></textarea></div>
             <div id="mode_pattern" class="hidden mb-5 grid grid-cols-3 gap-3"><input type="text" name="base_name" placeholder="Prefix" class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm font-bold text-slate-800"><input type="number" name="start_num" value="1" title="Start Number" class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm font-mono text-purple-600"><input type="number" name="qty" value="5" title="Quantity" class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm font-mono text-purple-600"></div>
             <div class="mb-5"><label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Protocol</label><select name="protocol" class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-purple-100 focus:border-purple-400"><option value="v2">VLESS (WS)</option><option value="out">Shadowsocks</option></select></div>
-            <div class="flex gap-4 mb-8"><div class="flex-1"><label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Traffic</label><div class="relative"><input type="number" step="0.1" name="total_gb" value="50" class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm font-mono font-black text-purple-600 pr-10 focus:ring-2 focus:ring-purple-100 focus:border-purple-400"><span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-300">GB</span></div></div><div class="flex-1"><label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Validity</label><div class="relative"><input type="number" name="expire_days" value="30" class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm font-mono font-black text-purple-600 pr-12 focus:ring-2 focus:ring-purple-100 focus:border-purple-400" required><span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-300">Days</span></div></div></div>
+            <div class="flex gap-4 mb-8"><div class="flex-1"><label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Traffic (GB)</label><div class="relative"><input type="number" step="0.1" name="total_gb" value="50" class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm font-mono font-black text-purple-600 pr-10 focus:ring-2 focus:ring-purple-100 focus:border-purple-400"><span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-300">GB</span></div></div><div class="flex-1"><label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Validity</label><div class="relative"><input type="number" name="expire_days" value="30" class="w-full bg-white border border-slate-200 p-3.5 rounded-xl text-sm font-mono font-black text-purple-600 pr-12 focus:ring-2 focus:ring-purple-100 focus:border-purple-400" required><span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-300">Days</span></div></div></div>
             <div class="flex justify-end gap-3"><button type="button" onclick="document.getElementById('addUserModal').classList.add('hidden')" class="px-5 py-3 font-bold text-slate-500 hover:text-slate-800 transition">Cancel</button><button class="bg-purple-600 hover:bg-purple-700 text-white px-8 py-3 rounded-xl font-bold shadow-md shadow-purple-200 transition hover:-translate-y-0.5"><i class="fa-solid fa-wand-magic-sparkles mr-2"></i> Generate</button></div>
         </form>
     </div>
@@ -197,6 +228,29 @@
 
 <div id="m" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100"><h2 class="text-lg font-black mb-6 text-slate-800 truncate" id="mu"></h2><form id="ef" method="POST"><input type="hidden" name="node_name" value="{{ node_id }}"><div class="mb-4"><label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Traffic (GB)</label><input type="number" step="0.1" name="total_gb" id="mg" class="w-full bg-slate-50 border border-slate-200 p-4 rounded-xl font-mono text-sm font-bold text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"></div><div class="mb-8"><label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Expiry Date</label><input type="date" name="expire_date" id="md" class="w-full bg-slate-50 border border-slate-200 p-4 rounded-xl font-mono text-sm font-bold text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"></div><div class="flex justify-end gap-3"><button type="button" onclick="closeM()" class="px-4 py-2 font-bold text-slate-500 hover:text-slate-800 transition">Cancel</button><button class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl font-bold shadow-md shadow-blue-200 transition">Save Changes</button></div></form></div></div>
 <div id="rm" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100"><h2 class="text-xl font-black mb-6 text-emerald-600 flex items-center gap-2"><i class="fa-solid fa-rotate"></i> Renew Key</h2><p class="text-xs font-bold text-slate-500 mb-4 bg-emerald-50 p-3 rounded-lg border border-emerald-100 truncate"><span class="text-emerald-600 uppercase font-black tracking-wider mr-1">User:</span> <span id="ru"></span></p><form id="rf" method="POST"><input type="hidden" name="node_name" value="{{ node_id }}"><div class="flex gap-3 mb-8"><div class="flex-1"><label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Add Traffic</label><div class="relative"><input type="number" step="0.1" name="add_gb" value="50" class="w-full bg-slate-50 border border-slate-200 p-3.5 rounded-xl font-mono text-sm font-black text-emerald-600 pr-8 focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-400"><span class="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400">GB</span></div></div><div class="flex-1"><label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Add Days</label><div class="relative"><input type="number" name="add_days" value="30" class="w-full bg-slate-50 border border-slate-200 p-3.5 rounded-xl font-mono text-sm font-black text-emerald-600 pr-10 focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-400"><span class="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400">Days</span></div></div></div><div class="flex justify-end gap-3"><button type="button" onclick="closeRenew()" class="px-4 py-2 font-bold text-slate-500 hover:text-slate-800 transition">Cancel</button><button class="bg-emerald-500 hover:bg-emerald-600 text-white px-6 py-2.5 rounded-xl font-bold shadow-md shadow-emerald-200 transition">Renew Key</button></div></form></div></div>
+
+<!-- 🚀 THE FIX: Xray Install Modal is fully restored for Auto Nodes -->
+<div id="installPromptModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-[60]">
+    <div class="bg-white rounded-3xl p-8 w-[450px] shadow-2xl text-center border border-slate-100">
+        <div class="w-20 h-20 bg-indigo-50 text-indigo-500 rounded-full flex items-center justify-center text-3xl mx-auto mb-4 shadow-inner"><i class="fa-solid fa-server"></i></div>
+        <h2 class="text-2xl font-black mb-2 text-slate-800">Server Added!</h2>
+        <p class="text-slate-500 text-sm font-bold mb-6">Let's setup Xray-Core automatically.</p>
+        <div id="sshCheckArea" class="mb-8 p-5 rounded-2xl bg-slate-50/80 border border-slate-200/60 text-sm">
+            <p id="sshStatusText" class="font-bold text-slate-600"><i class="fa-solid fa-spinner fa-spin mr-2 text-indigo-500"></i> Checking SSH Connection...</p>
+            <div id="sshInstructions" class="hidden mt-4 text-left border-t border-slate-200/80 pt-4">
+                <p class="text-red-500 font-black text-sm mb-2 uppercase tracking-wide"><i class="fa-solid fa-triangle-exclamation mr-1"></i> SSH Not Connected</p>
+                <p class="text-slate-600 text-xs font-bold leading-relaxed">Please add this Master Server's Public SSH Key to the new Node Server's <code>~/.ssh/authorized_keys</code> file to proceed.</p>
+                <button type="button" onclick="checkSSH()" class="mt-4 w-full bg-slate-800 hover:bg-slate-900 text-white px-6 py-3 rounded-xl text-xs font-bold transition shadow-md shadow-slate-200">Check Connection Again</button>
+            </div>
+        </div>
+        <form id="installForm" method="POST" onsubmit="document.getElementById('installBtn').innerHTML = '<i class=\'fa-solid fa-spinner fa-spin mr-2\'></i> Installing Core...'; document.getElementById('installBtn').classList.add('opacity-50', 'cursor-not-allowed');">
+            <div class="flex gap-3 justify-center">
+                <button type="button" onclick="document.getElementById('installPromptModal').classList.add('hidden')" class="px-6 py-3 font-bold text-slate-500 hover:text-slate-800 transition bg-slate-100 hover:bg-slate-200 rounded-xl w-full">I'll do it later</button>
+                <button type="submit" id="installBtn" disabled class="bg-indigo-600 text-white px-8 py-3 rounded-xl font-bold opacity-50 cursor-not-allowed transition w-full shadow-md shadow-indigo-200">Install Xray</button>
+            </div>
+        </form>
+    </div>
+</div>
 
 <script>
 function updateBulkUI() {
@@ -217,6 +271,53 @@ function switchGroupTab(tab) {
     });
     document.getElementById('group-tab-' + tab).classList.remove('hidden');
     document.getElementById('groupTabBtn-' + tab).className = `px-6 py-2.5 text-sm font-black rounded-xl transition-all shadow-sm bg-white text-purple-600`;
+}
+
+let checkNodeId = '';
+document.addEventListener('DOMContentLoaded', () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const newlyAdded = urlParams.get('newly_added');
+    if(newlyAdded) {
+        checkNodeId = newlyAdded;
+        let modal = document.getElementById('installPromptModal');
+        if(modal) {
+            modal.classList.remove('hidden');
+            document.getElementById('installForm').action = "/install_node/" + checkNodeId;
+            checkSSH();
+        }
+        window.history.replaceState({}, document.title, window.location.pathname);
+    }
+});
+
+async function checkSSH() {
+    if(!checkNodeId) return;
+    document.getElementById('sshStatusText').innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2 text-indigo-500"></i> Checking SSH Connection...';
+    document.getElementById('sshInstructions').classList.add('hidden');
+    document.getElementById('installBtn').disabled = true;
+    document.getElementById('installBtn').classList.add('opacity-50', 'cursor-not-allowed');
+    try {
+        const res = await fetch('/api/check_ssh/' + checkNodeId);
+        const json = await res.json();
+        if(json.status === 'success') {
+            document.getElementById('sshStatusText').innerHTML = '<i class="fa-solid fa-circle-check text-emerald-500 mr-2 text-lg"></i> SSH Connected Successfully!';
+            document.getElementById('installBtn').disabled = false;
+            document.getElementById('installBtn').classList.remove('opacity-50', 'cursor-not-allowed');
+            document.getElementById('installBtn').classList.add('hover:bg-indigo-700', 'hover:-translate-y-0.5');
+        } else {
+            document.getElementById('sshStatusText').innerHTML = '<i class="fa-solid fa-circle-xmark text-red-500 mr-2 text-lg"></i> SSH Connection Failed';
+            document.getElementById('sshInstructions').classList.remove('hidden');
+        }
+    } catch(e) {
+        document.getElementById('sshStatusText').innerHTML = '<i class="fa-solid fa-circle-xmark text-red-500 mr-2 text-lg"></i> Error checking SSH';
+        document.getElementById('sshInstructions').classList.remove('hidden');
+    }
+}
+
+function openTbModal(nodeId, currentLimit) {
+    document.getElementById('tbNodeId').innerText = nodeId;
+    document.getElementById('tbInput').value = currentLimit;
+    document.getElementById('setTbForm').action = "/set_node_traffic/" + nodeId;
+    document.getElementById('setTbModal').classList.remove('hidden');
 }
 
 function openEditLimit(nid, currentLimit) {
