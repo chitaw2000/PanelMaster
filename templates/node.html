@@ -22,7 +22,9 @@
         </div>
         <div class="flex gap-2 items-center flex-wrap justify-end">
             <span id="xrayStatusBadge" class="bg-slate-100 text-slate-500 border border-slate-200 px-3 py-2 rounded-xl font-bold shadow-sm text-[10px] uppercase flex items-center gap-1.5"><i class="fa-solid fa-circle-notch fa-spin"></i> Checking</span>
-            <div class="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 flex items-center gap-2 shadow-sm"><label class="relative inline-flex items-center cursor-pointer"><input type="checkbox" id="speedToggle" class="sr-only peer" onchange="toggleSpeedMonitor()"><div class="w-7 h-3.5 bg-slate-300 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-blue-500 shadow-inner"></div></label><span class="text-[10px] font-black text-slate-500 uppercase">Live Speed</span></div>
+            <form action="/restart_xray/{{ node_id }}" method="POST" class="m-0"><button type="submit" class="bg-blue-50 text-blue-600 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-100 transition"><i class="fa-solid fa-rotate-right mr-1"></i> Restart Xray</button></form>
+            
+            <div class="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 flex items-center gap-2 shadow-sm ml-2"><label class="relative inline-flex items-center cursor-pointer"><input type="checkbox" id="speedToggle" class="sr-only peer" onchange="toggleSpeedMonitor()"><div class="w-7 h-3.5 bg-slate-300 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-blue-500 shadow-inner"></div></label><span class="text-[10px] font-black text-slate-500 uppercase">Live Speed</span></div>
             <button onclick="document.getElementById('replaceIdModal').classList.remove('hidden')" class="bg-amber-500 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-sm flex items-center"><i class="fa-solid fa-wand-magic-sparkles mr-2"></i> Restore</button>
             <form action="/delete_node/{{ node_id }}" method="POST" onsubmit="return confirm('Disconnect this server?');" class="m-0"><button class="bg-red-50 text-red-500 px-4 py-2 rounded-xl text-xs font-bold border border-red-100"><i class="fa-solid fa-link-slash mr-1"></i> Disconnect</button></form>
             <button onclick="document.getElementById('addUserModal').classList.remove('hidden')" class="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-lg ml-2"><i class="fa-solid fa-plus mr-2"></i> Add Key</button>
@@ -44,8 +46,7 @@
         <tbody class="divide-y divide-slate-50">
         {% for u in users %}<tr class="hover:bg-slate-50/50 transition-colors {% if u.is_blocked %}opacity-60 bg-red-50/20{% endif %}">
         <td class="p-6 text-center"><input type="checkbox" name="usernames" value="{{ u.username }}" class="w-4 h-4 cursor-pointer accent-blue-600" onchange="updateBulkUI()"></td>
-        <!-- 🚀 THE FIX: Key ID အား Permanent အဖြစ်ပြသမည် -->
-        <td class="p-6 text-slate-400 font-black text-sm">#{{ u.key_id }}</td>
+        <td class="p-6 text-slate-400 font-black text-sm">#{{ u.key_id if u.key_id else loop.index }}</td>
         <td class="p-6"><div class="flex items-center gap-3">
             {% if u.is_blocked %}<div class="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center"><i class="fa-solid fa-ban"></i></div>
             {% elif u.is_active %}<div class="w-10 h-10 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center relative shadow-inner"><i class="fa-solid fa-bolt"></i></div>
@@ -80,6 +81,28 @@
 <div id="m" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100"><h2 class="text-lg font-black mb-6 text-slate-800" id="mu"></h2><form id="ef" method="POST"><input type="hidden" name="node_name" value="{{ node_id }}"><input type="number" step="0.1" name="total_gb" id="mg" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-4"><input type="date" name="expire_date" id="md" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-8"><div class="flex justify-end gap-3"><button type="button" onclick="closeM()" class="px-4 py-2 font-bold text-slate-400">Cancel</button><button class="bg-blue-600 text-white px-4 py-2 rounded-xl font-bold">Save</button></div></form></div></div>
 <div id="rm" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-80 shadow-2xl border border-slate-100"><h2 class="text-lg font-black mb-6 text-emerald-600">Renew: <span id="ru"></span></h2><form id="rf" method="POST"><input type="hidden" name="node_name" value="{{ node_id }}"><input type="number" step="0.1" name="add_gb" value="50" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-4"><input type="number" name="add_days" value="30" class="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl mb-8"><div class="flex justify-end gap-3"><button type="button" onclick="closeRenew()" class="px-4 py-2 font-bold text-slate-400">Cancel</button><button class="bg-emerald-500 text-white px-4 py-2 rounded-xl font-bold">Renew</button></div></form></div></div>
 
+<!-- 🚀 THE FIX: Xray Install Modal is fully restored -->
+<div id="installPromptModal" class="hidden fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+    <div class="bg-white rounded-3xl p-8 w-[450px] shadow-2xl text-center">
+        <h2 class="text-2xl font-black mb-2 text-slate-800">Node Added!</h2>
+        <p class="text-slate-500 text-sm font-bold mb-6">Let's setup Xray-Core automatically.</p>
+        <div id="sshCheckArea" class="mb-6 p-4 rounded-xl bg-slate-50 border border-slate-200 text-sm">
+            <p id="sshStatusText" class="font-bold text-slate-600"><i class="fa-solid fa-spinner fa-spin mr-2"></i> Checking SSH Connection...</p>
+            <div id="sshInstructions" class="hidden mt-2 text-left">
+                <p class="text-red-500 font-bold text-sm mb-2">SSH Not Connected!</p>
+                <p class="text-slate-500 text-xs">Add Master Server's Public Key to Node.</p>
+                <button type="button" onclick="checkSSH()" class="mt-4 bg-slate-800 text-white px-6 py-2 rounded-xl text-xs font-bold transition">Check Again</button>
+            </div>
+        </div>
+        <form id="installForm" method="POST" onsubmit="document.getElementById('installBtn').innerHTML = '<i class=\'fa-solid fa-spinner fa-spin mr-2\'></i> Installing...'; document.getElementById('installBtn').classList.add('opacity-50', 'cursor-not-allowed');">
+            <div class="flex gap-3 justify-center">
+                <button type="button" onclick="document.getElementById('installPromptModal').classList.add('hidden')" class="px-6 py-3 font-bold text-slate-500 transition">Not Now</button>
+                <button type="submit" id="installBtn" disabled class="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold opacity-50 cursor-not-allowed transition">Install Xray</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 function updateBulkUI() {
     const checked = document.querySelectorAll('input[name="usernames"]:checked').length;
@@ -93,10 +116,50 @@ function updateBulkUI() {
 }
 
 const CURRENT_NODE_ID = "{{ node_id }}"; let speedInterval=null; let lastStats={}; let lastTime=0;
+let checkNodeId = '';
+
 document.addEventListener('DOMContentLoaded', () => {
     if(localStorage.getItem('speedToggleState_' + CURRENT_NODE_ID) === 'true') { let cb=document.getElementById('speedToggle'); if(cb){cb.checked=true; toggleSpeedMonitor();} }
     checkXrayStatus();
+    
+    // 🚀 Check if newly added
+    const urlParams = new URLSearchParams(window.location.search);
+    const newlyAdded = urlParams.get('newly_added');
+    if(newlyAdded) {
+        checkNodeId = newlyAdded;
+        let modal = document.getElementById('installPromptModal');
+        if(modal) {
+            modal.classList.remove('hidden');
+            document.getElementById('installForm').action = "/install_node/" + checkNodeId;
+            checkSSH();
+        }
+        window.history.replaceState({}, document.title, window.location.pathname);
+    }
 });
+
+async function checkSSH() {
+    if(!checkNodeId) return;
+    document.getElementById('sshStatusText').innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2 text-blue-500"></i> Checking SSH Connection...';
+    document.getElementById('sshInstructions').classList.add('hidden');
+    document.getElementById('installBtn').disabled = true;
+    document.getElementById('installBtn').classList.add('opacity-50', 'cursor-not-allowed');
+    try {
+        const res = await fetch('/api/check_ssh/' + checkNodeId);
+        const json = await res.json();
+        if(json.status === 'success') {
+            document.getElementById('sshStatusText').innerHTML = '<i class="fa-solid fa-circle-check text-emerald-500 mr-2"></i> SSH Connected Successfully!';
+            document.getElementById('installBtn').disabled = false;
+            document.getElementById('installBtn').classList.remove('opacity-50', 'cursor-not-allowed');
+        } else {
+            document.getElementById('sshStatusText').innerHTML = '<i class="fa-solid fa-circle-xmark text-red-500 mr-2"></i> SSH Connection Failed';
+            document.getElementById('sshInstructions').classList.remove('hidden');
+        }
+    } catch(e) {
+        document.getElementById('sshStatusText').innerHTML = '<i class="fa-solid fa-circle-xmark text-red-500 mr-2"></i> Error checking SSH';
+        document.getElementById('sshInstructions').classList.remove('hidden');
+    }
+}
+
 async function checkXrayStatus() { try { const res=await fetch('/api/check_xray/' + CURRENT_NODE_ID); const json=await res.json(); const b=document.getElementById('xrayStatusBadge'); if(!b)return; if(json.status==='active'){b.className="bg-emerald-100 text-emerald-600 border border-emerald-200 px-3 py-2 rounded-xl font-bold shadow-sm text-[10px] uppercase tracking-widest flex items-center gap-1.5"; b.innerHTML='<i class="fa-solid fa-circle-check"></i> Xray Active';} else {b.className="bg-red-100 text-red-600 border border-red-200 px-3 py-2 rounded-xl font-bold shadow-sm text-[10px] uppercase tracking-widest flex items-center gap-1.5"; b.innerHTML='<i class="fa-solid fa-circle-xmark"></i> Xray Inactive';} } catch(e){} }
 function toggleSpeedMonitor() { const e=document.getElementById('speedToggle').checked; localStorage.setItem('speedToggleState_' + CURRENT_NODE_ID, e); const tags=document.querySelectorAll('.live-speed-tag'); if(e) { tags.forEach(el=>el.classList.remove('hidden')); lastTime=Date.now(); fetchStats(); speedInterval=setInterval(fetchStats,2000); } else { tags.forEach(el=>el.classList.add('hidden')); clearInterval(speedInterval); lastStats={}; } }
 async function fetchStats() { try { const res=await fetch('/api/stats/' + CURRENT_NODE_ID); const json=await res.json(); if(json.status==='ok'){ const now=Date.now(); const td=(now-lastTime)/1000; const cs=json.data; for(const u in cs){ if(lastStats[u]!==undefined){ const bd=cs[u]-lastStats[u]; let s=0; if(bd>0&&td>0)s=bd/td; let str="0 B/s"; if(s>1024*1024)str=(s/(1024*1024)).toFixed(2)+" MB/s"; else if(s>1024)str=(s/1024).toFixed(2)+" KB/s"; else if(s>0)str=s.toFixed(0)+" B/s"; const el=document.getElementById('speed_'+u); if(el){el.innerText=str; el.classList.add('animate-pulse'); setTimeout(()=>el.classList.remove('animate-pulse'),500);} } } lastStats=cs; lastTime=now; } } catch(e){} }
