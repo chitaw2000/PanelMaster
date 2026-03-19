@@ -58,6 +58,10 @@
             <span id="xrayStatusBadge" class="bg-slate-50 text-slate-400 border border-slate-200 px-4 py-2.5 rounded-xl font-bold shadow-sm text-xs flex items-center gap-2"><i class="fa-solid fa-circle-notch fa-spin"></i> Checking</span>
             <div class="bg-white border border-slate-200 rounded-xl px-4 py-2.5 flex items-center gap-2.5 shadow-sm"><label class="relative inline-flex items-center cursor-pointer"><input type="checkbox" id="speedToggle" class="sr-only peer" onchange="toggleSpeedMonitor()"><div class="w-8 h-4 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-500 shadow-inner"></div></label><span class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Live Speed</span></div>
             <form action="/restart_xray/{{ node_id }}" method="POST" class="m-0"><button type="submit" class="bg-white border border-indigo-100 text-indigo-600 px-4 py-2.5 rounded-xl text-xs font-bold hover:bg-indigo-50 transition shadow-sm"><i class="fa-solid fa-rotate-right mr-1.5"></i> Restart</button></form>
+            
+            <!-- 🚀 THE FIX: Fix Logs Button -->
+            <form action="/fix_node_logs/{{ node_id }}" method="POST" class="m-0" onsubmit="return confirm('Fix IP Tracker & Enable Logs for this server?');"><button type="submit" class="bg-indigo-50 border border-indigo-100 text-indigo-600 px-4 py-2.5 rounded-xl text-xs font-bold hover:bg-indigo-100 transition shadow-sm flex items-center justify-center" title="Fix IP Location Tool"><i class="fa-solid fa-wrench mr-1.5"></i> Fix Logs</button></form>
+            
             <button onclick="document.getElementById('replaceIdModal').classList.remove('hidden')" class="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2.5 rounded-xl text-xs font-bold shadow-md transition"><i class="fa-solid fa-wand-magic-sparkles mr-1.5"></i> Restore</button>
             <form action="/delete_node/{{ node_id }}" method="POST" onsubmit="return confirm('Disconnect this server?');" class="m-0"><button class="bg-red-50 hover:bg-red-500 text-red-500 hover:text-white px-4 py-2.5 rounded-xl text-xs font-bold border border-red-100 hover:border-red-500 transition shadow-sm"><i class="fa-solid fa-link-slash mr-1.5"></i> Disconnect</button></form>
             <button onclick="document.getElementById('addUserModal').classList.remove('hidden')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-indigo-200 transition"><i class="fa-solid fa-plus mr-2"></i> Add Key</button>
@@ -84,10 +88,7 @@
             {% elif u.is_active %}<div class="w-10 h-10 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center"><i class="fa-solid fa-bolt"></i></div>
             {% elif u.used_bytes == 0 %}<div class="w-10 h-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center"><i class="fa-solid fa-hourglass-half"></i></div>
             {% else %}<div class="w-10 h-10 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center"><i class="fa-solid fa-user"></i></div>{% endif %}
-            <div><div class="flex items-center gap-2"><p class="font-black text-slate-900 text-sm {% if u.is_blocked %}line-through{% endif %}">{{ u.username }}</p>
-                {% if u.protocol == 'v2' %}<span class="bg-blue-100 text-blue-600 text-[8px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider">VLESS</span>
-                {% else %}<span class="bg-purple-100 text-purple-600 text-[8px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider">SS</span>{% endif %}
-                <span id="speed_{{ u.username }}" class="live-speed-tag hidden bg-indigo-50 border border-indigo-100 text-indigo-600 px-2 py-0.5 rounded text-[10px] font-black">0 KB/s</span></div>
+            <div><div class="flex items-center gap-2"><p class="font-black text-slate-900 text-sm {% if u.is_blocked %}line-through{% endif %}">{{ u.username }}</p><span id="speed_{{ u.username }}" class="live-speed-tag hidden bg-indigo-50 border border-indigo-100 text-indigo-600 px-2 py-0.5 rounded text-[10px] font-black">0 KB/s</span></div>
                 {% if u.is_blocked %}<p class="text-[10px] font-black text-red-500 uppercase mt-0.5">🚫 Blocked</p>
                 {% elif u.is_active %}<p class="text-[10px] font-black text-emerald-500 uppercase mt-0.5">🟢 Online</p>
                 {% elif u.used_bytes == 0 %}<p class="text-[10px] font-black text-amber-500 uppercase mt-0.5">🟡 Pending</p>
@@ -123,11 +124,10 @@
 
 <div id="installPromptModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-50"><div class="bg-white rounded-3xl p-8 w-[400px] shadow-2xl text-center border border-slate-100"><h2 class="text-2xl font-black mb-2">Node Added!</h2><p class="text-slate-500 text-sm font-bold mb-6">Setup Xray-Core automatically.</p><div class="mb-6 p-4 rounded-xl bg-slate-50 border border-slate-200"><p id="sshStatusText" class="font-bold text-slate-600">Checking SSH...</p><div id="sshInstructions" class="hidden mt-4 text-left border-t border-slate-200 pt-4"><p class="text-red-500 font-black text-xs">SSH Not Connected</p><p class="text-slate-600 text-[10px] mt-1">Add Master Server's Public Key to Node.</p><button type="button" onclick="checkSSH()" class="mt-3 w-full bg-slate-800 text-white px-4 py-2 rounded-lg text-xs font-bold">Check Again</button></div></div><form id="installForm" method="POST"><div class="flex gap-3 justify-center"><button type="button" onclick="document.getElementById('installPromptModal').classList.add('hidden')" class="bg-slate-100 px-6 py-3 font-bold text-slate-500 rounded-xl w-full">Later</button><button type="submit" id="installBtn" disabled class="bg-indigo-600 text-white px-8 py-3 rounded-xl font-bold w-full opacity-50">Install Xray</button></div></form></div></div>
 
-<!-- 🚀 THE FIX: IP Tracker Modal Box -->
 <div id="ipModal" class="hidden fixed inset-0 glass-dark flex items-center justify-center p-4 z-[90] transition-all">
     <div class="bg-white rounded-3xl p-8 w-[450px] shadow-2xl border border-slate-100">
-        <h2 class="text-xl font-black mb-2 text-slate-800 flex items-center gap-2"><i class="fa-solid fa-location-dot text-indigo-500"></i> Active Connections</h2>
-        <p class="text-xs font-bold text-slate-500 mb-6 bg-slate-50 p-2 rounded truncate border border-slate-100">User: <span id="ipModalUser" class="text-indigo-600 font-black tracking-wider"></span></p>
+        <h2 class="text-xl font-black mb-2 text-slate-800 flex items-center gap-2"><i class="fa-solid fa-location-dot text-indigo-500"></i> Connection History</h2>
+        <p class="text-xs font-bold text-slate-500 mb-6 bg-slate-50 p-2.5 rounded-lg truncate border border-slate-100">User: <span id="ipModalUser" class="text-indigo-600 font-black tracking-wider ml-1"></span></p>
         <div id="ipModalContent" class="space-y-2 min-h-[150px] max-h-[350px] overflow-y-auto pr-1">
             <!-- Dynamic Content -->
         </div>
@@ -156,6 +156,16 @@ async function checkSSH(){if(!checkNodeId)return;document.getElementById('sshSta
 async function checkXrayStatus(){try{const res=await fetch('/api/check_xray/'+CURRENT_NODE_ID);const json=await res.json();const b=document.getElementById('xrayStatusBadge');if(!b)return;if(json.status==='active'){b.className="bg-emerald-50 text-emerald-600 border border-emerald-100 px-4 py-2.5 rounded-xl font-bold shadow-sm text-xs flex items-center gap-2";b.innerHTML='<i class="fa-solid fa-circle-check"></i> Xray Active';}else{b.className="bg-red-50 text-red-600 border border-red-100 px-4 py-2.5 rounded-xl font-bold shadow-sm text-xs flex items-center gap-2";b.innerHTML='<i class="fa-solid fa-circle-xmark"></i> Xray Inactive';}}catch(e){}}
 function toggleSpeedMonitor(){const e=document.getElementById('speedToggle').checked;localStorage.setItem('speedToggleState_'+CURRENT_NODE_ID,e);const tags=document.querySelectorAll('.live-speed-tag');if(e){tags.forEach(el=>el.classList.remove('hidden'));lastTime=Date.now();fetchStats();speedInterval=setInterval(fetchStats,2000);}else{tags.forEach(el=>el.classList.add('hidden'));clearInterval(speedInterval);lastStats={};}}
 async function fetchStats(){try{const res=await fetch('/api/stats/'+CURRENT_NODE_ID);const json=await res.json();if(json.status==='ok'){const now=Date.now();const td=(now-lastTime)/1000;const cs=json.data;for(const u in cs){if(lastStats[u]!==undefined){const bd=cs[u]-lastStats[u];let s=0;if(bd>0&&td>0)s=bd/td;let str="0 B/s";if(s>1024*1024)str=(s/(1024*1024)).toFixed(2)+" MB/s";else if(s>1024)str=(s/1024).toFixed(2)+" KB/s";else if(s>0)str=s.toFixed(0)+" B/s";const el=document.getElementById('speed_'+u);if(el){el.innerText=str;el.classList.add('text-emerald-500');setTimeout(()=>el.classList.remove('text-emerald-500'),500);}}}lastStats=cs;lastTime=now;}}catch(e){}}
+
+function openHealthModal(nid,ch){document.getElementById('healthNodeId').innerText=nid;let f=document.getElementById('setHealthForm');f.action="/set_node_health/"+nid;f.querySelectorAll('input[name="health"]').forEach(r=>{r.checked=(r.value===ch);});document.getElementById('setHealthModal').classList.remove('hidden');}
+function copyK(id){var t=document.getElementById(id);if(!t.value)return;var d=document.createElement("textarea");document.body.appendChild(d);d.value=t.value;d.select();document.execCommand("copy");document.body.removeChild(d);alert("✅ Copied to clipboard!");}
+function toggleMode(){let m=document.getElementById('creation_mode').value;document.getElementById('mode_single').classList.toggle('hidden',m!=='single');document.getElementById('mode_list').classList.toggle('hidden',m!=='list');document.getElementById('mode_pattern').classList.toggle('hidden',m!=='pattern');}
+function openM(u,g,d){document.getElementById('mu').innerText="Edit: "+u;document.getElementById('mg').value=g;document.getElementById('md').value=d;document.getElementById('ef').action="/edit_user/"+u;document.getElementById('m').classList.remove('hidden');}
+function closeM(){document.getElementById('m').classList.add('hidden');}
+function openRenew(u){document.getElementById('ru').innerText=u;document.getElementById('rf').action="/renew_user/"+u;document.getElementById('rm').classList.remove('hidden');}
+function closeRenew(){document.getElementById('rm').classList.add('hidden');}
+function submitToggle(u){let f=document.getElementById('actionToggleForm');f.action='/toggle_user/'+u;f.submit();}
+function submitDelete(u){let f=document.getElementById('actionDeleteForm');f.action='/delete_user/'+u;f.submit();}
 
 // 🚀 THE FIX: IP Tracker Async Function with History UI
 async function openIpModal(username) {
@@ -193,16 +203,6 @@ async function openIpModal(username) {
         document.getElementById('ipModalContent').innerHTML = '<p class="text-xs font-bold text-red-500 text-center py-6 bg-red-50 rounded-2xl border border-red-100 shadow-sm"><i class="fa-solid fa-wifi text-lg block mb-2"></i> Server Timeout</p>';
     }
 }
-
-function openHealthModal(nid,ch){document.getElementById('healthNodeId').innerText=nid;let f=document.getElementById('setHealthForm');f.action="/set_node_health/"+nid;f.querySelectorAll('input[name="health"]').forEach(r=>{r.checked=(r.value===ch);});document.getElementById('setHealthModal').classList.remove('hidden');}
-function copyK(id){var t=document.getElementById(id);if(!t.value)return;var d=document.createElement("textarea");document.body.appendChild(d);d.value=t.value;d.select();document.execCommand("copy");document.body.removeChild(d);alert("✅ Copied to clipboard!");}
-function toggleMode(){let m=document.getElementById('creation_mode').value;document.getElementById('mode_single').classList.toggle('hidden',m!=='single');document.getElementById('mode_list').classList.toggle('hidden',m!=='list');document.getElementById('mode_pattern').classList.toggle('hidden',m!=='pattern');}
-function openM(u,g,d){document.getElementById('mu').innerText="Edit: "+u;document.getElementById('mg').value=g;document.getElementById('md').value=d;document.getElementById('ef').action="/edit_user/"+u;document.getElementById('m').classList.remove('hidden');}
-function closeM(){document.getElementById('m').classList.add('hidden');}
-function openRenew(u){document.getElementById('ru').innerText=u;document.getElementById('rf').action="/renew_user/"+u;document.getElementById('rm').classList.remove('hidden');}
-function closeRenew(){document.getElementById('rm').classList.add('hidden');}
-function submitToggle(u){let f=document.getElementById('actionToggleForm');f.action='/toggle_user/'+u;f.submit();}
-function submitDelete(u){let f=document.getElementById('actionDeleteForm');f.action='/delete_user/'+u;f.submit();}
 </script>
 </body>
 </html>
