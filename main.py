@@ -9,6 +9,8 @@ from core_auto import load_auto_groups, save_auto_groups
 from core_engine import execute_ssh_bg, get_safe_delete_cmd
 from core_monitor import start_background_monitor
 from core_node import add_keys, toggle_key, delete_key, bulk_delete_keys, renew_key, edit_key, rebalance_auto_node
+# 🚀 THE FIX: IP Tracker ကို သီးသန့် ဖိုင်မှ ချိတ်ဆက်ခေါ်ယူခြင်း
+from core_ip import get_active_ips
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -21,7 +23,7 @@ start_background_monitor()
 
 @app.before_request
 def check_auth():
-    if request.endpoint not in ['login', 'static', 'api_stats'] and not session.get('logged_in'): 
+    if request.endpoint not in ['login', 'static', 'api_stats', 'api_user_ip'] and not session.get('logged_in'): 
         return redirect(url_for('login'))
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -37,7 +39,29 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
-# 🚀 THE FIX: Node Health Update Route
+# 🚀 THE FIX: IP နှင့် Location ကြည့်ရန် API Route အသစ်
+@app.route('/api/user_ip/<username>')
+def api_user_ip(username):
+    with db_lock:
+        db = {}
+        if os.path.exists(USERS_DB):
+            with open(USERS_DB, 'r') as f: db = json.load(f)
+    
+    if username not in db: return jsonify({"status": "error", "msg": "User not found"})
+    
+    uinfo = db[username]
+    node_id = uinfo.get('node')
+    port = uinfo.get('port', '443')
+    proto = uinfo.get('protocol', 'v2')
+    
+    nodes = get_all_servers()
+    node_ip = nodes.get(node_id, {}).get('ip')
+    
+    if not node_ip: return jsonify({"status": "error", "msg": "Node offline"})
+    
+    ips_info = get_active_ips(node_ip, port, proto, username)
+    return jsonify({"status": "success", "data": ips_info})
+
 @app.route('/set_node_health/<node_id>', methods=['POST'])
 def set_node_health(node_id):
     health = request.form.get('health', 'green')
@@ -125,7 +149,6 @@ def dashboard():
         if nid: node_used_bytes[nid] = node_used_bytes.get(nid, 0) + float(uinfo.get('used_bytes', 0))
         if gid: group_used_bytes[gid] = group_used_bytes.get(gid, 0) + float(uinfo.get('used_bytes', 0))
     
-    # 🚀 Get Sick Nodes for Global Alert Center
     all_servers = get_all_servers()
     sick_nodes = {'blue': [], 'yellow': [], 'orange': [], 'red': []}
     sick_count = 0
