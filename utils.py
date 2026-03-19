@@ -48,9 +48,9 @@ def check_live_status(db):
         except: pass
     return active
 
-# 🚀 Custom Node တွင် အလုပ်လုပ်ခဲ့သော မူရင်း Script ဟောင်း အတိအကျ
 def get_safe_delete_cmd(username, protocol, port):
+    # 🚀 UPDATE: yes | နှင့် || true အားပေါင်းစပ်၍ Script မှ Prompt တောင်းပါက ကျော်ဖြတ်ကာ သေချာပေါက် ဖျက်ချမည်
     if protocol == 'v2':
-        return f"/usr/local/bin/v2ray-node-del-vless {username}"
+        return f"yes | /usr/local/bin/v2ray-node-del-vless {username} || true"
     else:
-        return f"/usr/local/bin/v2ray-node-del-out {username} {port} ; ufw delete allow {port}/tcp ; ufw delete allow {port}/udp"
+        return f"yes | /usr/local/bin/v2ray-node-del-out {username} {port} || true ; ufw delete allow {port}/tcp || true ; ufw delete allow {port}/udp || true"
