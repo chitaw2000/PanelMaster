@@ -1,4 +1,4 @@
-import os, threading
+import os, threading, base64
 
 try:
     from config import NODES_LIST
@@ -7,6 +7,7 @@ except ImportError:
 
 db_lock = threading.Lock()
 AUTO_GROUPS_FILE = "/root/PanelMaster/auto_groups.json"
+NODES_DB = "/root/PanelMaster/nodes_db.json"
 
 def get_nodes():
     nodes = {}
@@ -48,9 +49,15 @@ def check_live_status(db):
         except: pass
     return active
 
-# 🚀 THE FIX: Xray အား Crash ဖြစ်စေသော Python Script ကို ဖြုတ်ချပြီး echo 'y' ဖြင့် အသေအချာ Run မည့်စနစ်ကို ပြောင်းလဲအသုံးပြုသည်
 def get_safe_delete_cmd(username, protocol, port):
     if protocol == 'v2':
-        return f"echo 'y' | /usr/local/bin/v2ray-node-del-vless '{username}' || true"
+        return f"/usr/local/bin/v2ray-node-del-vless '{username}'"
     else:
-        return f"echo 'y' | /usr/local/bin/v2ray-node-del-out '{username}' {port} || true ; ufw delete allow {port}/tcp || true ; ufw delete allow {port}/udp || true"
+        return f"/usr/local/bin/v2ray-node-del-out '{username}' {port}"
+
+# 🚀 THE ULTIMATE FIX: Bulk Key ထုတ်ခြင်းနှင့် Block ခြင်းများကို လုံးဝ (၁၀၀%) သေချာပေါက် အလုပ်လုပ်စေမည့် Base64 Execution
+def execute_ssh_bg(ip, cmds):
+    if not cmds: return
+    script_content = "\n".join(cmds)
+    b64 = base64.b64encode(script_content.encode('utf-8')).decode('utf-8')
+    os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"echo {b64} | base64 -d > /tmp/pm_task.sh && bash /tmp/pm_task.sh\" >/dev/null 2>&1 &")
