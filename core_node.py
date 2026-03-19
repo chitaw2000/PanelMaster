@@ -1,17 +1,12 @@
 import json, os, uuid, base64, urllib.parse
 from datetime import datetime, timedelta
-from utils import db_lock, get_all_servers, get_safe_delete_cmd
+from utils import db_lock, get_all_servers, get_safe_delete_cmd, execute_ssh_bg
 from core_auto import find_available_node, load_auto_groups, save_auto_groups
 
 try:
     from config import USERS_DB
 except ImportError:
     USERS_DB = "/root/PanelMaster/users_db.json"
-
-def execute_ssh_bg(ip, cmds):
-    if not cmds: return
-    cmd_str = " ; ".join(cmds)
-    os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"{cmd_str}\" >/dev/null 2>&1 &")
 
 def sanitize_usernames(raw_list):
     clean = []
@@ -21,55 +16,51 @@ def sanitize_usernames(raw_list):
         if u: clean.append(u)
     return clean
 
-# 🚀 THE FIX: Bulk Key များကို Server တစ်ခုပြည့်လျှင် နောက်တစ်ခုသို့ အလိုအလျောက် ခွဲဝေထည့်ပေးမည့် စနစ်
 def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
     usernames = sanitize_usernames(raw_usernames)
-    if not usernames: return False, "❌ No valid usernames provided!"
+    if not usernames: return False, "No valid usernames provided!"
 
+    db = {}
     with db_lock:
-        db = {}
         if os.path.exists(USERS_DB):
             try:
                 with open(USERS_DB, 'r') as f: db = json.load(f)
             except: pass
 
+        if is_auto:
+            target_node, target_ip = find_available_node(group_id, len(usernames), current_db=db)
+            if not target_node: return False, "❌ Error: Limit Reached! No space available in any server for this Auto Node."
+        else:
+            target_node = node_id
+            target_ip = get_all_servers().get(node_id, {}).get('ip')
+            if not target_ip: return False, "❌ Error: Node Server is offline or not found!"
+
+        target_ip = str(target_ip).strip()
+        used_ports = [int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out' and i.get('node') == target_node]
+        max_p = max(used_ports) if used_ports else 10000
+
         existing_ids = [int(u.get('key_id', 0)) for u in db.values() if isinstance(u, dict) and str(u.get('key_id', '')).isdigit()]
         next_id = max(existing_ids) + 1 if existing_ids else 1
 
         exp = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
-        cmds_by_ip = {} # IP အလိုက် Command များကို စုစည်းမည်
+        cmds = []
         
         for u in usernames:
             if u in db: continue
-            
-            if is_auto:
-                # Key တစ်လုံးစာအတွက် နေရာလွတ်ကို ရှာမည် (ပြည့်သွားလျှင် နောက်ဆာဗာသို့ အလိုလိုကူးမည်)
-                target_node, target_ip = find_available_node(group_id, 1, current_db=db)
-                if not target_node: 
-                    if cmds_by_ip: break # ထုတ်လို့ရသလောက် ထုတ်ပြီး ရပ်မည်
-                    else: return False, "❌ Error: Limit Reached! No space available in any server for this Auto Node."
-            else:
-                target_node = node_id
-                target_ip = get_all_servers().get(node_id, {}).get('ip')
-                if not target_ip: return False, "❌ Error: Node Server is offline or not found!"
-
-            target_ip = str(target_ip).strip()
-            used_ports = [int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out' and i.get('node') == target_node]
-            max_p = max(used_ports) if used_ports else 10000
-            
             uid = str(uuid.uuid4()).strip()
             safe_u = urllib.parse.quote(u)
             
             if proto == 'v2':
                 port = "443"
                 k = f"vless://{uid}@{target_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
-                cmd = f"/usr/local/bin/v2ray-node-add-vless {u} {uid}"
+                cmds.append(f"/usr/local/bin/v2ray-node-add-vless {u} {uid}")
             else:
                 max_p += 1; port = str(max_p)
                 raw_ss = f"chacha20-ietf-poly1305:{uid}@{target_ip}:{port}"
                 ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
                 k = f"ss://{ss_conf}#{safe_u}"
-                cmd = f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp"
+                cmds.append(f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port}")
+                cmds.append(f"ufw allow {port}/tcp && ufw allow {port}/udp")
                 
             db[u] = {
                 "node": target_node, "group": group_id, "protocol": proto, "uuid": uid, 
@@ -78,15 +69,11 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 "key": k, "key_id": next_id
             }
             next_id += 1
-            
-            if target_ip not in cmds_by_ip: cmds_by_ip[target_ip] = []
-            cmds_by_ip[target_ip].append(cmd)
         
-        if cmds_by_ip:
+        if cmds:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
-            for ip, cmds in cmds_by_ip.items():
-                cmds.append("systemctl restart xray")
-                execute_ssh_bg(ip, cmds)
+            cmds.append("systemctl restart xray")
+            execute_ssh_bg(target_ip, cmds)
             
     return True, "Success"
 
@@ -215,7 +202,8 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
                 raw_ss = f"chacha20-ietf-poly1305:{uid}@{new_node_ip}:{new_port}"
                 ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
                 k = f"ss://{ss_conf}#{safe_u}"
-                cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port} ; ufw allow {new_port}/tcp && ufw allow {new_port}/udp"
+                cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port}"
+                cmds_by_ip.setdefault(new_node_ip, []).append(f"ufw allow {new_port}/tcp && ufw allow {new_port}/udp")
 
             cmds_by_ip.setdefault(new_node_ip, []).append(cmd_add)
             
