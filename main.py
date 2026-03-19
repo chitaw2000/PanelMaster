@@ -1,28 +1,19 @@
 from flask import Flask, render_template, request, redirect, session, url_for, send_file, jsonify
-import json, os, subprocess, uuid, base64, re, threading, time, urllib.parse
-from datetime import timedelta, datetime
+import json, os, subprocess, re
+from datetime import datetime, timedelta
 
 from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, load_config, save_config
-from utils import get_nodes, get_all_servers, check_live_status, get_safe_delete_cmd, db_lock, AUTO_GROUPS_FILE
-from core_auto import load_auto_groups, save_auto_groups, find_available_node
-# 🚀 UPDATE: Key များကိုထိန်းချုပ်သည့် ဗဟိုစနစ်ကို ချိတ်ဆက်ထားသည်
-from core_keys import start_core_monitor, execute_ssh
+from utils import get_nodes, get_all_servers, check_live_status, db_lock, AUTO_GROUPS_FILE
+from core_auto import load_auto_groups, save_auto_groups
+from core_monitor import start_background_monitor
+from core_actions import generate_keys, toggle_user_status, remove_user, bulk_remove_users, process_rebalance, run_bg
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 BACKUP_DIR = "/root/PanelMaster/backups"
 if not os.path.exists(BACKUP_DIR): os.makedirs(BACKUP_DIR)
 
-# 🚀 Background Monitor ကို Core Keys ထဲမှ ခေါ်ယူအသုံးပြုသည်
-start_core_monitor()
-
-def sanitize_usernames(raw_list):
-    clean = []
-    for u in raw_list:
-        if not u: continue
-        u = str(u).strip().replace(" ", "_").replace("\r", "").replace("\n", "")
-        if u: clean.append(u)
-    return clean
+start_background_monitor()
 
 @app.before_request
 def check_auth():
@@ -160,170 +151,23 @@ def delete_server_from_group(group_id, node_id):
                 with open(USERS_DB, 'r') as f: db = json.load(f)
                 users_to_delete = [u for u, info in db.items() if info.get('node') == node_id]
                 for u in users_to_delete:
-                    info = db[u]
-                    cmd = get_safe_delete_cmd(u, info.get('protocol', 'v2'), info.get('port', '443'))
-                    execute_ssh(node_ip, [cmd])
-                    del db[u]
-                if users_to_delete:
-                    execute_ssh(node_ip, ["systemctl restart xray"])
-                    with open(USERS_DB, 'w') as f: json.dump(db, f)
+                    remove_user(u)
     return redirect(f'/group/{group_id}')
 
 @app.route('/edit_group_limit/<group_id>', methods=['POST'])
 def edit_group_limit(group_id):
     new_limit = int(request.form.get('limit', 30))
-    groups = load_auto_groups()
-    if group_id not in groups: return redirect(url_for('dashboard'))
-
-    groups[group_id]["limit"] = new_limit
-    for nid in groups[group_id]["nodes"]:
-        if isinstance(groups[group_id]["nodes"][nid], dict):
-            groups[group_id]["nodes"][nid]["limit"] = new_limit
-        else:
-            groups[group_id]["nodes"][nid] = {"ip": groups[group_id]["nodes"][nid], "limit": new_limit}
-    save_auto_groups(groups)
-
-    db = {}
-    with db_lock:
-        if os.path.exists(USERS_DB):
-            with open(USERS_DB, 'r') as f: db = json.load(f)
-
-    excess_users = []
-    for nid, ndata in groups[group_id]["nodes"].items():
-        users_on_node = [uname for uname, info in db.items() if info.get('node') == nid]
-        if len(users_on_node) > new_limit:
-            excess_users.extend(users_on_node[new_limit:])
-
-    if not excess_users:
-        return redirect(f'/group/{group_id}')
-
-    cmds_by_ip = {}
-    migrated_count = 0
-    
-    for uname in excess_users:
-        uinfo = db[uname]
-        old_node = uinfo.get('node')
-        ndata = groups[group_id]["nodes"][old_node]
-        old_ip = str(ndata.get("ip")).strip() if isinstance(ndata, dict) else str(ndata).strip()
-        old_port = uinfo.get('port')
-        proto = uinfo.get('protocol')
-        
-        new_node_id, new_node_ip = find_available_node(group_id, 1, current_db=db)
-        if not new_node_id: break
-
-        cmd_del = get_safe_delete_cmd(uname, proto, old_port)
-        if old_ip not in cmds_by_ip: cmds_by_ip[old_ip] = []
-        cmds_by_ip[old_ip].append(cmd_del)
-
-        used_ports = [int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out' and i.get('node') == new_node_id]
-        new_port = str(max(used_ports) + 1) if used_ports else "10001"
-
-        uid = uinfo.get('uuid')
-        safe_u = urllib.parse.quote(uname)
-
-        if proto == 'v2':
-            new_port = "443"
-            k = f"vless://{uid}@{new_node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
-            cmd_add = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
-        else:
-            raw_ss = f"chacha20-ietf-poly1305:{uid}@{new_node_ip}:{new_port}"
-            ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
-            k = f"ss://{ss_conf}#{safe_u}"
-            cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port} ; ufw allow {new_port}/tcp && ufw allow {new_port}/udp"
-
-        if new_node_ip not in cmds_by_ip: cmds_by_ip[new_node_ip] = []
-        cmds_by_ip[new_node_ip].append(cmd_add)
-
-        db[uname]['node'] = new_node_id
-        db[uname]['port'] = new_port
-        db[uname]['key'] = k
-        migrated_count += 1
-
-    with db_lock:
-        with open(USERS_DB, 'w') as f: json.dump(db, f)
-
-    for ip, cmds in cmds_by_ip.items():
-        cmds.append("systemctl restart xray")
-        execute_ssh(ip, cmds)
-
-    if migrated_count < len(excess_users):
-        return f"<script>alert('Limit Updated. Migrated {migrated_count} keys. Could not migrate {len(excess_users) - migrated_count} keys due to lack of space in other servers!'); window.location.href='/group/{group_id}';</script>"
-
+    success, msg = process_rebalance(group_id, new_limit)
+    if not success:
+        return f"<script>alert('{msg}'); window.location.href='/group/{group_id}';</script>"
     return redirect(f'/group/{group_id}')
 
 @app.route('/edit_server_limit/<group_id>/<node_id>', methods=['POST'])
 def edit_server_limit(group_id, node_id):
     new_limit = int(request.form.get('limit', 30))
-    groups = load_auto_groups()
-    if group_id not in groups or node_id not in groups[group_id]["nodes"]:
-        return redirect(f'/group/{group_id}')
-
-    ndata = groups[group_id]["nodes"][node_id]
-    node_ip = str(ndata.get("ip")).strip() if isinstance(ndata, dict) else str(ndata).strip()
-    
-    groups[group_id]["nodes"][node_id] = {"ip": node_ip, "limit": new_limit}
-    save_auto_groups(groups)
-
-    db = {}
-    with db_lock:
-        if os.path.exists(USERS_DB):
-            with open(USERS_DB, 'r') as f: db = json.load(f)
-
-    users_on_node = [uname for uname, info in db.items() if info.get('node') == node_id]
-    
-    if len(users_on_node) > new_limit:
-        excess_count = len(users_on_node) - new_limit
-        excess_users = users_on_node[-excess_count:]
-
-        cmds_by_ip = {}
-        migrated_count = 0
-        
-        for uname in excess_users:
-            uinfo = db[uname]
-            old_port = uinfo.get('port')
-            proto = uinfo.get('protocol')
-            
-            new_node_id, new_node_ip = find_available_node(group_id, 1, current_db=db)
-            if not new_node_id: break
-            
-            cmd_del = get_safe_delete_cmd(uname, proto, old_port)
-            if node_ip not in cmds_by_ip: cmds_by_ip[node_ip] = []
-            cmds_by_ip[node_ip].append(cmd_del)
-            
-            used_ports = [int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out' and i.get('node') == new_node_id]
-            new_port = str(max(used_ports) + 1) if used_ports else "10001"
-            
-            uid = uinfo.get('uuid')
-            safe_u = urllib.parse.quote(uname)
-
-            if proto == 'v2':
-                new_port = "443"
-                k = f"vless://{uid}@{new_node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
-                cmd_add = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
-            else:
-                raw_ss = f"chacha20-ietf-poly1305:{uid}@{new_node_ip}:{new_port}"
-                ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
-                k = f"ss://{ss_conf}#{safe_u}"
-                cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port} ; ufw allow {new_port}/tcp && ufw allow {new_port}/udp"
-
-            if new_node_ip not in cmds_by_ip: cmds_by_ip[new_node_ip] = []
-            cmds_by_ip[new_node_ip].append(cmd_add)
-            
-            db[uname]['node'] = new_node_id
-            db[uname]['port'] = new_port
-            db[uname]['key'] = k
-            migrated_count += 1
-            
-        with db_lock:
-            with open(USERS_DB, 'w') as f: json.dump(db, f)
-
-        for ip, cmds in cmds_by_ip.items():
-            cmds.append("systemctl restart xray")
-            execute_ssh(ip, cmds)
-        
-        if migrated_count < excess_count:
-            return f"<script>alert('Limit Updated. Migrated {migrated_count} keys. Could not migrate {excess_count - migrated_count} keys due to lack of space in other servers!'); window.location.href='/group/{group_id}';</script>"
-
+    success, msg = process_rebalance(group_id, new_limit, specific_node=node_id)
+    if not success:
+        return f"<script>alert('{msg}'); window.location.href='/group/{group_id}';</script>"
     return redirect(f'/group/{group_id}')
 
 @app.route('/add_user_auto', methods=['POST'])
@@ -340,48 +184,13 @@ def add_user_auto():
         qty = int(request.form.get('qty', 1))
         raw_usernames = [f"{base}{start+i}" for i in range(qty)]
 
-    usernames = sanitize_usernames(raw_usernames)
-    if not usernames: return redirect(f'/group/{gid}')
+    gb = request.form.get('total_gb', 0)
+    days = int(request.form.get('expire_days', 30))
+    proto = request.form.get('protocol', 'v2')
 
-    db = {}
-    with db_lock:
-        if os.path.exists(USERS_DB):
-            with open(USERS_DB, 'r') as f: db = json.load(f)
-
-    node_id, node_ip = find_available_node(gid, len(usernames), current_db=db)
-    if not node_id:
-        return "<script>alert('❌ Error: Limit Reached! No space available in any server for this group.'); window.history.back();</script>"
-
-    used_ports = [int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out' and i.get('node') == node_id]
-    max_p = max(used_ports) if used_ports else 10000
-
-    gb = float(request.form.get('total_gb', 0)); days = int(request.form.get('expire_days', 30))
-    exp = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d"); proto = request.form.get('protocol', 'v2')
-    cmds = []
-    
-    for u in usernames:
-        if u in db: continue
-        uid = str(uuid.uuid4()).strip()
-        safe_u = urllib.parse.quote(u)
-        
-        if proto == 'v2':
-            port = "443"
-            k = f"vless://{uid}@{node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
-            cmds.append(f"/usr/local/bin/v2ray-node-add-vless {u} {uid}")
-        else:
-            max_p += 1; port = str(max_p)
-            raw_ss = f"chacha20-ietf-poly1305:{uid}@{node_ip}:{port}"
-            ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
-            k = f"ss://{ss_conf}#{safe_u}"
-            cmds.append(f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
-            
-        db[u] = {"node": node_id, "group": gid, "protocol": proto, "uuid": uid, "port": port, "total_gb": gb, "expire_date": exp, "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False, "key": k}
-    
-    if cmds:
-        with db_lock:
-            with open(USERS_DB, 'w') as f: json.dump(db, f)
-        cmds.append("systemctl restart xray")
-        execute_ssh(node_ip, cmds)
+    success, msg = generate_keys(None, gid, raw_usernames, gb, days, proto, is_auto=True)
+    if not success:
+        return f"<script>alert('{msg}'); window.history.back();</script>"
     return redirect(f'/group/{gid}')
 
 @app.route('/node/<node_id>')
@@ -419,7 +228,7 @@ def delete_node(node_id):
     nodes = get_all_servers()
     if node_id in nodes:
         node_ip = nodes[node_id].get('ip')
-        if node_ip: execute_ssh(node_ip, ["systemctl stop xray"])
+        if node_ip: run_bg(node_ip, "systemctl stop xray")
     
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f: lines = f.readlines()
@@ -447,7 +256,6 @@ def delete_node(node_id):
 def replace_id(current_id):
     old_id = request.form.get('old_id', '').strip(); nodes = get_all_servers()
     if current_id not in nodes or not old_id: return redirect(f'/node/{current_id}')
-    current_ip = str(nodes[current_id].get('ip')).strip()
     
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f: lines = f.readlines()
@@ -472,22 +280,6 @@ def replace_id(current_id):
             save_auto_groups(groups)
             break
             
-    commands = []
-    with db_lock:
-        if os.path.exists(USERS_DB):
-            with open(USERS_DB, 'r') as f: db = json.load(f)
-            for uname, info in db.items():
-                if info.get('node') == old_id:
-                    if 'key' in info and current_ip: info['key'] = re.sub(r'(@)[^:]+(:)', f'\\g<1>{current_ip}\\g<2>', info['key'])
-                    info['last_raw_bytes'] = 0; info['is_online'] = False
-                    if not info.get('is_blocked', False):
-                        uid = info.get('uuid'); port = str(info.get('port', '443'))
-                        if info.get('protocol', 'v2') == 'v2': commands.append(f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}")
-                        else: commands.append(f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
-            with open(USERS_DB, 'w') as f: json.dump(db, f)
-    if commands and current_ip:
-        commands.append("systemctl restart xray")
-        execute_ssh(current_ip, commands)
     return redirect(f'/node/{old_id}')
 
 @app.route('/api/check_ssh/<node_id>')
@@ -530,7 +322,7 @@ def api_stats(node_id):
 def install_node_action(node_id):
     ip = get_all_servers().get(node_id, {}).get('ip')
     if ip and os.path.exists("/root/PanelMaster/install_node.sh"):
-        execute_ssh(ip, ["bash -s < /root/PanelMaster/install_node.sh"])
+        run_bg(ip, "bash -s < /root/PanelMaster/install_node.sh")
     return redirect(request.referrer)
 
 @app.route('/toggle_node/<node_id>', methods=['POST'])
@@ -540,10 +332,10 @@ def toggle_node(node_id):
     ip = get_all_servers().get(node_id, {}).get('ip')
     if node_id in config['disabled_nodes']:
         config['disabled_nodes'].remove(node_id)
-        if ip: execute_ssh(ip, ["systemctl start xray"])
+        if ip: run_bg(ip, "systemctl start xray")
     else:
         config['disabled_nodes'].append(node_id)
-        if ip: execute_ssh(ip, ["systemctl stop xray"])
+        if ip: run_bg(ip, "systemctl stop xray")
     save_config(config); return redirect(request.referrer)
 
 @app.route('/add_user_manual', methods=['POST'])
@@ -564,64 +356,15 @@ def add_user_manual():
         base = request.form.get('base_name', '').strip(); start = int(request.form.get('start_num', 1)); qty = int(request.form.get('qty', 1))
         raw_usernames = [f"{base}{start+i}" for i in range(qty)]
 
-    usernames = sanitize_usernames(raw_usernames)
-    if not usernames: return redirect(f'/node/{nid}')
-
-    gb = float(request.form.get('total_gb', 0)); days = int(request.form.get('expire_days', 30))
-    exp = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d"); proto = request.form.get('protocol', 'v2')
+    gb = request.form.get('total_gb', 0); days = int(request.form.get('expire_days', 30))
+    proto = request.form.get('protocol', 'v2')
     
-    db = {}
-    with db_lock:
-        if os.path.exists(USERS_DB):
-            with open(USERS_DB, 'r') as f: db = json.load(f)
-            
-    used_ports = [int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out' and i.get('node') == nid]
-    max_p = max(used_ports) if used_ports else 10000
-
-    cmds = []
-    for u in usernames:
-        if u in db: continue
-        uid = str(uuid.uuid4()).strip()
-        safe_u = urllib.parse.quote(u)
-        
-        if proto == 'v2':
-            port = "443"
-            k = f"vless://{uid}@{nip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
-            cmds.append(f"/usr/local/bin/v2ray-node-add-vless {u} {uid}")
-        else:
-            max_p += 1; port = str(max_p)
-            raw_ss = f"chacha20-ietf-poly1305:{uid}@{nip}:{port}"
-            ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
-            k = f"ss://{ss_conf}#{safe_u}"
-            cmds.append(f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
-            
-        db[u] = {"node": nid, "group": gid, "protocol": proto, "uuid": uid, "port": port, "total_gb": gb, "expire_date": exp, "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False, "key": k}
-    
-    if cmds:
-        with db_lock:
-            with open(USERS_DB, 'w') as f: json.dump(db, f)
-        cmds.append("systemctl restart xray")
-        execute_ssh(nip, cmds)
+    generate_keys(nid, gid, raw_usernames, gb, days, proto, is_auto=False)
     return redirect(request.referrer)
 
 @app.route('/toggle_user/<username>', methods=['POST'])
 def toggle_user(username):
-    with db_lock:
-        if os.path.exists(USERS_DB):
-            with open(USERS_DB, 'r') as f: db = json.load(f)
-            if username in db:
-                user = db[username]; user['is_blocked'] = not user.get('is_blocked', False)
-                ip = get_all_servers().get(user.get('node'), {}).get('ip')
-                if ip:
-                    if user['is_blocked']: 
-                        user['is_online'] = False
-                        cmd = get_safe_delete_cmd(username, user.get('protocol', 'v2'), user.get('port', '443'))
-                    else:
-                        uid = user['uuid']
-                        if user['protocol'] == 'v2': cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
-                        else: cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
-                    execute_ssh(ip, [cmd, "systemctl restart xray"])
-                with open(USERS_DB, 'w') as f: json.dump(db, f)
+    toggle_user_status(username)
     return redirect(request.referrer)
 
 @app.route('/edit_user/<username>', methods=['POST'])
@@ -650,33 +393,13 @@ def renew_user(username):
 
 @app.route('/delete_user/<username>', methods=['POST'])
 def delete_user(username):
-    with db_lock:
-        if os.path.exists(USERS_DB):
-            with open(USERS_DB, 'r') as f: db = json.load(f)
-            if username in db:
-                info = db[username]; ip = get_all_servers().get(info.get('node'), {}).get('ip')
-                if ip:
-                    cmd = get_safe_delete_cmd(username, info.get('protocol', 'v2'), info.get('port', '443'))
-                    execute_ssh(ip, [cmd, "systemctl restart xray"])
-                del db[username]
-                with open(USERS_DB, 'w') as f: json.dump(db, f)
+    remove_user(username)
     return redirect(request.referrer)
 
 @app.route('/bulk_delete', methods=['POST'])
 def bulk_delete():
     usernames = request.form.getlist('usernames')
-    with db_lock:
-        if os.path.exists(USERS_DB):
-            with open(USERS_DB, 'r') as f: db = json.load(f)
-            nodes = get_all_servers()
-            for uname in usernames:
-                if uname in db:
-                    ip = nodes.get(db[uname].get('node'), {}).get('ip')
-                    if ip:
-                        cmd = get_safe_delete_cmd(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
-                        execute_ssh(ip, [cmd, "systemctl restart xray"])
-                    del db[uname]
-            with open(USERS_DB, 'w') as f: json.dump(db, f)
+    bulk_remove_users(usernames)
     return redirect(request.referrer)
 
 @app.route('/create_node_backup/<node_id>', methods=['POST'])
