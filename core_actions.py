@@ -1,4 +1,4 @@
-import json, os, subprocess, uuid, base64, urllib.parse
+import json, os, uuid, base64, urllib.parse
 from datetime import datetime, timedelta
 from utils import db_lock, get_all_servers, get_safe_delete_cmd
 from core_auto import find_available_node, load_auto_groups, save_auto_groups
@@ -8,8 +8,9 @@ try:
 except ImportError:
     USERS_DB = "/root/PanelMaster/users_db.json"
 
+# 🚀 SSH ကို UI မစောင့်စေဘဲ Background မှ လုံခြုံစွာ Run မည့်စနစ်
 def run_bg(ip, cmd):
-    subprocess.Popen(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\"", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"{cmd}\" >/dev/null 2>&1 &")
 
 def generate_keys(node_id, group_id, raw_usernames, total_gb, expire_days, proto, is_auto=False):
     clean = []
@@ -17,16 +18,13 @@ def generate_keys(node_id, group_id, raw_usernames, total_gb, expire_days, proto
         if not u: continue
         u = str(u).strip().replace(" ", "_").replace("\r", "").replace("\n", "")
         if u: clean.append(u)
-    
     if not clean: return False, "❌ No valid usernames provided!"
 
-    # 🚀 Database ဖွင့်ချိန်တွင် အခြားလုပ်ငန်းစဉ်များ ဝင်မနှောက်ယှက်နိုင်ရန် Lock ကို အစအဆုံး ပိတ်ထားမည်
+    # 🚀 Database ဖွင့်ချိန်တွင် အခြားအရာများမနှောက်ယှက်ရန် အစအဆုံး Lock လုပ်ထားသည်
     with db_lock:
         db = {}
         if os.path.exists(USERS_DB):
-            try:
-                with open(USERS_DB, 'r') as f: db = json.load(f)
-            except: pass
+            with open(USERS_DB, 'r') as f: db = json.load(f)
 
         if is_auto:
             target_node, target_ip = find_available_node(group_id, len(clean), current_db=db)
@@ -58,20 +56,7 @@ def generate_keys(node_id, group_id, raw_usernames, total_gb, expire_days, proto
                 k = f"ss://{ss_conf}#{safe_u}"
                 cmds.append(f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
                 
-            db[u] = {
-                "node": target_node, 
-                "group": group_id, 
-                "protocol": proto, 
-                "uuid": uid, 
-                "port": port, 
-                "total_gb": float(total_gb), 
-                "expire_date": exp, 
-                "used_bytes": 0, 
-                "last_raw_bytes": 0, 
-                "is_blocked": False, 
-                "is_online": False, 
-                "key": k
-            }
+            db[u] = {"node": target_node, "group": group_id, "protocol": proto, "uuid": uid, "port": port, "total_gb": float(total_gb), "expire_date": exp, "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False, "key": k}
         
         if cmds:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
