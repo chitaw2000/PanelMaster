@@ -588,7 +588,9 @@ def install_node_action(node_id):
     ip = get_target_ip(node_id)
     if ip: 
         ip_str = str(ip).strip()
-        os.system(f"nohup ssh -o StrictHostKeyChecking=no root@{ip_str} 'bash -s' < /root/PanelMaster/install_node.sh > /dev/null 2>&1 &")
+        # 🚀 nohup များကို ဖြုတ်လိုက်ပြီး တကယ် Install ပြီးသည်အထိ (၁ မိနစ်၊ ၂ မိနစ်ခန့်) စောင့်ခိုင်းထားမည်
+        cmd = f"ssh -o StrictHostKeyChecking=no root@{ip_str} 'bash -s' < /root/PanelMaster/install_node.sh"
+        subprocess.run(cmd, shell=True)
     return redirect(request.referrer)
 
 @app.route('/restart_xray/<node_id>', methods=['POST'])
