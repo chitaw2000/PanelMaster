@@ -69,7 +69,6 @@ def add_keys(node_id, group_id, usernames, total_gb, expire_days, protocol, is_a
             uid = str(uuid.uuid4())
             exp_date = (datetime.now() + timedelta(days=expire_days)).strftime("%Y-%m-%d")
             
-            # 🚀 အစ်ကို၏ မူရင်း v2ray-node-* Script များကို ပြန်လည်အသုံးပြုခြင်း
             if protocol == 'v2':
                 port = "443"
                 key_str = f"vless://{uid}@{node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{uname}"
@@ -82,11 +81,19 @@ def add_keys(node_id, group_id, usernames, total_gb, expire_days, protocol, is_a
                 commands.append(f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port}")
                 commands.append(f"ufw allow {port}/tcp && ufw allow {port}/udp")
                 
+            # 🚀 THE FIX: Bot မသေစေရန် မူရင်း Database Structure အတိုင်း ပြန်ထည့်ခြင်း
             db[uname] = {
-                "node": node_id, "group": group_id if is_auto else "",
-                "protocol": protocol, "uuid": uid, "port": port,
-                "total_gb": total_gb, "expire_date": exp_date, "used_bytes": 0,
-                "is_blocked": False, "key": key_str
+                "node": node_id, 
+                "group": group_id if is_auto else "",
+                "protocol": protocol, 
+                "uuid": uid, 
+                "port": port,
+                "total_gb": total_gb, 
+                "expire_date": exp_date, 
+                "used_bytes": 0,
+                "last_raw_bytes": 0,  # <-- Bot လိုအပ်သော အသက်သွေးကြော!
+                "is_blocked": False, 
+                "key": key_str
             }
             added_users = True
             
@@ -114,10 +121,8 @@ def toggle_key(username):
             node_ip = get_all_servers().get(user.get('node'), {}).get('ip')
             if node_ip:
                 if user['is_blocked']:
-                    # 🚀 Safe Removal
                     safe_remote_remove_keys(node_ip, [username])
                 else:
-                    # 🚀 Add Back using original scripts
                     uid = user['uuid']
                     if user.get('protocol', 'v2') == 'v2':
                         os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} '/usr/local/bin/v2ray-node-add-vless {username} {uid}'")
@@ -149,7 +154,6 @@ def bulk_delete_keys(usernames):
                 
         with open(USERS_DB, 'w') as f: json.dump(db, f)
         
-    # 🚀 Bulk Removal using Safe Script (One SSH call per node!)
     for ip, users in nodes_to_sync.items():
         safe_remote_remove_keys(ip, users)
 
