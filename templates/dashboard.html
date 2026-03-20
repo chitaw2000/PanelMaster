@@ -371,7 +371,7 @@
                 <button type="button" onclick="checkSSH()" class="mt-4 w-full bg-slate-800 hover:bg-slate-900 text-white px-6 py-3 rounded-xl text-xs font-bold transition shadow-md shadow-slate-200">Check Connection Again</button>
             </div>
         </div>
-        <form id="installForm" action="" method="POST">
+        <form id="installForm" action="" method="POST" onsubmit="return runInstall(event, this);">
             <div class="flex gap-3 justify-center" id="installBtnContainer">
                 <button type="button" id="cancelInstallBtn" onclick="document.getElementById('installPromptModal').classList.add('hidden')" class="px-6 py-3 font-bold text-slate-500 hover:text-slate-800 transition bg-slate-100 hover:bg-slate-200 rounded-xl w-full">I'll do it later</button>
                 <button type="submit" id="installBtn" disabled class="bg-indigo-600 text-white px-8 py-3 rounded-xl font-bold opacity-50 cursor-not-allowed transition w-full shadow-md shadow-indigo-200">Install Xray</button>
@@ -433,40 +433,45 @@ async function checkSSH() {
     }
 }
 
-// 🚀 UI ကို လန်းလန်းလေး အဝိုင်းလည်အောင် ပြောင်းမည့် JavaScript အသစ်
-document.getElementById('installForm').addEventListener('submit', async function(e) {
-    e.preventDefault(); // Page ရပ်မသွားအောင် တားမည်
+// 🚀 Browser Page ရပ်မသွားစေရန် တိုက်ရိုက်ချိတ်ဆက်ပေးမည့် JavaScript အသစ်
+async function runInstall(e, form) {
+    e.preventDefault(); // Browser Page ရပ်သွားခြင်း (Freeze) ကို လုံးဝတားဆီးမည်
     
     let btn = document.getElementById('installBtn');
     let cancelBtn = document.getElementById('cancelInstallBtn');
     let statusText = document.getElementById('sshStatusText');
     
+    // UI ချက်ချင်းပြောင်းမည်
     btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Installing Xray...';
+    btn.disabled = true;
     btn.classList.add('opacity-80', 'cursor-not-allowed');
     btn.classList.remove('hover:bg-indigo-700', 'hover:-translate-y-0.5');
-    cancelBtn.classList.add('hidden'); // Cancel ခလုတ်ကို ဖျောက်ထားမည်
+    
+    if(cancelBtn) cancelBtn.classList.add('hidden');
     
     statusText.innerHTML = '<i class="fa-solid fa-cloud-arrow-down fa-bounce text-indigo-500 mr-2 text-lg"></i> <span class="text-indigo-600 font-black">Please wait...</span> Downloading & installing Xray Core. This takes 1-2 minutes.';
     
     try {
         // နောက်ကွယ်မှ Install လုပ်ရန် လှမ်းပို့မည် (၂ မိနစ်ခန့် ကြာနိုင်သည်)
-        await fetch(this.action, { method: 'POST' });
+        await fetch(form.action, { method: 'POST' });
         
-        // Install ပြီးသွားပါက အစိမ်းရောင် အမှန်ခြစ်ပြမည်
+        // အောင်မြင်သွားလျှင် အစိမ်းရောင်ပြမည်
         statusText.innerHTML = '<i class="fa-solid fa-circle-check text-emerald-500 mr-2 text-lg"></i> Xray Installation Complete!';
         btn.innerHTML = '<i class="fa-solid fa-check mr-2"></i> Done';
-        btn.classList.remove('bg-indigo-600');
+        btn.classList.remove('bg-indigo-600', 'opacity-80', 'cursor-not-allowed');
         btn.classList.add('bg-emerald-500');
         
         // ၁ စက္ကန့် နေရင် Page ကို အလိုလို Refresh လုပ်ပေးမည်
         setTimeout(() => {
             window.location.href = '/'; 
-        }, 1000);
+        }, 1500);
     } catch (err) {
         statusText.innerHTML = '<i class="fa-solid fa-triangle-exclamation text-red-500 mr-2 text-lg"></i> Error occurred during installation.';
         setTimeout(() => { window.location.reload(); }, 2000);
     }
-});
+    
+    return false;
+}
 </script>
 </body>
 </html>
