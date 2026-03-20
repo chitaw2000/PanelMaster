@@ -195,7 +195,7 @@ def dashboard():
         g_used_gb = group_used_bytes.get(gid, 0) / (1024**3)
         group_stats.append({"id": gid, "name": gdata.get("name", gid), "limit": limit, "node_count": len(g_nodes), "total_keys": g_keys, "used_gb": g_used_gb})
 
-    # 🚀 THE FIX: Backup များကို Custom နှင့် Auto ခွဲခြားခြင်း
+    # 🚀 Backup များကို Custom နှင့် Auto ခွဲခြားခြင်း
     raw_backups = get_node_backups()
     custom_backups = {}
     auto_backups = {}
@@ -216,7 +216,6 @@ def dashboard():
         else:
             orphaned_backups[nid] = files
             
-    # အလွတ်ဖြစ်နေသော Auto Group များကို ဖယ်ရှားမည်
     auto_backups = {k: v for k, v in auto_backups.items() if v["nodes"]}
 
     return render_template('dashboard.html', nodes=node_stats, groups=group_stats, config=config, custom_backups=custom_backups, auto_backups=auto_backups, orphaned_backups=orphaned_backups, sick_nodes=sick_nodes, sick_count=sick_count)
