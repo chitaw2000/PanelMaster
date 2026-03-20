@@ -461,7 +461,7 @@ def add_node():
         with open(NODES_LIST, 'a') as f: 
             f.write(f"\n{n_id}|{n_name}|{n_ip}")
             
-    return redirect(f"/node/{n_id}?newly_added=yes")
+    return redirect(f"/node/{n_id}?newly_added={n_id}")
 
 @app.route('/delete_node/<node_id>', methods=['POST'])
 def delete_node(node_id):
