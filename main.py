@@ -184,13 +184,18 @@ def dashboard():
             sick_nodes[h].append({"id": nid, "name": info.get('name', nid), "ip": info.get('ip', '')})
             sick_count += 1
             
-    for nid, info in nodes.items():
+   for nid, info in nodes.items():
         total_count = sum(1 for i in db.values() if i.get('node') == nid and not i.get('group'))
         live_count = sum(1 for uname, i in db.items() if i.get('node') == nid and not i.get('group') and uname in active_users and not i.get('is_blocked'))
         
         ninfo = ndb.get(nid, {})
         limit_tb = float(ninfo.get("limit_tb", 0))
-        used_gb = node_used_bytes.get(nid, 0) / (1024**3)
+        
+        # 🚀 အသစ်ပြင်ဆင်ချက်: ဖျက်လိုက်သော Key များ၏ Traffic ကိုပါ ပေါင်းထည့်မည်
+        historical_bytes = float(ninfo.get("used_bytes", 0))
+        current_active_bytes = float(node_used_bytes.get(nid, 0))
+        used_gb = (current_active_bytes + historical_bytes) / (1024**3)
+        
         limit_gb = limit_tb * 1024
         is_alarm = limit_gb > 0 and used_gb >= limit_gb
         health = ninfo.get("health", "green")
