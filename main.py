@@ -195,7 +195,6 @@ def dashboard():
         g_used_gb = group_used_bytes.get(gid, 0) / (1024**3)
         group_stats.append({"id": gid, "name": gdata.get("name", gid), "limit": limit, "node_count": len(g_nodes), "total_keys": g_keys, "used_gb": g_used_gb})
 
-    # 🚀 Backup များကို Custom နှင့် Auto ခွဲခြားခြင်း
     raw_backups = get_node_backups()
     custom_backups = {}
     auto_backups = {}
@@ -432,10 +431,9 @@ def node_view(node_id):
 @app.route('/add_node', methods=['POST'])
 def add_node():
     n_id = request.form.get('node_id', '').strip().replace(" ", "_")
-    n_name = request.form.get('node_name', '').strip()
     n_ip = request.form.get('node_ip', '').strip()
     
-    if n_id and n_name and n_ip:
+    if n_id and n_ip:
         nodes = get_all_servers()
         if n_id in nodes:
             return f"<script>alert('Error: Node ID [{n_id}] already exists!'); window.history.back();</script>"
@@ -443,8 +441,11 @@ def add_node():
         if not os.path.exists(NODES_LIST):
             with open(NODES_LIST, 'w') as f: 
                 f.write("")
+                
+        # 🚀 THE FIX: မူရင်း Format (ID IP) အတိုင်း အတိအကျ ပြန်သိမ်းမည်
         with open(NODES_LIST, 'a') as f: 
-            f.write(f"\n{n_id}|{n_name}|{n_ip}")
+            f.write(f"\n{n_id} {n_ip}")
+            
     return redirect(f"/node/{n_id}?newly_added=yes")
 
 @app.route('/delete_node/<node_id>', methods=['POST'])
