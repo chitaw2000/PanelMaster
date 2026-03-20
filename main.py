@@ -428,22 +428,22 @@ def node_view(node_id):
     other_nodes = [nid for nid in nodes.keys() if nid != node_id]
     return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, config=config, used_gb=used_gb, limit_tb=limit_tb, is_alarm=is_alarm, health=health)
 
+# 🚀 THE FIX 1: Node Add လုပ်ရာတွင် လိုအပ်သည့် ၂ ချက်တည်းသာ တောင်းပြီး အမှားကင်းကင်း သိမ်းမည်
 @app.route('/add_node', methods=['POST'])
 def add_node():
-    # 🚀 THE FIX: မူရင်း Code အတိုင်း (Name နှင့် IP) ကိုသာ တောင်းယူပြီး မှတ်မည်
     n_name = request.form.get('node_name', '').strip().replace(" ", "_")
     n_ip = request.form.get('node_ip', '').strip()
     
     if n_name and n_ip:
         nodes = get_all_servers()
         if n_name in nodes:
-            return f"<script>alert('Error: Node [{n_name}] already exists!'); window.history.back();</script>"
+            return f"<script>alert('Error: Node Name [{n_name}] already exists!'); window.history.back();</script>"
             
         if not os.path.exists(NODES_LIST):
             with open(NODES_LIST, 'w') as f: 
                 f.write("")
-        
-        # 🚀 အစ်ကို့ရဲ့ `utils.py` က မှားမဖတ်နိုင်အောင် မူရင်း Space ပုံစံဖြင့်သာ သိမ်းမည်
+                
+        # မူရင်း Space ခြားသည့် Format ဖြင့် သိမ်းမည်
         with open(NODES_LIST, 'a') as f: 
             f.write(f"\n{n_name} {n_ip}")
             
@@ -517,11 +517,21 @@ def replace_id(current_id):
             
     return redirect(f'/node/{old_id}')
 
+# 🚀 THE FIX 2: File ထဲမှ IP အမှန်ကို အသေအချာ ရှာဖွေစစ်ဆေးမည်
 @app.route('/api/check_ssh/<node_id>')
 def check_ssh(node_id):
-    ip = get_all_servers().get(node_id, {}).get('ip')
+    ip = None
+    if os.path.exists(NODES_LIST):
+        with open(NODES_LIST, 'r') as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) >= 2 and parts[0] == node_id:
+                    ip = parts[1]
+                    break
+
     if not ip: 
-        return jsonify({"status": "error", "msg": "Node IP not found"})
+        return jsonify({"status": "error", "msg": f"Node IP not found for {node_id}."})
+        
     ip = str(ip).strip()
     try:
         cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'echo ok'"
@@ -535,9 +545,17 @@ def check_ssh(node_id):
 
 @app.route('/api/check_xray/<node_id>')
 def check_xray(node_id):
-    ip = get_all_servers().get(node_id, {}).get('ip')
+    ip = None
+    if os.path.exists(NODES_LIST):
+        with open(NODES_LIST, 'r') as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) >= 2 and parts[0] == node_id:
+                    ip = parts[1]
+                    break
     if not ip: 
         return jsonify({"status": "inactive"})
+        
     ip = str(ip).strip()
     try:
         res = subprocess.run(f"ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no root@{ip} 'systemctl is-active xray'", shell=True, capture_output=True, text=True)
@@ -549,9 +567,17 @@ def check_xray(node_id):
 
 @app.route('/api/stats/<node_id>')
 def api_stats(node_id):
-    ip = get_all_servers().get(node_id, {}).get('ip')
+    ip = None
+    if os.path.exists(NODES_LIST):
+        with open(NODES_LIST, 'r') as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) >= 2 and parts[0] == node_id:
+                    ip = parts[1]
+                    break
     if not ip: 
         return jsonify({"status": "error"})
+        
     ip = str(ip).strip()
     try:
         res = subprocess.run(f"ssh -o ConnectTimeout=2 -o StrictHostKeyChecking=no root@{ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\"", shell=True, capture_output=True, text=True)
@@ -569,16 +595,33 @@ def api_stats(node_id):
     except: 
         return jsonify({"status": "error"})
 
+# 🚀 THE FIX 3: Xray Inactive ပြဿနာကို ဖြေရှင်းရန် Install Command အပြည့်အစုံကို လှမ်း Run မည်
 @app.route('/install_node/<node_id>', methods=['POST'])
 def install_node_action(node_id):
-    ip = get_all_servers().get(node_id, {}).get('ip')
+    ip = None
+    if os.path.exists(NODES_LIST):
+        with open(NODES_LIST, 'r') as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) >= 2 and parts[0] == node_id:
+                    ip = parts[1]
+                    break
     if ip: 
-        execute_ssh_bg(str(ip).strip(), ["bash -s < /root/PanelMaster/install_node.sh"])
+        # ဖိုင်မရှိလည်း ရအောင် Bash Command အရှည်ကြီးကို တိုက်ရိုက်ခိုင်းမည်
+        install_cmd = """apt update && apt install -y unzip jq ufw && bash <(curl -Ls https://raw.githubusercontent.com/XTLS/Xray-install/main/install-release.sh) && mkdir -p /usr/local/etc/xray && echo "ewogICJsb2ciOiB7ICJsb2dsZXZlbCI6ICJ3YXJuaW5nIiB9LAogICJhcGkiOiB7ICJzZXJ2aWNlcyI6IFsiU3RhdHNTZXJ2aWNlIl0sICJ0YWciOiAiYXBpIiB9LAogICJzdGF0cyI6IHt9LAogICJwb2xpY3kiOiB7CiAgICAibGV2ZWxzIjogeyAiMCI6IHsgInN0YXRzVXNlclVwbGluayI6IHRydWUsICJzdGF0c1VzZXJEb3dubGluayI6IHRydWUgfSB9LAogICAgInN5c3RlbSI6IHsgInN0YXRzSW5ib3VuZFVwbGluayI6IHRydWUsICJzdGF0c0luYm91bmREb3dubGluayI6IHRydWUgfQogIH0sCiAgInJvdXRpbmciOiB7CiAgICAicnVsZXMiOiBbIHsgImluYm91bmRUYWciOiBbImFwaSJdLCAib3V0Ym91bmRUYWciOiAiYXBpIiwgInR5cGUiOiAiZmllbGQiIH0gXQogIH0sCiAgImluYm91bmRzIjogWwogICAgewogICAgICAibGlzdGVuIjogIjEyNy4wLjAuMSIsCiAgICAgICJwb3J0IjogMTAwODUsCiAgICAgICJwcm90b2NvbCI6ICJkb2tvZGVtby1kb29yIiwKICAgICAgInNldHRpbmdzIjogeyAiYWRkcmVzcyI6ICIxMjcuMC4wLjEiIH0sCiAgICAgICJ0YWciOiAiYXBpIgogICAgfSwKICAgIHsKICAgICAgInBvcnQiOiA4MDgwLAogICAgICAicHJvdG9jb2wiOiAidmxlc3MiLAogICAgICAic2V0dGluZ3MiOiB7ICJjbGllbnRzIjogW10sICJkZWNyeXB0aW9uIjogIm5vbmUiIH0sCiAgICAgICJzdHJlYW1TZXR0aW5ncyI6IHsgIm5ldHdvcmsiOiAid3MiLCAid3NTZXR0aW5ncyI6IHsgInBhdGgiOiAiL3ZsZXNzIiB9IH0sCiAgICAgICJ0YWciOiAidmxlc3MtaW5ib3VuZCIKICAgIH0KICBdLAogICJvdXRib3VuZHMiOiBbIHsgInByb3RvY29sIjogImZyZWVkb20iLCAidGFnIjogImRpcmVjdCIgfSBdCn0=" | base64 -d > /usr/local/etc/xray/config.json && echo "IyEvYmluL2Jhc2gKanEgLS1hcmcgdXVpZCAiJDIiIC0tYXJnIGVtYWlsICIkMSIgJyguaW5ib3VuZHNbXSB8IHNlbGVjdCgucHJvdG9jb2w9PSJ2bGVzcyIpLnNldHRpbmdzLmNsaWVudHMpIHw9IG1hcChzZWxlY3QoLmVtYWlsICE9ICRlbWFpbCkpIHwgKC5pbmJvdW5kc1tdIHwgc2VsZWN0KC5wcm90b2NvbD09InZsZXNzIikuc2V0dGluZ3MuY2xpZW50cykgKz0gW3siaWQiOiAkdXVpZCwgImxldmVsIjogMCwgImVtYWlsIjogJGVtYWlsfV0nIC91c3IvbG9jYWwvZXRjL3hyYXkvY29uZmlnLmpzb24gPiAvdG1wL2MuanNvbiAmJiBtdiAvdG1wL2MuanNvbiAvdXNyL2xvY2FsL2V0Yy94cmF5L2NvbmZpZy5qc29uCnN5c3RlbWN0bCByZXN0YXJ0IHhyYXkK" | base64 -d > /usr/local/bin/v2ray-node-add-vless && echo "IyEvYmluL2Jhc2gKanEgLS1hcmcgcG9ydCAiJDMiIC0tYXJnIHV1aWQgIiQyIiAtLWFyZyB0YWcgIm91dC0kMSIgJy5pbmJvdW5kcyB8PSBtYXAoc2VsZWN0KC50YWcgIT0gJHRhZykpIHwgLmluYm91bmRzICs9IFt7InBvcnQiOiAoJHBvcnR8dG9udW1iZXIpLCAicHJvdG9jb2wiOiAic2hhZG93c29ja3MiLCAic2V0dGluZ3MiOiB7Im1ldGhvZCI6ICJjaGFjaGEyMC1pZXRmLXBvbHkxMzA1IiwgInBhc3N3b3JkIjogJHV1aWQsICJuZXR3b3JrIjogInRjcCx1ZHAifSwgInRhZyI6ICR0YWd9XScgL3Vzci9sb2NhbC9ldGMveHJheS9jb25maWcuanNvbiA+IC90bXAvYy5qc29uICYmIG12IC90bXAvYy5qc29uIC91c3IvbG9jYWwvZXRjL3hyYXkvY29uZmlnLmpzb24Kc3lzdGVtY3RsIHJlc3RhcnQgeHJheQo=" | base64 -d > /usr/local/bin/v2ray-node-add-out && chmod +x /usr/local/bin/v2ray-node-add-vless /usr/local/bin/v2ray-node-add-out && ufw disable && systemctl restart xray"""
+        execute_ssh_bg(str(ip).strip(), [install_cmd])
     return redirect(request.referrer)
 
 @app.route('/restart_xray/<node_id>', methods=['POST'])
 def restart_xray_action(node_id):
-    ip = get_all_servers().get(node_id, {}).get('ip')
+    ip = None
+    if os.path.exists(NODES_LIST):
+        with open(NODES_LIST, 'r') as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) >= 2 and parts[0] == node_id:
+                    ip = parts[1]
+                    break
     if ip: 
         execute_ssh_bg(str(ip).strip(), ["systemctl restart xray"])
     return redirect(request.referrer)
@@ -588,7 +631,15 @@ def toggle_node(node_id):
     config = load_config()
     if 'disabled_nodes' not in config: 
         config['disabled_nodes'] = []
-    ip = get_all_servers().get(node_id, {}).get('ip')
+    
+    ip = None
+    if os.path.exists(NODES_LIST):
+        with open(NODES_LIST, 'r') as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) >= 2 and parts[0] == node_id:
+                    ip = parts[1]
+                    break
     
     if node_id in config['disabled_nodes']:
         config['disabled_nodes'].remove(node_id)
@@ -603,7 +654,14 @@ def toggle_node(node_id):
 @app.route('/add_user_manual', methods=['POST'])
 def add_user_manual():
     nid = request.form.get('node_id')
-    nip = get_all_servers().get(nid, {}).get('ip')
+    nip = None
+    if os.path.exists(NODES_LIST):
+        with open(NODES_LIST, 'r') as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) >= 2 and parts[0] == nid:
+                    nip = parts[1]
+                    break
     if not nip: 
         return redirect(f'/node/{nid}')
     
@@ -673,8 +731,14 @@ def edit_user_route(username):
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
                     
                     node_id = uinfo.get('node')
-                    nodes = get_all_servers()
-                    node_ip = nodes.get(node_id, {}).get('ip')
+                    node_ip = None
+                    if os.path.exists(NODES_LIST):
+                        with open(NODES_LIST, 'r') as f:
+                            for line in f:
+                                parts = line.strip().split()
+                                if len(parts) >= 2 and parts[0] == node_id:
+                                    node_ip = parts[1]
+                                    break
                     if node_ip:
                         cmd = f"sed -i 's/{old_uuid}/{new_uuid}/g' /usr/local/etc/xray/config.json && systemctl restart xray"
                         execute_ssh_bg(str(node_ip).strip(), [cmd])
@@ -786,3 +850,9 @@ def config_action():
     elif action == 'del' and val:
         if val in config.get(target_list, []):
             config[target_list].remove(val)
+            
+    save_config(config)
+    return redirect(url_for('dashboard'))
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8888)
