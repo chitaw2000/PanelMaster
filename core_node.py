@@ -2,14 +2,28 @@ import json, os, uuid, base64, urllib.parse
 from datetime import datetime, timedelta
 from utils import db_lock, get_all_servers
 from core_auto import find_available_node, load_auto_groups, save_auto_groups
-
-# 🚀 ချိတ်ဆက်မှု Error ကင်းစေရန် အသေချာဆုံး Import
 from core_engine import execute_ssh_bg, get_safe_delete_cmd
 
 try:
-    from config import USERS_DB
+    from config import USERS_DB, NODES_LIST
 except ImportError:
     USERS_DB = "/root/PanelMaster/users_db.json"
+    NODES_LIST = "/root/PanelMaster/nodes_list.txt"
+
+def get_robust_ip(node_id):
+    nodes = get_all_servers()
+    if node_id in nodes and nodes[node_id].get('ip'):
+        return str(nodes[node_id]['ip']).strip()
+    
+    if os.path.exists(NODES_LIST):
+        with open(NODES_LIST, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line: continue
+                if line.startswith(f"{node_id}|") or line.startswith(f"{node_id} "):
+                    parts = line.replace('|', ' ').split()
+                    return parts[-1]
+    return None
 
 def sanitize_usernames(raw_list):
     clean = []
@@ -37,7 +51,6 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
         cmds_by_ip = {}
         max_p_by_node = {} 
         
-        # 🚀 Node တစ်ခုချင်းစီအတွက် အမြင့်ဆုံး Port များကို သီးသန့် ကြိုရှာထားမည်
         for uinfo in db.values():
             if uinfo.get('protocol') == 'out':
                 nid = uinfo.get('node')
@@ -47,17 +60,15 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
         for u in usernames:
             if u in db: continue
             
-            # 🚀 Auto-balancer အစစ်: Key တစ်ခုချင်းစီအတွက် နေရာလွတ်ကို ရှာပြီး အချိုးကျ ခွဲထည့်မည်
             if is_auto:
                 target_node, target_ip = find_available_node(group_id, 1, current_db=db)
                 if not target_node:
-                    # နေရာမလောက်တော့ပါက ရသလောက်ပဲ ထည့်ပြီး ရပ်မည်
                     if not cmds_by_ip:
                         return False, "❌ Error: Limit Reached! No space available in any server for this Auto Node."
                     break 
             else:
                 target_node = node_id
-                target_ip = get_all_servers().get(node_id, {}).get('ip')
+                target_ip = get_robust_ip(node_id)
                 if not target_ip: return False, "❌ Error: Node Server is offline or not found!"
 
             target_ip = str(target_ip).strip()
@@ -72,7 +83,7 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 cmd = f"/usr/local/bin/v2ray-node-add-vless {u} {uid}"
             else:
                 max_p += 1
-                max_p_by_node[target_node] = max_p  # Update port for this specific node
+                max_p_by_node[target_node] = max_p  
                 port = str(max_p)
                 raw_ss = f"chacha20-ietf-poly1305:{uid}@{target_ip}:{port}"
                 ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
@@ -81,7 +92,6 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
             
             cmds_by_ip.setdefault(target_ip, []).append(cmd)
             
-            # 🚀 DB ထဲသို့ ချက်ချင်း update လုပ်ပေးခြင်းဖြင့် Auto Node limit တွက်ချက်မှု မှန်ကန်စေမည်
             db[u] = {
                 "node": target_node, "group": group_id, "protocol": proto, "uuid": uid, 
                 "port": port, "total_gb": float(gb), "expire_date": exp, 
@@ -90,14 +100,14 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
             }
             next_id += 1
         
-        # 🚀 JSON Overwrite (Crash) ဖြစ်ခြင်းကို ကာကွယ်ရန် Command များကို တစ်တန်းတည်း (Sequential) ပေါင်း၍ Run မည်
         if cmds_by_ip:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
             
             for ip, ip_cmds in cmds_by_ip.items():
-                ip_cmds.append("systemctl restart xray")
-                # Command ၅၀ ရှိလျှင် "cmd1 ; cmd2 ; cmd3" ပုံစံဖြင့် တစ်ဆက်တည်း ပေါင်းပေးလိုက်ပါသည်
-                combined_cmd = " ; ".join(ip_cmds)
+                # 🚀 စက္ကန့်ပိုင်းအတွင်း ဆက်တိုက် Run လျှင် ဖိုင်ရေးမှတ်မှု ကျော်သွားတတ်သဖြင့်၊
+                # Command တစ်ခုနှင့်တစ်ခု ကြားတွင် 0.5 စက္ကန့် အသက်ရှူပေါက် (sleep) ထည့်ပေးလိုက်ပါသည်။
+                combined_cmd = " ; sleep 0.5 ; ".join(ip_cmds)
+                combined_cmd += " ; sleep 1 ; systemctl restart xray"
                 execute_ssh_bg(ip, [combined_cmd])
                 
         return True, "Success"
@@ -108,7 +118,7 @@ def toggle_key(username):
             with open(USERS_DB, 'r') as f: db = json.load(f)
             if username in db:
                 user = db[username]; user['is_blocked'] = not user.get('is_blocked', False)
-                ip = get_all_servers().get(user.get('node'), {}).get('ip')
+                ip = get_robust_ip(user.get('node'))
                 if ip:
                     if user['is_blocked']: 
                         user['is_online'] = False
@@ -146,7 +156,8 @@ def delete_key(username):
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
             if username in db:
-                info = db[username]; ip = get_all_servers().get(info.get('node'), {}).get('ip')
+                info = db[username]
+                ip = get_robust_ip(info.get('node'))
                 if ip:
                     cmd = get_safe_delete_cmd(username, info.get('protocol', 'v2'), info.get('port', '443'))
                     combined_cmd = f"{cmd} ; systemctl restart xray"
@@ -158,11 +169,10 @@ def bulk_delete_keys(usernames):
     with db_lock:
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
-            nodes = get_all_servers()
             cmds_by_ip = {}
             for uname in usernames:
                 if uname in db:
-                    ip = nodes.get(db[uname].get('node'), {}).get('ip')
+                    ip = get_robust_ip(db[uname].get('node'))
                     if ip:
                         ip = str(ip).strip()
                         cmd = get_safe_delete_cmd(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
@@ -171,9 +181,9 @@ def bulk_delete_keys(usernames):
             with open(USERS_DB, 'w') as f: json.dump(db, f)
             
             for ip, cmds in cmds_by_ip.items():
-                cmds.append("systemctl restart xray")
-                # 🚀 Delete လုပ်ရာတွင်လည်း Crash မဖြစ်စေရန် ပေါင်း Run မည်
-                combined_cmd = " ; ".join(cmds)
+                # 🚀 Delete တွင်လည်း အသေအချာ မှတ်သားနိုင်ရန် sleep ထည့်ပေးပါသည်
+                combined_cmd = " ; sleep 0.5 ; ".join(cmds)
+                combined_cmd += " ; sleep 1 ; systemctl restart xray"
                 execute_ssh_bg(ip, [combined_cmd])
 
 def rebalance_auto_node(group_id, new_limit, specific_node=None):
@@ -207,7 +217,7 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
         for uname in excess_users:
             uinfo = db[uname]
             old_node = uinfo.get('node')
-            old_ip = str(get_all_servers().get(old_node, {}).get('ip')).strip()
+            old_ip = get_robust_ip(old_node)
             old_port = uinfo.get('port')
             proto = uinfo.get('protocol')
             old_key_id = uinfo.get('key_id') 
@@ -246,9 +256,9 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
         with open(USERS_DB, 'w') as f: json.dump(db, f)
 
         for ip, cmds in cmds_by_ip.items():
-            cmds.append("systemctl restart xray")
-            # 🚀 Crash မဖြစ်စေရန် ပေါင်း Run မည်
-            combined_cmd = " ; ".join(cmds)
+            # 🚀 Migration ပြုလုပ်ရာတွင်လည်း ပေါင်း Run မည်
+            combined_cmd = " ; sleep 0.5 ; ".join(cmds)
+            combined_cmd += " ; sleep 1 ; systemctl restart xray"
             execute_ssh_bg(ip, [combined_cmd])
             
         if migrated_count < len(excess_users):
