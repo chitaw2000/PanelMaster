@@ -128,7 +128,7 @@ def get_node_backups():
                     if nid not in backups: backups[nid] = []
                     path = os.path.join(BACKUP_DIR, f)
                     size = os.path.getsize(path) / 1024
-                    ctime = datetime.fromtimestamp(os.path.getctime(path)).strftime('%Y-%m-%d %H:%M:%S')
+                    ctime = datetime.fromtimestamp(os.path.getctime(path)).strftime('%Y-%m-%d %I:%M %p')
                     backups[nid].append({"filename": f, "size": f"{size:.1f} KB", "time": ctime})
     return backups
 
@@ -195,7 +195,31 @@ def dashboard():
         g_used_gb = group_used_bytes.get(gid, 0) / (1024**3)
         group_stats.append({"id": gid, "name": gdata.get("name", gid), "limit": limit, "node_count": len(g_nodes), "total_keys": g_keys, "used_gb": g_used_gb})
 
-    return render_template('dashboard.html', nodes=node_stats, groups=group_stats, config=config, backups=get_node_backups(), sick_nodes=sick_nodes, sick_count=sick_count)
+    # 🚀 THE FIX: Backup များကို Custom နှင့် Auto ခွဲခြားခြင်း
+    raw_backups = get_node_backups()
+    custom_backups = {}
+    auto_backups = {}
+    orphaned_backups = {}
+    
+    auto_nids_map = {}
+    for gid, gdata in auto_groups.items():
+        auto_backups[gid] = {"name": gdata.get('name', gid), "nodes": {}}
+        for nid in gdata.get('nodes', {}).keys():
+            auto_nids_map[nid] = gid
+            
+    for nid, files in raw_backups.items():
+        if nid in nodes:
+            custom_backups[nid] = {"name": nodes[nid].get('name', nid), "files": files}
+        elif nid in auto_nids_map:
+            gid = auto_nids_map[nid]
+            auto_backups[gid]["nodes"][nid] = files
+        else:
+            orphaned_backups[nid] = files
+            
+    # အလွတ်ဖြစ်နေသော Auto Group များကို ဖယ်ရှားမည်
+    auto_backups = {k: v for k, v in auto_backups.items() if v["nodes"]}
+
+    return render_template('dashboard.html', nodes=node_stats, groups=group_stats, config=config, custom_backups=custom_backups, auto_backups=auto_backups, orphaned_backups=orphaned_backups, sick_nodes=sick_nodes, sick_count=sick_count)
 
 @app.route('/add_auto_group', methods=['POST'])
 def add_auto_group():
@@ -619,7 +643,6 @@ def toggle_user(username):
     toggle_key(username)
     return redirect(request.referrer)
 
-# 🚀 THE FIX: UUID / Password ကို လွယ်ကူစွာ ပြင်ဆင်နိုင်ပြီး Node သို့ Auto-Sync လုပ်ပေးမည့် စနစ်
 @app.route('/edit_user/<username>', methods=['POST'])
 def edit_user_route(username):
     try: gb = float(request.form.get('total_gb') or 0)
@@ -627,10 +650,8 @@ def edit_user_route(username):
     exp = request.form.get('expire_date', '')
     new_uuid = request.form.get('uuid', '').strip()
     
-    # 1. သာမန် Traffic နှင့် Expiry ကို အရင်ပြင်မည်
     edit_key(username, gb, exp)
     
-    # 2. အကယ်၍ UUID သို့မဟုတ် Password အသစ်ပြောင်းခဲ့လျှင် Xray သို့ လှမ်း၍ Auto-Sync လုပ်မည်
     if new_uuid:
         with db_lock:
             db = {}
@@ -642,17 +663,12 @@ def edit_user_route(username):
                 old_uuid = uinfo.get('uuid') or uinfo.get('password')
                 
                 if old_uuid and old_uuid != new_uuid:
-                    # Database ထဲတွင် အသစ်ပြောင်းမည်
                     if 'uuid' in uinfo: uinfo['uuid'] = new_uuid
                     elif 'password' in uinfo: uinfo['password'] = new_uuid
-                    
-                    # App ပေါ်တွင်ပြမည့် URL (actual_key) ထဲမှ ဟောင်းနေသော UUID ကို အသစ်ဖြင့် အစားထိုးမည်
                     if 'key' in uinfo and old_uuid in uinfo['key']:
                         uinfo['key'] = uinfo['key'].replace(old_uuid, new_uuid)
-                        
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
                     
-                    # Node ဆာဗာပေါ်သို့ SSH လှမ်းချိတ်ပြီး Config ထဲမှ UUID အဟောင်းကို အသစ်ဖြင့် Auto-Replace လုပ်မည်
                     node_id = uinfo.get('node')
                     nodes = get_all_servers()
                     node_ip = nodes.get(node_id, {}).get('ip')
