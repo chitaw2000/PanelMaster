@@ -371,10 +371,10 @@
                 <button type="button" onclick="checkSSH()" class="mt-4 w-full bg-slate-800 hover:bg-slate-900 text-white px-6 py-3 rounded-xl text-xs font-bold transition shadow-md shadow-slate-200">Check Connection Again</button>
             </div>
         </div>
-        <form id="installForm" action="" method="POST">
+        <form id="installForm" action="" method="POST" onsubmit="event.preventDefault(); startInstall(this); return false;">
             <div class="flex gap-3 justify-center" id="installBtnContainer">
                 <button type="button" id="cancelInstallBtn" onclick="document.getElementById('installPromptModal').classList.add('hidden')" class="px-6 py-3 font-bold text-slate-500 hover:text-slate-800 transition bg-slate-100 hover:bg-slate-200 rounded-xl w-full">I'll do it later</button>
-                <button type="button" id="installBtn" onclick="startInstall()" disabled class="bg-indigo-600 text-white px-8 py-3 rounded-xl font-bold opacity-50 cursor-not-allowed transition w-full shadow-md shadow-indigo-200">Install Xray</button>
+                <button type="submit" id="installBtn" disabled class="bg-indigo-600 text-white px-8 py-3 rounded-xl font-bold opacity-50 cursor-not-allowed transition w-full shadow-md shadow-indigo-200">Install Xray</button>
             </div>
         </form>
     </div>
@@ -433,14 +433,13 @@ async function checkSSH() {
     }
 }
 
-// 🚀 Browser Loading Bar လုံးဝမတက်ဘဲ၊ Page ထဲမှာတင် အဝိုင်းလည်နေမည့် AJAX စနစ်စစ်စစ်!
-function startInstall() {
+// 🚀 Browser Loading Bar အစား UI တွင်သာ အဝိုင်းလည်စေမည့် AJAX စနစ်
+function startInstall(form) {
     let btn = document.getElementById('installBtn');
     let cancelBtn = document.getElementById('cancelInstallBtn');
     let statusText = document.getElementById('sshStatusText');
-    let formAction = document.getElementById('installForm').action;
     
-    // UI Update - အဝိုင်းလေးလည်ပြီး လန်းလန်းလေး ပြောင်းသွားမည်
+    // UI Update - ခလုတ်ပေါ်တွင် အဝိုင်းလေးလည်မည်
     btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Installing Xray...';
     btn.disabled = true;
     btn.classList.add('opacity-80', 'cursor-not-allowed');
@@ -450,19 +449,19 @@ function startInstall() {
     
     statusText.innerHTML = '<i class="fa-solid fa-cloud-arrow-down fa-bounce text-indigo-500 mr-2 text-lg"></i> <span class="text-indigo-600 font-black">Please wait...</span> Downloading & installing Xray Core. This takes 1-2 minutes.';
     
-    // API သို့ နောက်ကွယ်မှ တိတ်တဆိတ် လှမ်းပို့မည်
-    fetch(formAction, { method: 'POST' })
+    // API သို့ နောက်ကွယ်မှ တိတ်တဆိတ် လှမ်းပို့မည် (Browser ကြီး မရပ်သွားတော့ပါ)
+    fetch(form.action, { method: 'POST' })
     .then(res => {
-        // အောင်မြင်သွားပါက UI တွင် Done ဟုပြမည်
+        // အောင်မြင်သွားလျှင် အစိမ်းရောင်ပြမည်
         statusText.innerHTML = '<i class="fa-solid fa-circle-check text-emerald-500 mr-2 text-lg"></i> Xray Installation Complete!';
         btn.innerHTML = '<i class="fa-solid fa-check mr-2"></i> Done';
         btn.classList.remove('bg-indigo-600', 'opacity-80', 'cursor-not-allowed');
         btn.classList.add('bg-emerald-500');
         
-        // ၁ စက္ကန့် နေရင် Page ကို အလိုလို Refresh လုပ်ပေးမည်
+        // ၁.၅ စက္ကန့် နေရင် Page ကို အလိုလို Refresh လုပ်ပေးမည်
         setTimeout(() => {
             window.location.href = '/'; 
-        }, 1000);
+        }, 1500);
     })
     .catch(err => {
         statusText.innerHTML = '<i class="fa-solid fa-triangle-exclamation text-red-500 mr-2 text-lg"></i> Error occurred during installation.';
