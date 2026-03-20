@@ -441,8 +441,8 @@ def add_node():
         if not os.path.exists(NODES_LIST):
             with open(NODES_LIST, 'w') as f: 
                 f.write("")
-                
-        # 🚀 THE FIX: မူရင်း Format (ID IP) အတိုင်း အတိအကျ ပြန်သိမ်းမည်
+        
+        # 🚀 THE FIX: မူရင်း Format အတိုင်း Space ခြားပြီးသာ မှတ်မည်
         with open(NODES_LIST, 'a') as f: 
             f.write(f"\n{n_id} {n_ip}")
             
@@ -518,17 +518,22 @@ def replace_id(current_id):
 
 @app.route('/api/check_ssh/<node_id>')
 def check_ssh(node_id):
+    # 🚀 API မှ IP ကို အသေအချာ ရှာဖွေမည်
     ip = get_all_servers().get(node_id, {}).get('ip')
     if not ip: 
-        return jsonify({"status": "error"})
+        return jsonify({"status": "error", "msg": "Node IP not found in database."})
+    
     ip = str(ip).strip()
     try:
-        res = subprocess.run(f"ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no root@{ip} 'echo ok'", shell=True, capture_output=True, text=True)
+        # Password လုံးဝ မသုံးဘဲ Master Key ဖြင့်သာ ချိတ်မည်
+        cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o PasswordAuthentication=no root@{ip} 'echo ok'"
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if "ok" in res.stdout: 
             return jsonify({"status": "success"})
-    except: 
-        pass
-    return jsonify({"status": "error"})
+        else:
+            return jsonify({"status": "error", "msg": res.stderr.strip() or "SSH Key Rejected by Node Server."})
+    except Exception as e: 
+        return jsonify({"status": "error", "msg": str(e)})
 
 @app.route('/api/check_xray/<node_id>')
 def check_xray(node_id):
