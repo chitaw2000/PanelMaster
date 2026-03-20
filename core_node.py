@@ -8,6 +8,27 @@ from utils import db_lock, get_all_servers
 from core_auto import load_auto_groups
 from config import USERS_DB
 
+def safe_remote_remove_keys(node_ip, emails_to_remove):
+    """JSON မပျက်စေရန် အထူးကာကွယ်ထားသော Python ဖြင့် Key များကို ဖယ်ရှားမည်"""
+    py_script = f"""
+import json, os
+try:
+    with open('/usr/local/etc/xray/config.json', 'r') as f: cfg = json.load(f)
+    changed = False
+    emails = {json.dumps(emails_to_remove)}
+    for inbound in cfg.get('inbounds', []):
+        if 'settings' in inbound and 'clients' in inbound['settings']:
+            original_len = len(inbound['settings']['clients'])
+            inbound['settings']['clients'] = [c for c in inbound['settings']['clients'] if c.get('email') not in emails]
+            if len(inbound['settings']['clients']) != original_len: changed = True
+    if changed:
+        with open('/usr/local/etc/xray/config.json', 'w') as f: json.dump(cfg, f, indent=4)
+        os.system('systemctl restart xray')
+except Exception as e: pass
+"""
+    encoded = base64.b64encode(py_script.encode('utf-8')).decode('utf-8')
+    os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"echo {encoded} | base64 -d | python3\"")
+
 def add_keys(node_id, group_id, usernames, total_gb, expire_days, protocol, is_auto=False):
     nodes = get_all_servers()
     
@@ -72,7 +93,6 @@ def add_keys(node_id, group_id, usernames, total_gb, expire_days, protocol, is_a
         if added_users:
             if commands:
                 commands.append("systemctl restart xray")
-                # 🚀 Bulk ထုတ်ရာတွင် Error မတက်စေရန် Command များကို တစုတစည်းတည်း Run မည်
                 full_cmd = " ; ".join(commands)
                 subprocess.run(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{node_ip} \"{full_cmd}\"", shell=True, capture_output=True)
             
@@ -93,18 +113,18 @@ def toggle_key(username):
             
             node_ip = get_all_servers().get(user.get('node'), {}).get('ip')
             if node_ip:
-                # 🚀 အစ်ကို၏ မူရင်း Block / Unblock စနစ်ကို အသုံးပြုခြင်း
                 if user['is_blocked']:
-                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"jq '(.inbounds[] | select(.protocol==\\\"vless\\\" or .protocol==\\\"shadowsocks\\\").settings.clients) |= map(select(.email != \\\"{username}\\\"))' /usr/local/etc/xray/config.json > /tmp/c.json && mv /tmp/c.json /usr/local/etc/xray/config.json\"")
+                    # 🚀 Safe Removal
+                    safe_remote_remove_keys(node_ip, [username])
                 else:
+                    # 🚀 Add Back using original scripts
                     uid = user['uuid']
                     if user.get('protocol', 'v2') == 'v2':
                         os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} '/usr/local/bin/v2ray-node-add-vless {username} {uid}'")
                     else:
                         port = user.get('port', '10000')
                         os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} '/usr/local/bin/v2ray-node-add-out {username} {uid} {port}'")
-                
-                os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl restart xray'")
+                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl restart xray'")
                 
             with open(USERS_DB, 'w') as f: json.dump(db, f)
 
@@ -117,21 +137,21 @@ def bulk_delete_keys(usernames):
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
             
-        nodes_to_sync = set()
+        nodes_to_sync = {}
         for u in usernames:
             if u in db:
                 nid = db[u].get('node')
                 node_ip = get_all_servers().get(nid, {}).get('ip')
                 if node_ip:
-                    # 🚀 အစ်ကို၏ မူရင်း jq ဖြင့် ဖျက်သောစနစ်ကို အသုံးပြုခြင်း
-                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"jq '(.inbounds[] | select(.protocol==\\\"vless\\\" or .protocol==\\\"shadowsocks\\\").settings.clients) |= map(select(.email != \\\"{u}\\\"))' /usr/local/etc/xray/config.json > /tmp/c.json && mv /tmp/c.json /usr/local/etc/xray/config.json\"")
-                    nodes_to_sync.add(node_ip)
+                    if node_ip not in nodes_to_sync: nodes_to_sync[node_ip] = []
+                    nodes_to_sync[node_ip].append(u)
                 del db[u]
                 
         with open(USERS_DB, 'w') as f: json.dump(db, f)
         
-    for ip in nodes_to_sync:
-        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'systemctl restart xray'")
+    # 🚀 Bulk Removal using Safe Script (One SSH call per node!)
+    for ip, users in nodes_to_sync.items():
+        safe_remote_remove_keys(ip, users)
 
 def renew_key(username, add_gb, add_days):
     with db_lock:
