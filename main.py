@@ -436,14 +436,17 @@ def node_view(node_id):
             users.append(info)
             node_used_bytes += info['used_bytes']
             
-    ninfo = ndb.get(node_id, {})
+   ninfo = ndb.get(node_id, {})
     limit_tb = float(ninfo.get("limit_tb", 0))
-    used_gb = node_used_bytes / (1024**3)
+    
+    # 🚀 အသစ်ပြင်ဆင်ချက်: Node ထဲဝင်ကြည့်လျှင်လည်း ဖျက်လိုက်သော Traffic ပါ ပေါင်းပြမည်
+    historical_bytes = float(ninfo.get("used_bytes", 0))
+    used_gb = (node_used_bytes + historical_bytes) / (1024**3)
+    
     limit_gb = limit_tb * 1024
     is_alarm = limit_tb > 0 and used_gb >= limit_gb
     health = ninfo.get("health", "green")
             
-    # Syntax Error Fix ပြီးသားပါ
     other_nodes = [nid for nid in nodes.keys() if nid != node_id]
     
     return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, config=config, used_gb=used_gb, limit_tb=limit_tb, is_alarm=is_alarm, health=health)
