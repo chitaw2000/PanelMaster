@@ -28,21 +28,6 @@ except Exception as e: pass
     encoded = base64.b64encode(py_script.encode('utf-8')).decode('utf-8')
     os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"echo {encoded} | base64 -d | python3\"")
 
-def fetch_node_stats(node_ip):
-    try:
-        cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\""
-        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        stats = json.loads(res.stdout).get("stat", [])
-        data = {}
-        for s in stats:
-            p = s.get("name", "").split(">>>")
-            v = s.get("value", 0)
-            if len(p) >= 4 and p[0] == "user": 
-                data[p[1]] = data.get(p[1], 0) + v
-        return data
-    except:
-        return {}
-
 def monitor_loop():
     while True:
         try:
@@ -56,16 +41,8 @@ def monitor_loop():
             db_changed = False
             nodes_to_block = {}
             
-            for nid, ninfo in nodes.items():
-                nip = ninfo.get('ip')
-                if not nip: continue
-                
-                stats = fetch_node_stats(nip)
-                for uname, uinfo in db.items():
-                    if uinfo.get('node') == nid and uname in stats:
-                        uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + stats[uname]
-                        db_changed = True
-                        
+            # 🚀 THE FIX: Monitor က GB မတွက်တော့ပါ။ အစ်ကို့ Bot ကိုပဲ တွက်ခိုင်းပါမည်။ 
+            # Monitor က Limit ပြည့်/မပြည့် စစ်ပြီး အမှန်တကယ် Block လုပ်ခြင်းကိုသာ တာဝန်ယူမည်။
             now = datetime.now().date()
             for uname, uinfo in db.items():
                 used_gb = float(uinfo.get('used_bytes', 0)) / (1024**3)
@@ -80,6 +57,7 @@ def monitor_loop():
                 
                 if is_over_limit or is_expired:
                     if not uinfo.get('is_blocked', False):
+                        # DB တွင် Blocked ဟု သတ်မှတ်မည်
                         uinfo['is_blocked'] = True
                         db_changed = True
                         
@@ -92,14 +70,14 @@ def monitor_loop():
                 with db_lock:
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
                     
-            # 🚀 Monitor မှ အုပ်စုလိုက် Block လုပ်ခြင်း (Safe Script)
+            # 🚀 Xray ထဲမှ အမှန်တကယ် ဖြတ်ချမည် (The Bite!)
             for ip, users in nodes_to_block.items():
                 safe_remote_remove_keys(ip, users)
                     
         except Exception as e:
             print("Monitor Error:", e)
             
-        time.sleep(60)
+        time.sleep(60) # တစ်မိနစ်တစ်ခါ စစ်ဆေးမည်
 
 def start_background_monitor():
     import threading
