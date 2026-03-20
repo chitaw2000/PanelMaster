@@ -38,6 +38,18 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
+# 🚀 Helper Function: IP ကို Database ကမရရင်တောင် File ထဲကနေ အတင်းဆွဲထုတ်မည်
+def get_node_ip_fallback(node_id):
+    ip = get_all_servers().get(node_id, {}).get('ip')
+    if not ip and os.path.exists(NODES_LIST):
+        with open(NODES_LIST, 'r') as f:
+            for line in f:
+                if line.strip().startswith(f"{node_id}|") or line.strip().startswith(f"{node_id} "):
+                    parts = line.strip().replace('|', ' ').split()
+                    if len(parts) >= 2:
+                        return parts[-1]
+    return ip
+
 @app.route('/api/user_ip/<username>')
 def api_user_ip(username):
     with db_lock:
@@ -52,9 +64,7 @@ def api_user_ip(username):
     port = uinfo.get('port', '443')
     proto = uinfo.get('protocol', 'v2')
     
-    nodes = get_all_servers()
-    node_ip = nodes.get(node_id, {}).get('ip')
-    
+    node_ip = get_node_ip_fallback(node_id)
     if not node_ip: return jsonify({"status": "error", "msg": "Node offline"})
     
     ips_info = get_active_ips(node_ip, port, proto, username)
@@ -62,8 +72,7 @@ def api_user_ip(username):
 
 @app.route('/fix_node_logs/<node_id>', methods=['POST'])
 def fix_node_logs(node_id):
-    nodes = get_all_servers()
-    ip = nodes.get(node_id, {}).get('ip')
+    ip = get_node_ip_fallback(node_id)
     if ip:
         cmds = [
             "mkdir -p /var/log/xray",
@@ -431,9 +440,11 @@ def node_view(node_id):
 @app.route('/add_node', methods=['POST'])
 def add_node():
     n_id = request.form.get('node_id', '').strip().replace(" ", "_")
+    # 🚀 THE FIX: Name ကို ပြန်ထည့်ပေးထားပါသည်
+    n_name = request.form.get('node_name', '').strip() 
     n_ip = request.form.get('node_ip', '').strip()
     
-    if n_id and n_ip:
+    if n_id and n_name and n_ip:
         nodes = get_all_servers()
         if n_id in nodes:
             return f"<script>alert('Error: Node ID [{n_id}] already exists!'); window.history.back();</script>"
@@ -441,10 +452,10 @@ def add_node():
         if not os.path.exists(NODES_LIST):
             with open(NODES_LIST, 'w') as f: 
                 f.write("")
-        
-        # 🚀 THE FIX: မူရင်း Format အတိုင်း Space ခြားပြီးသာ မှတ်မည်
+                
+        # 🚀 THE FIX: မူရင်း Format အတိုင်း Pipe ဖြင့် သိမ်းမည်
         with open(NODES_LIST, 'a') as f: 
-            f.write(f"\n{n_id} {n_ip}")
+            f.write(f"\n{n_id}|{n_name}|{n_ip}")
             
     return redirect(f"/node/{n_id}?newly_added=yes")
 
@@ -518,26 +529,29 @@ def replace_id(current_id):
 
 @app.route('/api/check_ssh/<node_id>')
 def check_ssh(node_id):
-    # 🚀 API မှ IP ကို အသေအချာ ရှာဖွေမည်
-    ip = get_all_servers().get(node_id, {}).get('ip')
+    # 🚀 THE FIX: Database ပေါ်မှမရလျှင် Fallback ဖြင့် အတင်းဆွဲထုတ်မည်
+    ip = get_node_ip_fallback(node_id)
     if not ip: 
-        return jsonify({"status": "error", "msg": "Node IP not found in database."})
-    
+        return jsonify({"status": "error", "msg": "Node IP not found in database!"})
+        
     ip = str(ip).strip()
     try:
-        # Password လုံးဝ မသုံးဘဲ Master Key ဖြင့်သာ ချိတ်မည်
+        # 🚀 Password မလိုဘဲ Master Key ဖြင့်သာ အတင်းချိတ်မည် (မချိတ်နိုင်လျှင် Hang မဖြစ်စေရန် PasswordAuth ပိတ်ထားသည်)
         cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o PasswordAuthentication=no root@{ip} 'echo ok'"
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if "ok" in res.stdout: 
             return jsonify({"status": "success"})
         else:
-            return jsonify({"status": "error", "msg": res.stderr.strip() or "SSH Key Rejected by Node Server."})
+            err = res.stderr.strip()
+            if "Permission denied" in err:
+                err = "Master Panel SSH Key is rejected by Node Server (Permission Denied)."
+            return jsonify({"status": "error", "msg": err or "SSH Connection Failed"})
     except Exception as e: 
         return jsonify({"status": "error", "msg": str(e)})
 
 @app.route('/api/check_xray/<node_id>')
 def check_xray(node_id):
-    ip = get_all_servers().get(node_id, {}).get('ip')
+    ip = get_node_ip_fallback(node_id)
     if not ip: 
         return jsonify({"status": "inactive"})
     ip = str(ip).strip()
@@ -551,7 +565,7 @@ def check_xray(node_id):
 
 @app.route('/api/stats/<node_id>')
 def api_stats(node_id):
-    ip = get_all_servers().get(node_id, {}).get('ip')
+    ip = get_node_ip_fallback(node_id)
     if not ip: 
         return jsonify({"status": "error"})
     ip = str(ip).strip()
@@ -573,14 +587,14 @@ def api_stats(node_id):
 
 @app.route('/install_node/<node_id>', methods=['POST'])
 def install_node_action(node_id):
-    ip = get_all_servers().get(node_id, {}).get('ip')
+    ip = get_node_ip_fallback(node_id)
     if ip: 
         execute_ssh_bg(str(ip).strip(), ["bash -s < /root/PanelMaster/install_node.sh"])
     return redirect(request.referrer)
 
 @app.route('/restart_xray/<node_id>', methods=['POST'])
 def restart_xray_action(node_id):
-    ip = get_all_servers().get(node_id, {}).get('ip')
+    ip = get_node_ip_fallback(node_id)
     if ip: 
         execute_ssh_bg(str(ip).strip(), ["systemctl restart xray"])
     return redirect(request.referrer)
@@ -590,7 +604,7 @@ def toggle_node(node_id):
     config = load_config()
     if 'disabled_nodes' not in config: 
         config['disabled_nodes'] = []
-    ip = get_all_servers().get(node_id, {}).get('ip')
+    ip = get_node_ip_fallback(node_id)
     
     if node_id in config['disabled_nodes']:
         config['disabled_nodes'].remove(node_id)
@@ -605,7 +619,7 @@ def toggle_node(node_id):
 @app.route('/add_user_manual', methods=['POST'])
 def add_user_manual():
     nid = request.form.get('node_id')
-    nip = get_all_servers().get(nid, {}).get('ip')
+    nip = get_node_ip_fallback(nid)
     if not nip: 
         return redirect(f'/node/{nid}')
     
@@ -675,8 +689,7 @@ def edit_user_route(username):
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
                     
                     node_id = uinfo.get('node')
-                    nodes = get_all_servers()
-                    node_ip = nodes.get(node_id, {}).get('ip')
+                    node_ip = get_node_ip_fallback(node_id)
                     if node_ip:
                         cmd = f"sed -i 's/{old_uuid}/{new_uuid}/g' /usr/local/etc/xray/config.json && systemctl restart xray"
                         execute_ssh_bg(str(node_ip).strip(), [cmd])
