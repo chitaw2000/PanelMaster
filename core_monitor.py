@@ -7,26 +7,46 @@ from datetime import datetime
 from utils import get_all_servers, db_lock
 from config import USERS_DB
 
-def safe_remote_remove_keys(node_ip, emails_to_remove):
+def safe_remote_remove_keys(node_ip, protocol, emails_to_remove):
     """JSON မပျက်စေရန် အထူးကာကွယ်ထားသော Python ဖြင့် Key များကို ဖယ်ရှားမည်"""
+    target_proto = "vless" if protocol == "v2" else "shadowsocks"
     py_script = f"""
-import json, os
+import json, os, tempfile
 try:
     with open('/usr/local/etc/xray/config.json', 'r') as f: cfg = json.load(f)
     changed = False
     emails = {json.dumps(emails_to_remove)}
     for inbound in cfg.get('inbounds', []):
-        if 'settings' in inbound and 'clients' in inbound['settings']:
-            original_len = len(inbound['settings']['clients'])
-            inbound['settings']['clients'] = [c for c in inbound['settings']['clients'] if c.get('email') not in emails]
-            if len(inbound['settings']['clients']) != original_len: changed = True
+        if inbound.get('protocol') == '{target_proto}':
+            if 'settings' in inbound and 'clients' in inbound['settings']:
+                original_len = len(inbound['settings']['clients'])
+                inbound['settings']['clients'] = [c for c in inbound['settings']['clients'] if c.get('email') not in emails]
+                if len(inbound['settings']['clients']) != original_len: changed = True
     if changed:
-        with open('/usr/local/etc/xray/config.json', 'w') as f: json.dump(cfg, f, indent=4)
+        fd, path = tempfile.mkstemp()
+        with os.fdopen(fd, 'w') as f: json.dump(cfg, f, indent=4)
+        os.system(f'mv {{path}} /usr/local/etc/xray/config.json')
+        os.system('chmod 644 /usr/local/etc/xray/config.json')
         os.system('systemctl restart xray')
 except Exception as e: pass
 """
     encoded = base64.b64encode(py_script.encode('utf-8')).decode('utf-8')
     os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"echo {encoded} | base64 -d | python3\"")
+
+def fetch_node_stats(node_ip):
+    try:
+        cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\""
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        stats = json.loads(res.stdout).get("stat", [])
+        data = {}
+        for s in stats:
+            p = s.get("name", "").split(">>>")
+            v = s.get("value", 0)
+            if len(p) >= 4 and p[0] == "user": 
+                data[p[1]] = data.get(p[1], 0) + v
+        return data
+    except:
+        return {}
 
 def monitor_loop():
     while True:
@@ -41,8 +61,16 @@ def monitor_loop():
             db_changed = False
             nodes_to_block = {}
             
-            # 🚀 THE FIX: Monitor က GB မတွက်တော့ပါ။ အစ်ကို့ Bot ကိုပဲ တွက်ခိုင်းပါမည်။ 
-            # Monitor က Limit ပြည့်/မပြည့် စစ်ပြီး အမှန်တကယ် Block လုပ်ခြင်းကိုသာ တာဝန်ယူမည်။
+            for nid, ninfo in nodes.items():
+                nip = ninfo.get('ip')
+                if not nip: continue
+                
+                stats = fetch_node_stats(nip)
+                for uname, uinfo in db.items():
+                    if uinfo.get('node') == nid and uname in stats:
+                        uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + stats[uname]
+                        db_changed = True
+                        
             now = datetime.now().date()
             for uname, uinfo in db.items():
                 used_gb = float(uinfo.get('used_bytes', 0)) / (1024**3)
@@ -57,27 +85,28 @@ def monitor_loop():
                 
                 if is_over_limit or is_expired:
                     if not uinfo.get('is_blocked', False):
-                        # DB တွင် Blocked ဟု သတ်မှတ်မည်
                         uinfo['is_blocked'] = True
                         db_changed = True
                         
                         node_ip = nodes.get(uinfo.get('node'), {}).get('ip')
+                        proto = uinfo.get('protocol', 'v2')
                         if node_ip:
-                            if node_ip not in nodes_to_block: nodes_to_block[node_ip] = []
-                            nodes_to_block[node_ip].append(uname)
+                            if node_ip not in nodes_to_block: nodes_to_block[node_ip] = {'v2': [], 'out': []}
+                            nodes_to_block[node_ip][proto].append(uname)
                             
             if db_changed:
                 with db_lock:
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
                     
             # 🚀 Xray ထဲမှ အမှန်တကယ် ဖြတ်ချမည် (The Bite!)
-            for ip, users in nodes_to_block.items():
-                safe_remote_remove_keys(ip, users)
+            for ip, protos in nodes_to_block.items():
+                if protos['v2']: safe_remote_remove_keys(ip, 'v2', protos['v2'])
+                if protos['out']: safe_remote_remove_keys(ip, 'out', protos['out'])
                     
         except Exception as e:
             print("Monitor Error:", e)
             
-        time.sleep(60) # တစ်မိနစ်တစ်ခါ စစ်ဆေးမည်
+        time.sleep(60)
 
 def start_background_monitor():
     import threading
