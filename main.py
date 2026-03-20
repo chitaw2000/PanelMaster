@@ -38,7 +38,6 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
-# 🚀 IP ကို မည်သည့် Format မှမရွေး အတိအကျ ဆွဲထုတ်ပေးမည့် Function
 def get_target_ip(node_id):
     nodes = get_all_servers()
     if node_id in nodes and nodes[node_id].get('ip'):
@@ -184,7 +183,7 @@ def dashboard():
             sick_nodes[h].append({"id": nid, "name": info.get('name', nid), "ip": info.get('ip', '')})
             sick_count += 1
             
-   for nid, info in nodes.items():
+    for nid, info in nodes.items():
         total_count = sum(1 for i in db.values() if i.get('node') == nid and not i.get('group'))
         live_count = sum(1 for uname, i in db.items() if i.get('node') == nid and not i.get('group') and uname in active_users and not i.get('is_blocked'))
         
@@ -436,7 +435,7 @@ def node_view(node_id):
             users.append(info)
             node_used_bytes += info['used_bytes']
             
-   ninfo = ndb.get(node_id, {})
+    ninfo = ndb.get(node_id, {})
     limit_tb = float(ninfo.get("limit_tb", 0))
     
     # 🚀 အသစ်ပြင်ဆင်ချက်: Node ထဲဝင်ကြည့်လျှင်လည်း ဖျက်လိုက်သော Traffic ပါ ပေါင်းပြမည်
@@ -466,11 +465,9 @@ def add_node():
             with open(NODES_LIST, 'w') as f: 
                 f.write("")
                 
-        # (ID | Name | IP) ပြည့်စုံစွာ ပြန်သိမ်းမည်
         with open(NODES_LIST, 'a') as f: 
             f.write(f"\n{n_id}|{n_name}|{n_ip}")
             
-    # "yes" Bug ရှင်းလင်းပြီးပါပြီ
     return redirect(f"/node/{n_id}?newly_added={n_id}")
 
 @app.route('/delete_node/<node_id>', methods=['POST'])
@@ -598,7 +595,6 @@ def install_node_action(node_id):
     ip = get_target_ip(node_id)
     if ip: 
         ip_str = str(ip).strip()
-        # 🚀 Xray Install ခလုတ်နှိပ်လျှင် Sync ဖြင့် တိုက်ရိုက် Run ပြီး ပြီးသည်အထိ စောင့်မည်
         cmd = f"ssh -o StrictHostKeyChecking=no root@{ip_str} 'bash -s' < /root/PanelMaster/install_node.sh"
         subprocess.run(cmd, shell=True)
     return redirect(request.referrer)
