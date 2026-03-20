@@ -372,12 +372,12 @@
             </div>
         </div>
         
-        <div id="installFormBox">
-            <div class="flex gap-3 justify-center" id="installBtnContainer">
-                <button type="button" id="cancelInstallBtn" onclick="document.getElementById('installPromptModal').classList.add('hidden')" class="px-6 py-3 font-bold text-slate-500 hover:text-slate-800 transition bg-slate-100 hover:bg-slate-200 rounded-xl w-full">I'll do it later</button>
-                <button type="button" id="installBtn" onclick="doInstall()" disabled class="bg-indigo-600 text-white px-8 py-3 rounded-xl font-bold opacity-50 cursor-not-allowed transition w-full shadow-md shadow-indigo-200">Install Xray</button>
+        <form id="installForm" method="POST" onsubmit="document.getElementById('installBtn').innerHTML = '<i class=\'fa-solid fa-spinner fa-spin mr-2\'></i> Installing Core...'; document.getElementById('installBtn').classList.add('opacity-50', 'cursor-not-allowed');">
+            <div class="flex gap-3 justify-center">
+                <button type="button" onclick="document.getElementById('installPromptModal').classList.add('hidden')" class="px-6 py-3 font-bold text-slate-500 hover:text-slate-800 transition bg-slate-100 hover:bg-slate-200 rounded-xl w-full">I'll do it later</button>
+                <button type="submit" id="installBtn" disabled class="bg-indigo-600 text-white px-8 py-3 rounded-xl font-bold opacity-50 cursor-not-allowed transition w-full shadow-md shadow-indigo-200">Install Xray</button>
             </div>
-        </div>
+        </form>
     </div>
 </div>
 
@@ -401,6 +401,7 @@ document.addEventListener('DOMContentLoaded', () => {
         let modal = document.getElementById('installPromptModal');
         if (modal) {
             modal.classList.remove('hidden');
+            document.getElementById('installForm').action = "/install_node/" + checkNodeId;
             checkSSH();
         }
         window.history.replaceState({}, document.title, window.location.pathname);
@@ -430,44 +431,6 @@ async function checkSSH() {
         document.getElementById('sshStatusText').innerHTML = '<i class="fa-solid fa-circle-xmark text-red-500 mr-2 text-lg"></i> Error: Server Timeout';
         document.getElementById('sshErrorDetail').innerText = "API is offline or taking too long to respond.";
         document.getElementById('sshInstructions').classList.remove('hidden');
-    }
-}
-
-// 🚀 Pure API + JavaScript စနစ် (Browser Loading လုံးဝ မပြတော့ပါ)
-async function doInstall() {
-    let btn = document.getElementById('installBtn');
-    let cancelBtn = document.getElementById('cancelInstallBtn');
-    let statusText = document.getElementById('sshStatusText');
-    
-    // UI Update - ခလုတ်ပေါ်တွင် အဝိုင်းလေးလည်မည်
-    btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Installing Xray...';
-    btn.disabled = true;
-    btn.classList.add('opacity-80', 'cursor-not-allowed');
-    btn.classList.remove('hover:bg-indigo-700', 'hover:-translate-y-0.5');
-    
-    if(cancelBtn) cancelBtn.classList.add('hidden');
-    
-    statusText.innerHTML = '<i class="fa-solid fa-cloud-arrow-down fa-bounce text-indigo-500 mr-2 text-lg"></i> <span class="text-indigo-600 font-black">Please wait...</span> Downloading & installing Xray Core. This takes 1-2 minutes.';
-    
-    let actionUrl = "/install_node/" + checkNodeId;
-
-    try {
-        // API သို့ JSON ပုံစံဖြင့်သာ လှမ်းတောင်းမည်
-        await fetch(actionUrl, { method: 'POST' });
-        
-        // အောင်မြင်သွားလျှင် အစိမ်းရောင်ပြမည်
-        statusText.innerHTML = '<i class="fa-solid fa-circle-check text-emerald-500 mr-2 text-lg"></i> Xray Installation Complete!';
-        btn.innerHTML = '<i class="fa-solid fa-check mr-2"></i> Done';
-        btn.classList.remove('bg-indigo-600', 'opacity-80', 'cursor-not-allowed');
-        btn.classList.add('bg-emerald-500');
-        
-        // ၂ စက္ကန့် နေရင် Page ကို အလိုလို Refresh လုပ်ပေးမည်
-        setTimeout(() => {
-            window.location.href = '/'; 
-        }, 2000);
-    } catch (err) {
-        statusText.innerHTML = '<i class="fa-solid fa-triangle-exclamation text-red-500 mr-2 text-lg"></i> Error occurred during installation.';
-        setTimeout(() => { window.location.reload(); }, 2000);
     }
 }
 </script>
