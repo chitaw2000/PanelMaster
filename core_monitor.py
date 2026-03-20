@@ -1,104 +1,97 @@
-import json
-import os
-import time
-import subprocess
-import base64
-from datetime import datetime
-from utils import get_all_servers, db_lock
-from config import USERS_DB
+import time, json, subprocess, os, threading
+from utils import get_all_servers, db_lock, NODES_DB
+from core_engine import execute_ssh_bg, get_safe_delete_cmd
 
-def remote_block_key(node_ip, protocol, username):
-    """Node ဆီသို့ လှမ်း၍ Xray Config ထဲမှ User အား အပြီးတိုင် ဖြတ်ချမည်"""
-    target_proto = "vless" if protocol == "v2" else "shadowsocks"
-    py_script = f"""
-import json, os
 try:
-    with open('/usr/local/etc/xray/config.json', 'r') as f: cfg = json.load(f)
-    changed = False
-    for inbound in cfg.get('inbounds', []):
-        if inbound.get('protocol') == '{target_proto}':
-            settings = inbound.get('settings', {{}})
-            clients = settings.get('clients', [])
-            original = len(clients)
-            settings['clients'] = [c for c in clients if c.get('email') != '{username}']
-            inbound['settings'] = settings
-            if len(settings['clients']) != original: changed = True
-    if changed:
-        with open('/usr/local/etc/xray/config.json', 'w') as f: json.dump(cfg, f, indent=4)
-        os.system('systemctl restart xray')
-except Exception as e: pass
-"""
-    encoded = base64.b64encode(py_script.encode('utf-8')).decode('utf-8')
-    subprocess.run(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"echo {encoded} | base64 -d | python3\"", shell=True, capture_output=True)
+    from config import USERS_DB
+except ImportError:
+    USERS_DB = "/root/PanelMaster/users_db.json"
 
-def fetch_node_stats(node_ip):
-    """Node ဆီမှ အသုံးပြုထားသော Data များကို ဆွဲယူမည်"""
-    try:
-        cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\""
-        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        stats = json.loads(res.stdout).get("stat", [])
-        data = {}
-        for s in stats:
-            p = s.get("name", "").split(">>>")
-            v = s.get("value", 0)
-            if len(p) >= 4 and p[0] == "user": 
-                data[p[1]] = data.get(p[1], 0) + v
-        return data
-    except:
-        return {}
-
-def monitor_loop():
+def background_traffic_monitor():
     while True:
+        time.sleep(20)
         try:
             nodes = get_all_servers()
+            if not nodes: continue
+            
+            gathered_stats = {}
+            for node_id, info in nodes.items():
+                node_ip = info.get('ip')
+                if not node_ip: continue
+                try:
+                    cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\""
+                    res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                    user_bytes = {}
+                    if res.stdout.strip():
+                        stats = json.loads(res.stdout).get("stat", [])
+                        for s in stats:
+                            parts = s.get("name", "").split(">>>")
+                            val = s.get("value", 0)
+                            if len(parts) >= 4:
+                                if parts[0] == "user": user_bytes[parts[1]] = user_bytes.get(parts[1], 0) + val
+                                elif parts[0] == "inbound" and parts[1].startswith("out-"): user_bytes[parts[1][4:]] = user_bytes.get(parts[1][4:], 0) + val
+                    gathered_stats[node_id] = user_bytes
+                except: pass
+
+            if not gathered_stats: continue
+
+            users_to_block_by_ip = {}
+            
             with db_lock:
-                if not os.path.exists(USERS_DB):
-                    time.sleep(60)
-                    continue
+                if not os.path.exists(USERS_DB): continue
                 with open(USERS_DB, 'r') as f: db = json.load(f)
                 
-            db_changed = False
-            
-            for nid, ninfo in nodes.items():
-                nip = ninfo.get('ip')
-                if not nip: continue
+                ndb = {}
+                if os.path.exists(NODES_DB):
+                    try:
+                        with open(NODES_DB, 'r') as f: ndb = json.load(f)
+                    except: pass
                 
-                stats = fetch_node_stats(nip)
+                db_changed = False
+                ndb_changed = False
+                
                 for uname, uinfo in db.items():
-                    if uinfo.get('node') == nid and uname in stats:
-                        uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + stats[uname]
+                    node_id = uinfo.get("node")
+                    if node_id in gathered_stats:
+                        user_bytes = gathered_stats[node_id]
+                        val = user_bytes.get(uname, uinfo.get('last_raw_bytes', 0))
+                        last_raw = uinfo.get('last_raw_bytes', 0)
+                        
+                        delta = val - last_raw if val >= last_raw else val
+                        
+                        if val > last_raw: uinfo['is_online'] = True
+                        else: uinfo['is_online'] = False
+                            
+                        uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + delta
+                        uinfo['last_raw_bytes'] = val
                         db_changed = True
                         
-            now = datetime.now().date()
-            for uname, uinfo in db.items():
-                used_gb = float(uinfo.get('used_bytes', 0)) / (1024**3)
-                total_gb = float(uinfo.get('total_gb', 0))
-                try:
-                    exp_date = datetime.strptime(uinfo.get('expire_date', '2099-01-01'), "%Y-%m-%d").date()
-                    is_expired = now > exp_date
-                except:
-                    is_expired = False
-                    
-                is_over_limit = (total_gb > 0 and used_gb >= total_gb)
+                        if node_id not in ndb: ndb[node_id] = {"used_bytes": 0, "limit_tb": 0}
+                        ndb[node_id]["used_bytes"] += delta
+                        ndb_changed = True
+                        
+                        # 🚀 GB ပြည့်ပါက သေချာပေါက် ပိတ်မည်
+                        tot_gb = float(uinfo.get('total_gb', 0))
+                        if tot_gb > 0:
+                            max_bytes = tot_gb * (1024**3)
+                            if float(uinfo['used_bytes']) >= max_bytes and not uinfo.get('is_blocked', False):
+                                uinfo['is_blocked'] = True
+                                uinfo['is_online'] = False
+                                node_ip = nodes.get(node_id, {}).get('ip')
+                                if node_ip:
+                                    cmd_str = get_safe_delete_cmd(uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443'))
+                                    users_to_block_by_ip.setdefault(node_ip, []).append(cmd_str)
                 
-                if is_over_limit or is_expired:
-                    if not uinfo.get('is_blocked', False):
-                        uinfo['is_blocked'] = True
-                        db_changed = True
-                        node_ip = nodes.get(uinfo.get('node'), {}).get('ip')
-                        if node_ip:
-                            remote_block_key(node_ip, uinfo.get('protocol', 'v2'), uname)
-                            
-            if db_changed:
-                with db_lock:
+                if db_changed:
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
-                    
-        except Exception as e:
-            print("Monitor Error:", e)
-            
-        time.sleep(60)
+                if ndb_changed:
+                    with open(NODES_DB, 'w') as f: json.dump(ndb, f)
+
+            for node_ip, cmds in users_to_block_by_ip.items():
+                cmds.append("systemctl restart xray")
+                execute_ssh_bg(node_ip, cmds)
+                
+        except: pass
 
 def start_background_monitor():
-    import threading
-    t = threading.Thread(target=monitor_loop, daemon=True)
-    t.start()
+    threading.Thread(target=background_traffic_monitor, daemon=True).start()
