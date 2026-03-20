@@ -587,7 +587,8 @@ def api_stats(node_id):
 def install_node_action(node_id):
     ip = get_target_ip(node_id)
     if ip: 
-        execute_ssh_bg(ip, ["bash -s < /root/PanelMaster/install_node.sh"])
+        ip_str = str(ip).strip()
+        os.system(f"nohup ssh -o StrictHostKeyChecking=no root@{ip_str} 'bash -s' < /root/PanelMaster/install_node.sh > /dev/null 2>&1 &")
     return redirect(request.referrer)
 
 @app.route('/restart_xray/<node_id>', methods=['POST'])
