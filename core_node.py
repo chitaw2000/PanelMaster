@@ -5,11 +5,11 @@ import subprocess
 import base64
 from datetime import datetime, timedelta
 from utils import db_lock, get_all_servers
-from core_auto import load_auto_groups  # 🚀 THE FIX: ဖိုင်ချိတ်ဆက်မှု အမှန်သို့ ပြောင်းထားသည်
+from core_auto import load_auto_groups
 from config import USERS_DB
 
 def sync_xray_config_remote(node_ip, action, protocol, clients_data):
-    """Node ဆီသို့ Python Script လှမ်းပို့၍ JSON Config အား အတိအကျ ပြင်ဆင်မည်"""
+    """Node ဆီသို့ လှမ်း၍ JSON Config အား ပြင်ဆင်ပြီး ၎င်း၏ Port အမှန်ကို ပြန်ယူမည်"""
     target_proto = "vless" if protocol == "v2" else "shadowsocks"
     
     py_script = f"""
@@ -19,9 +19,12 @@ try:
     action = '{action}'
     clients_data = {json.dumps(clients_data)}
     changed = False
+    inbound_port = 443
     
     for inbound in cfg.get('inbounds', []):
         if inbound.get('protocol') == '{target_proto}':
+            inbound_port = inbound.get('port', 443) # 🚀 Port အမှန်ကို ဆွဲယူမည်
+            
             if 'settings' not in inbound: inbound['settings'] = {{}}
             if 'clients' not in inbound['settings']: inbound['settings']['clients'] = []
             
@@ -42,26 +45,32 @@ try:
     if changed:
         with open('/usr/local/etc/xray/config.json', 'w') as f: json.dump(cfg, f, indent=4)
         os.system('systemctl restart xray')
-    print('SUCCESS')
-except Exception as e: print('ERROR:', str(e))
+        
+    print(json.dumps({{"status": "SUCCESS", "port": inbound_port}}))
+except Exception as e: 
+    print(json.dumps({{"status": "ERROR", "msg": str(e)}}))
 """
-    # Base64 ဖြင့် ပြောင်း၍ SSH မှတဆင့် Python ကို တိုက်ရိုက် Run မည် (Quoting Error လုံးဝမတက်ပါ)
     encoded = base64.b64encode(py_script.encode('utf-8')).decode('utf-8')
     cmd = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"echo {encoded} | base64 -d | python3\""
     try:
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        return "SUCCESS" in res.stdout
-    except: return False
+        # Print ထုတ်လိုက်သော JSON ကို သေချာစွာ ရှာဖွေမည်
+        for line in res.stdout.splitlines():
+            line = line.strip()
+            if line.startswith('{') and '"status"' in line:
+                data = json.loads(line)
+                if data.get("status") == "SUCCESS":
+                    return True, data.get("port", 443)
+        return False, 443
+    except: return False, 443
 
 def add_keys(node_id, group_id, usernames, total_gb, expire_days, protocol, is_auto=False):
     nodes = get_all_servers()
     
     if is_auto:
-        # 🚀 THE FIX: Group Data ဆွဲယူပုံ အမှန်
         groups = load_auto_groups()
         target_nodes = groups.get(group_id, {}).get("nodes", {})
         if not target_nodes: return False, "No active servers in group"
-        # ရိုးရှင်းသော အလှည့်ကျစနစ် (Round-robin) ဖြင့် Node ရွေးမည်
         node_id = list(target_nodes.keys())[0] 
     else:
         if node_id not in nodes: return False, "Node not found"
@@ -77,41 +86,49 @@ def add_keys(node_id, group_id, usernames, total_gb, expire_days, protocol, is_a
             except: pass
 
         new_clients = []
+        temp_users = []
+        
         for uname in usernames:
             uname = uname.strip()
             if not uname or uname in db: continue
             
             uid = str(uuid.uuid4())
-            exp_date = (datetime.now() + timedelta(days=expire_days)).strftime("%Y-%m-%d")
-            
-            # Protocol အလိုက် Object ဆောက်မည်
-            if protocol == 'v2':
-                c_obj = {"id": uid, "email": uname, "flow": ""}
-                b64_uid = base64.b64encode(uid.encode()).decode()
-                actual_key = f"vless://{uid}@{node_ip}:443?encryption=none&security=none&type=ws&host={node_ip}&path=%2F#PanelMaster-{uname}"
-            else:
-                c_obj = {"password": uid, "email": uname}
-                b64_cred = base64.b64encode(f"chacha20-ietf-poly1305:{uid}".encode()).decode()
-                actual_key = f"ss://{b64_cred}@{node_ip}:443#PanelMaster-{uname}"
+            if protocol == 'v2': c_obj = {"id": uid, "email": uname, "flow": ""}
+            else: c_obj = {"password": uid, "email": uname}
                 
             new_clients.append(c_obj)
+            exp_date = (datetime.now() + timedelta(days=expire_days)).strftime("%Y-%m-%d")
             
-            db[uname] = {
-                "uuid": uid,
-                "node": node_id,
-                "group": group_id if is_auto else "",
-                "total_gb": total_gb,
-                "used_bytes": 0,
-                "expire_date": exp_date,
-                "is_blocked": False,
-                "protocol": protocol,
-                "port": "443",
-                "key": actual_key
-            }
+            temp_users.append({"uname": uname, "uid": uid, "exp_date": exp_date})
             
         if new_clients:
-            # ဆာဗာသို့ တိုက်ရိုက် Bulk လှမ်းထည့်မည်
-            if sync_xray_config_remote(node_ip, 'add', protocol, new_clients):
+            # 🚀 Xray Config သို့ လှမ်းထည့်ပြီး Port အမှန်ကို ပြန်တောင်းမည်
+            success, actual_port = sync_xray_config_remote(node_ip, 'add', protocol, new_clients)
+            
+            if success:
+                for u in temp_users:
+                    uname, uid, exp_date = u['uname'], u['uid'], u['exp_date']
+                    
+                    # 🚀 Port အမှန်ဖြင့် Key Link များကို ပြန်လည်တည်ဆောက်မည်
+                    if protocol == 'v2':
+                        actual_key = f"vless://{uid}@{node_ip}:{actual_port}?encryption=none&security=none&type=ws&host={node_ip}&path=%2F#PanelMaster-{uname}"
+                    else:
+                        b64_cred = base64.b64encode(f"chacha20-ietf-poly1305:{uid}".encode()).decode()
+                        actual_key = f"ss://{b64_cred}@{node_ip}:{actual_port}#PanelMaster-{uname}"
+
+                    db[uname] = {
+                        "uuid": uid,
+                        "node": node_id,
+                        "group": group_id if is_auto else "",
+                        "total_gb": total_gb,
+                        "used_bytes": 0,
+                        "expire_date": exp_date,
+                        "is_blocked": False,
+                        "protocol": protocol,
+                        "port": str(actual_port), # 🚀 DB တွင် Port ကို သေချာသိမ်းထားမည်
+                        "key": actual_key
+                    }
+                    
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
                 return True, "Keys generated successfully"
             else:
@@ -134,7 +151,6 @@ def toggle_key(username):
             
             node_ip = get_all_servers().get(node_id, {}).get('ip')
             
-            # Block ထားပါက ဖြုတ်မည် (Add Back), မ Block ရသေးပါက ပိတ်မည် (Remove)
             if is_currently_blocked:
                 uinfo['is_blocked'] = False
                 if node_ip:
@@ -156,7 +172,6 @@ def bulk_delete_keys(usernames):
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
             
-        # Node အလိုက် ခွဲထုတ်၍ တပြိုင်နက် ဖျက်မည်
         nodes_to_sync = {}
         for u in usernames:
             if u in db:
@@ -189,11 +204,9 @@ def renew_key(username, add_gb, add_days):
             except:
                 curr_exp = datetime.now()
             
-            # Expire ဖြစ်နေခဲ့လျှင် ယနေ့မှစ၍ ပေါင်းမည်၊ မဖြစ်သေးလျှင် လက်ရှိရက်ပေါ်ပေါင်းမည်
             if curr_exp < datetime.now(): curr_exp = datetime.now()
             uinfo['expire_date'] = (curr_exp + timedelta(days=int(add_days))).strftime("%Y-%m-%d")
             
-            # Block ထားပါက Auto ပြန်ဖွင့်ပေးမည်
             if uinfo.get('is_blocked'):
                 uinfo['is_blocked'] = False
                 node_ip = get_all_servers().get(uinfo.get('node'), {}).get('ip')
@@ -215,7 +228,6 @@ def edit_key(username, gb, exp):
             if gb is not None: db[username]['total_gb'] = float(gb)
             if exp: db[username]['expire_date'] = exp
             
-            # Update လုပ်ပြီးနောက် ပိတ်ထားသင့်/ဖွင့်ထားသင့် စစ်ဆေးမည်
             used = float(db[username].get('used_bytes', 0)) / (1024**3)
             tot = float(db[username].get('total_gb', 0))
             is_over = tot > 0 and used >= tot
