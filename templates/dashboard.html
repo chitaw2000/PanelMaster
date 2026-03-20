@@ -311,7 +311,6 @@
         <form action="/add_node" method="POST">
             <div class="space-y-4 mb-8">
                 <input type="text" name="node_id" placeholder="Node ID (e.g. sg_01)" class="w-full bg-slate-50 border border-slate-200 p-3.5 rounded-xl font-mono text-sm focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition" required>
-                <input type="text" name="node_name" placeholder="Display Name" class="w-full bg-slate-50 border border-slate-200 p-3.5 rounded-xl text-sm font-bold text-slate-800 focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition" required>
                 <input type="text" name="node_ip" placeholder="Server IP Address" class="w-full bg-slate-50 border border-slate-200 p-3.5 rounded-xl font-mono text-sm focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition" required>
             </div>
             <div class="flex justify-end gap-3">
@@ -392,7 +391,6 @@ function switchTab(tab) {
 }
 function openTbModal(nodeId, currentLimit) { document.getElementById('tbNodeId').innerText = nodeId; document.getElementById('tbInput').value = currentLimit; document.getElementById('setTbForm').action = "/set_node_traffic/" + nodeId; document.getElementById('setTbModal').classList.remove('hidden'); }
 
-// 🚀 THE FIX: Check SSH Script ပြန်ပါလာပါပြီ
 let checkNodeId = '';
 document.addEventListener('DOMContentLoaded', () => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -424,10 +422,12 @@ async function checkSSH() {
             document.getElementById('installBtn').classList.remove('opacity-50', 'cursor-not-allowed');
             document.getElementById('installBtn').classList.add('hover:bg-indigo-700', 'hover:-translate-y-0.5');
         } else {
-            throw new Error();
+            // 🚀 Error အတိအကျပြမည်
+            document.getElementById('sshStatusText').innerHTML = '<i class="fa-solid fa-circle-xmark text-red-500 mr-2 text-lg"></i> Error: ' + (json.msg || "Connection Failed");
+            document.getElementById('sshInstructions').classList.remove('hidden');
         }
     } catch(e) {
-        document.getElementById('sshStatusText').innerHTML = '<i class="fa-solid fa-circle-xmark text-red-500 mr-2 text-lg"></i> SSH Connection Failed';
+        document.getElementById('sshStatusText').innerHTML = '<i class="fa-solid fa-circle-xmark text-red-500 mr-2 text-lg"></i> Error: Server Timeout or API Offline';
         document.getElementById('sshInstructions').classList.remove('hidden');
     }
 }
