@@ -8,9 +8,47 @@ from utils import db_lock, get_all_servers
 from core_auto import load_auto_groups
 from config import USERS_DB
 
+def get_safe_delete_cmd_multi(users_to_delete):
+    """
+    အစ်ကို့ရဲ့ မူရင်း Safe Delete ကို အခြေခံထားပြီး၊
+    လူအများကြီး တစ်ပြိုင်နက်ဖျက်ရင်တောင် JSON ဖိုင် လုံးဝမပျက်အောင် ကာကွယ်ပေးထားသော စနစ်။
+    """
+    py_script = f"""
+import json
+try:
+    users_to_delete = {json.dumps(users_to_delete)}
+    path = '/usr/local/etc/xray/config.json'
+    with open(path, 'r') as f: d = json.load(f)
+    changed = False
+    new_inbounds = []
+    
+    out_ports = [str(u['port']) for u in users_to_delete if u['proto'] == 'out']
+    v2_unames = [u['uname'] for u in users_to_delete if u['proto'] == 'v2']
+    
+    for ib in d.get('inbounds', []):
+        # SS ဆိုလျှင် Port တိုက်စစ်ပြီး တစ်ခုလုံးကို ဖြတ်ချမည်
+        if str(ib.get('port')) in out_ports and ib.get('protocol') == 'shadowsocks':
+            changed = True
+            continue
+            
+        # VLESS ဆိုလျှင် clients စာရင်းထဲမှ ဆွဲထုတ်မည်
+        if ib.get('protocol') == 'vless' and 'settings' in ib and 'clients' in ib['settings']:
+            orig_len = len(ib['settings']['clients'])
+            ib['settings']['clients'] = [c for c in ib['settings']['clients'] if c.get('email') not in v2_unames]
+            if len(ib['settings']['clients']) != orig_len: changed = True
+            
+        new_inbounds.append(ib)
+        
+    if changed:
+        d['inbounds'] = new_inbounds
+        with open(path, 'w') as f: json.dump(d, f, indent=2)
+except Exception as e: pass
+"""
+    b64_script = base64.b64encode(py_script.encode('utf-8')).decode()
+    return f"echo {b64_script} | base64 -d | python3"
+
 def add_keys(node_id, group_id, usernames, total_gb, expire_days, protocol, is_auto=False):
     nodes = get_all_servers()
-    
     if is_auto:
         groups = load_auto_groups()
         target_nodes = groups.get(group_id, {}).get("nodes", {})
@@ -29,7 +67,7 @@ def add_keys(node_id, group_id, usernames, total_gb, expire_days, protocol, is_a
                 with open(USERS_DB, 'r') as f: db = json.load(f)
             except: pass
 
-        # မူရင်း Code အတိုင်း Port ရှာခြင်း
+        # မူရင်းအတိုင်း Port အမြင့်ဆုံးကို ရှာမည်
         max_port = 10000
         for u, info in db.items():
             if info.get('protocol') == 'out':
@@ -40,7 +78,7 @@ def add_keys(node_id, group_id, usernames, total_gb, expire_days, protocol, is_a
 
         commands = []
         current_port = max_port
-        added = False
+        added_users = False
 
         for uname in usernames:
             uname = uname.strip()
@@ -49,7 +87,7 @@ def add_keys(node_id, group_id, usernames, total_gb, expire_days, protocol, is_a
             uid = str(uuid.uuid4())
             exp_date = (datetime.now() + timedelta(days=expire_days)).strftime("%Y-%m-%d")
             
-            # 🚀 အစ်ကို၏ မူရင်း Code အတိုင်း အတိအကျ ပြန်လည်တည်ဆောက်ခြင်း
+            # 🚀 အစ်ကို၏ မူရင်း v2ray-node-* Script များကိုသာ ပြန်လည်အသုံးပြုမည်
             if protocol == 'v2':
                 port = "443"
                 key_str = f"vless://{uid}@{node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{uname}"
@@ -65,18 +103,17 @@ def add_keys(node_id, group_id, usernames, total_gb, expire_days, protocol, is_a
             db[uname] = {
                 "node": node_id, "group": group_id if is_auto else "",
                 "protocol": protocol, "uuid": uid, "port": port,
-                "total_gb": total_gb, "expire_date": exp_date, 
-                "used_bytes": 0, "last_raw_bytes": 0, 
-                "is_blocked": False, "key": key_str
+                "total_gb": total_gb, "expire_date": exp_date, "used_bytes": 0,
+                "last_raw_bytes": 0, "is_blocked": False, "key": key_str
             }
-            added = True
+            added_users = True
             
-        if added:
-            # 🚀 မူရင်းအတိုင်း Command များကို Join ၍ ပို့ခြင်း
+        if added_users:
             if commands:
                 commands.append("systemctl restart xray")
+                # 🚀 တစ်ပြိုင်နက်တည်း Run စေရန် Group လုပ်လိုက်သည်
                 full_cmd = " ; ".join(commands)
-                os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{node_ip} \"{full_cmd}\"")
+                os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{node_ip} \"{full_cmd}\"")
             
             with open(USERS_DB, 'w') as f: json.dump(db, f)
             return True, "Keys generated successfully"
@@ -92,12 +129,11 @@ def toggle_key(username):
         if username in db:
             user = db[username]
             user['is_blocked'] = not user.get('is_blocked', False)
-            
             node_ip = get_all_servers().get(user.get('node'), {}).get('ip')
             if node_ip:
-                # 🚀 မူရင်း Code အတိုင်း jq ဖြင့် ပိတ်ခြင်း / ပြန်ဖွင့်ခြင်း
                 if user['is_blocked']:
-                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"jq '(.inbounds[] | select(.protocol==\\\"vless\\\" or .protocol==\\\"shadowsocks\\\").settings.clients) |= map(select(.email != \\\"{username}\\\"))' /usr/local/etc/xray/config.json > /tmp/c.json && mv /tmp/c.json /usr/local/etc/xray/config.json\"")
+                    safe_cmd = get_safe_delete_cmd_multi([{'uname': username, 'proto': user.get('protocol', 'v2'), 'port': user.get('port', '443')}])
+                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"{safe_cmd} ; systemctl restart xray\"")
                 else:
                     uid = user['uuid']
                     if user.get('protocol', 'v2') == 'v2':
@@ -105,8 +141,7 @@ def toggle_key(username):
                     else:
                         port = user.get('port', '10000')
                         os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} '/usr/local/bin/v2ray-node-add-out {username} {uid} {port}'")
-                
-                os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl restart xray'")
+                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} 'systemctl restart xray'")
                 
             with open(USERS_DB, 'w') as f: json.dump(db, f)
 
@@ -119,21 +154,22 @@ def bulk_delete_keys(usernames):
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
             
-        nodes_to_sync = set()
+        nodes_to_sync = {}
         for u in usernames:
             if u in db:
                 nid = db[u].get('node')
                 node_ip = get_all_servers().get(nid, {}).get('ip')
                 if node_ip:
-                    # 🚀 မူရင်း Code အတိုင်း jq ဖြင့် ဖျက်ခြင်း
-                    os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"jq '(.inbounds[] | select(.protocol==\\\"vless\\\" or .protocol==\\\"shadowsocks\\\").settings.clients) |= map(select(.email != \\\"{u}\\\"))' /usr/local/etc/xray/config.json > /tmp/c.json && mv /tmp/c.json /usr/local/etc/xray/config.json\"")
-                    nodes_to_sync.add(node_ip)
+                    if node_ip not in nodes_to_sync: nodes_to_sync[node_ip] = []
+                    nodes_to_sync[node_ip].append({'uname': u, 'proto': db[u].get('protocol', 'v2'), 'port': db[u].get('port', '443')})
                 del db[u]
                 
         with open(USERS_DB, 'w') as f: json.dump(db, f)
         
-    for ip in nodes_to_sync:
-        os.system(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'systemctl restart xray'")
+    # 🚀 Node တစ်ခုစီရှိ လူအများကြီးကို တစ်ချက်တည်းဖြင့် အမှားကင်းစွာ ဖျက်ပေးမည်
+    for ip, users in nodes_to_sync.items():
+        safe_cmd = get_safe_delete_cmd_multi(users)
+        os.system(f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"{safe_cmd} ; systemctl restart xray\"")
 
 def renew_key(username, add_gb, add_days):
     with db_lock:
@@ -144,10 +180,8 @@ def renew_key(username, add_gb, add_days):
         if username in db:
             user = db[username]
             user['total_gb'] = float(user.get('total_gb', 0)) + float(add_gb)
-            try:
-                curr_exp = datetime.strptime(user.get('expire_date', '2099-01-01'), "%Y-%m-%d")
-            except:
-                curr_exp = datetime.now()
+            try: curr_exp = datetime.strptime(user.get('expire_date', '2099-01-01'), "%Y-%m-%d")
+            except: curr_exp = datetime.now()
             
             if curr_exp < datetime.now(): curr_exp = datetime.now()
             user['expire_date'] = (curr_exp + timedelta(days=int(add_days))).strftime("%Y-%m-%d")
