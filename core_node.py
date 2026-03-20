@@ -4,7 +4,8 @@ import uuid
 import subprocess
 import base64
 from datetime import datetime, timedelta
-from utils import db_lock, get_all_servers, get_auto_group_nodes
+from utils import db_lock, get_all_servers
+from core_auto import load_auto_groups  # 🚀 THE FIX: ဖိုင်ချိတ်ဆက်မှု အမှန်သို့ ပြောင်းထားသည်
 from config import USERS_DB
 
 def sync_xray_config_remote(node_ip, action, protocol, clients_data):
@@ -56,7 +57,9 @@ def add_keys(node_id, group_id, usernames, total_gb, expire_days, protocol, is_a
     nodes = get_all_servers()
     
     if is_auto:
-        target_nodes = get_auto_group_nodes(group_id)
+        # 🚀 THE FIX: Group Data ဆွဲယူပုံ အမှန်
+        groups = load_auto_groups()
+        target_nodes = groups.get(group_id, {}).get("nodes", {})
         if not target_nodes: return False, "No active servers in group"
         # ရိုးရှင်းသော အလှည့်ကျစနစ် (Round-robin) ဖြင့် Node ရွေးမည်
         node_id = list(target_nodes.keys())[0] 
@@ -233,5 +236,4 @@ def edit_key(username, gb, exp):
             with open(USERS_DB, 'w') as f: json.dump(db, f)
 
 def rebalance_auto_node(group_id, limit, specific_node=None):
-    # Auto Rebalance စနစ် (လက်ရှိစနစ်အတိုင်း ဆက်ထားပါသည်)
     return True, "Rebalanced Successfully"
