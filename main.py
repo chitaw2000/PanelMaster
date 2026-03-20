@@ -38,7 +38,6 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
-# 🚀 IP ကို မည်သည့် Format မှမရွေး အတိအကျ ဆွဲထုတ်ပေးမည့် Function
 def get_target_ip(node_id):
     nodes = get_all_servers()
     if node_id in nodes and nodes[node_id].get('ip'):
@@ -438,7 +437,6 @@ def node_view(node_id):
     is_alarm = limit_tb > 0 and used_gb >= limit_gb
     health = ninfo.get("health", "green")
             
-    # Syntax Error Fix ပြီးသားပါ
     other_nodes = [nid for nid in nodes.keys() if nid != node_id]
     
     return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, config=config, used_gb=used_gb, limit_tb=limit_tb, is_alarm=is_alarm, health=health)
@@ -458,11 +456,9 @@ def add_node():
             with open(NODES_LIST, 'w') as f: 
                 f.write("")
                 
-        # (ID | Name | IP) ပြည့်စုံစွာ ပြန်သိမ်းမည်
         with open(NODES_LIST, 'a') as f: 
             f.write(f"\n{n_id}|{n_name}|{n_ip}")
             
-    # "yes" Bug ရှင်းလင်းပြီးပါပြီ
     return redirect(f"/node/{n_id}?newly_added={n_id}")
 
 @app.route('/delete_node/<node_id>', methods=['POST'])
@@ -585,15 +581,15 @@ def api_stats(node_id):
     except: 
         return jsonify({"status": "error"})
 
+# 🚀 THE CRITICAL FIX: Redirect အစား JSON ပြန်ပို့ပါမည်။ ဤမှသာ UI လန်းလန်းလေး အလုပ်လုပ်ပါမည်။
 @app.route('/install_node/<node_id>', methods=['POST'])
 def install_node_action(node_id):
     ip = get_target_ip(node_id)
     if ip: 
         ip_str = str(ip).strip()
-        # 🚀 Xray Install ခလုတ်နှိပ်လျှင် Sync ဖြင့် တိုက်ရိုက် Run ပြီး ပြီးသည်အထိ စောင့်မည်
         cmd = f"ssh -o StrictHostKeyChecking=no root@{ip_str} 'bash -s' < /root/PanelMaster/install_node.sh"
         subprocess.run(cmd, shell=True)
-    return redirect(request.referrer)
+    return jsonify({"status": "success"})
 
 @app.route('/restart_xray/<node_id>', methods=['POST'])
 def restart_xray_action(node_id):
