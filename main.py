@@ -60,13 +60,11 @@ def api_user_ip(username):
     ips_info = get_active_ips(node_ip, port, proto, username)
     return jsonify({"status": "success", "data": ips_info})
 
-# 🚀 THE FIX: Master Panel မှနေ၍ Node ၏ Log ကို လှမ်းဖွင့်ပေးမည့် စနစ်
 @app.route('/fix_node_logs/<node_id>', methods=['POST'])
 def fix_node_logs(node_id):
     nodes = get_all_servers()
     ip = nodes.get(node_id, {}).get('ip')
     if ip:
-        # ထပ်ခါတလဲလဲ နှိပ်မိလျှင်လည်း Error မတက်စေရန် ကာကွယ်ထားသည်
         cmds = [
             "mkdir -p /var/log/xray",
             "touch /var/log/xray/access.log",
@@ -621,12 +619,47 @@ def toggle_user(username):
     toggle_key(username)
     return redirect(request.referrer)
 
+# 🚀 THE FIX: UUID / Password ကို လွယ်ကူစွာ ပြင်ဆင်နိုင်ပြီး Node သို့ Auto-Sync လုပ်ပေးမည့် စနစ်
 @app.route('/edit_user/<username>', methods=['POST'])
 def edit_user_route(username):
     try: gb = float(request.form.get('total_gb') or 0)
     except: gb = None
     exp = request.form.get('expire_date', '')
+    new_uuid = request.form.get('uuid', '').strip()
+    
+    # 1. သာမန် Traffic နှင့် Expiry ကို အရင်ပြင်မည်
     edit_key(username, gb, exp)
+    
+    # 2. အကယ်၍ UUID သို့မဟုတ် Password အသစ်ပြောင်းခဲ့လျှင် Xray သို့ လှမ်း၍ Auto-Sync လုပ်မည်
+    if new_uuid:
+        with db_lock:
+            db = {}
+            if os.path.exists(USERS_DB):
+                with open(USERS_DB, 'r') as f: db = json.load(f)
+                
+            if username in db:
+                uinfo = db[username]
+                old_uuid = uinfo.get('uuid') or uinfo.get('password')
+                
+                if old_uuid and old_uuid != new_uuid:
+                    # Database ထဲတွင် အသစ်ပြောင်းမည်
+                    if 'uuid' in uinfo: uinfo['uuid'] = new_uuid
+                    elif 'password' in uinfo: uinfo['password'] = new_uuid
+                    
+                    # App ပေါ်တွင်ပြမည့် URL (actual_key) ထဲမှ ဟောင်းနေသော UUID ကို အသစ်ဖြင့် အစားထိုးမည်
+                    if 'key' in uinfo and old_uuid in uinfo['key']:
+                        uinfo['key'] = uinfo['key'].replace(old_uuid, new_uuid)
+                        
+                    with open(USERS_DB, 'w') as f: json.dump(db, f)
+                    
+                    # Node ဆာဗာပေါ်သို့ SSH လှမ်းချိတ်ပြီး Config ထဲမှ UUID အဟောင်းကို အသစ်ဖြင့် Auto-Replace လုပ်မည်
+                    node_id = uinfo.get('node')
+                    nodes = get_all_servers()
+                    node_ip = nodes.get(node_id, {}).get('ip')
+                    if node_ip:
+                        cmd = f"sed -i 's/{old_uuid}/{new_uuid}/g' /usr/local/etc/xray/config.json && systemctl restart xray"
+                        execute_ssh_bg(str(node_ip).strip(), [cmd])
+
     return redirect(request.referrer)
 
 @app.route('/renew_user/<username>', methods=['POST'])
