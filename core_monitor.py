@@ -7,40 +7,32 @@ from datetime import datetime
 from utils import get_all_servers, db_lock
 from config import USERS_DB
 
-def get_safe_delete_cmd_multi(users_to_delete):
+def remote_block_key(node_ip, protocol, username):
+    """Node ဆီသို့ လှမ်း၍ Xray Config ထဲမှ User အား အပြီးတိုင် ဖြတ်ချမည်"""
+    target_proto = "vless" if protocol == "v2" else "shadowsocks"
     py_script = f"""
-import json
+import json, os
 try:
-    users_to_delete = {json.dumps(users_to_delete)}
-    path = '/usr/local/etc/xray/config.json'
-    with open(path, 'r') as f: d = json.load(f)
+    with open('/usr/local/etc/xray/config.json', 'r') as f: cfg = json.load(f)
     changed = False
-    new_inbounds = []
-    
-    out_ports = [str(u['port']) for u in users_to_delete if u['proto'] == 'out']
-    v2_unames = [u['uname'] for u in users_to_delete if u['proto'] == 'v2']
-    
-    for ib in d.get('inbounds', []):
-        if str(ib.get('port')) in out_ports and ib.get('protocol') == 'shadowsocks':
-            changed = True
-            continue
-            
-        if ib.get('protocol') == 'vless' and 'settings' in ib and 'clients' in ib['settings']:
-            orig_len = len(ib['settings']['clients'])
-            ib['settings']['clients'] = [c for c in ib['settings']['clients'] if c.get('email') not in v2_unames]
-            if len(ib['settings']['clients']) != orig_len: changed = True
-            
-        new_inbounds.append(ib)
-        
+    for inbound in cfg.get('inbounds', []):
+        if inbound.get('protocol') == '{target_proto}':
+            settings = inbound.get('settings', {{}})
+            clients = settings.get('clients', [])
+            original = len(clients)
+            settings['clients'] = [c for c in clients if c.get('email') != '{username}']
+            inbound['settings'] = settings
+            if len(settings['clients']) != original: changed = True
     if changed:
-        d['inbounds'] = new_inbounds
-        with open(path, 'w') as f: json.dump(d, f, indent=2)
+        with open('/usr/local/etc/xray/config.json', 'w') as f: json.dump(cfg, f, indent=4)
+        os.system('systemctl restart xray')
 except Exception as e: pass
 """
-    b64_script = base64.b64encode(py_script.encode('utf-8')).decode()
-    return f"echo {b64_script} | base64 -d | python3"
+    encoded = base64.b64encode(py_script.encode('utf-8')).decode('utf-8')
+    subprocess.run(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"echo {encoded} | base64 -d | python3\"", shell=True, capture_output=True)
 
 def fetch_node_stats(node_ip):
+    """Node ဆီမှ အသုံးပြုထားသော Data များကို ဆွဲယူမည်"""
     try:
         cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{node_ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\""
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
@@ -52,7 +44,8 @@ def fetch_node_stats(node_ip):
             if len(p) >= 4 and p[0] == "user": 
                 data[p[1]] = data.get(p[1], 0) + v
         return data
-    except: return {}
+    except:
+        return {}
 
 def monitor_loop():
     while True:
@@ -65,7 +58,6 @@ def monitor_loop():
                 with open(USERS_DB, 'r') as f: db = json.load(f)
                 
             db_changed = False
-            nodes_to_block = {}
             
             for nid, ninfo in nodes.items():
                 nip = ninfo.get('ip')
@@ -84,7 +76,8 @@ def monitor_loop():
                 try:
                     exp_date = datetime.strptime(uinfo.get('expire_date', '2099-01-01'), "%Y-%m-%d").date()
                     is_expired = now > exp_date
-                except: is_expired = False
+                except:
+                    is_expired = False
                     
                 is_over_limit = (total_gb > 0 and used_gb >= total_gb)
                 
@@ -92,23 +85,17 @@ def monitor_loop():
                     if not uinfo.get('is_blocked', False):
                         uinfo['is_blocked'] = True
                         db_changed = True
-                        
                         node_ip = nodes.get(uinfo.get('node'), {}).get('ip')
                         if node_ip:
-                            if node_ip not in nodes_to_block: nodes_to_block[node_ip] = []
-                            # 🚀 Grouping users to safely block them all at once!
-                            nodes_to_block[node_ip].append({'uname': uname, 'proto': uinfo.get('protocol', 'v2'), 'port': uinfo.get('port', '443')})
+                            remote_block_key(node_ip, uinfo.get('protocol', 'v2'), uname)
                             
             if db_changed:
                 with db_lock:
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
                     
-            # 🚀 Node တစ်ခုစီအတွက် Safe Script ကို တစ်ကြိမ်တည်း Run ပြီး အားလုံးကို Block မည်
-            for ip, users in nodes_to_block.items():
-                safe_cmd = get_safe_delete_cmd_multi(users)
-                os.system(f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} \"{safe_cmd} ; systemctl restart xray\"")
-                    
-        except Exception as e: print("Monitor Error:", e)
+        except Exception as e:
+            print("Monitor Error:", e)
+            
         time.sleep(60)
 
 def start_background_monitor():
