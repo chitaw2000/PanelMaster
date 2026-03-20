@@ -4,11 +4,13 @@ from utils import db_lock, get_all_servers
 from core_auto import find_available_node, load_auto_groups, save_auto_groups
 from core_engine import execute_ssh_bg, get_safe_delete_cmd
 
+# 🚀 NODES_DB ကိုပါ ထပ်မံ Import လုပ်ထားသည်
 try:
-    from config import USERS_DB, NODES_LIST
+    from config import USERS_DB, NODES_LIST, NODES_DB
 except ImportError:
     USERS_DB = "/root/PanelMaster/users_db.json"
     NODES_LIST = "/root/PanelMaster/nodes_list.txt"
+    NODES_DB = "/root/PanelMaster/nodes_db.json"
 
 def get_robust_ip(node_id):
     nodes = get_all_servers()
@@ -104,8 +106,6 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
             with open(USERS_DB, 'w') as f: json.dump(db, f)
             
             for ip, ip_cmds in cmds_by_ip.items():
-                # 🚀 ဤနေရာသည် Hack ဖြစ်သည်။ Script များမှ ခေါ်သော Restart ကို ပိတ်ထားမည်။ 
-                # အားလုံးပြီးမှသာ reset-failed ခေါ်၍ တစ်ကြိမ်တည်း Restart လုပ်ပါမည်။
                 prefix = "systemctl() { true; }; export -f systemctl; "
                 suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
                 combined_cmd = prefix + " ; ".join(ip_cmds) + suffix
@@ -158,11 +158,26 @@ def delete_key(username):
             with open(USERS_DB, 'r') as f: db = json.load(f)
             if username in db:
                 info = db[username]
-                ip = get_robust_ip(info.get('node'))
+                nid = info.get('node')
+                used_bytes = float(info.get('used_bytes', 0))
+                ip = get_robust_ip(nid)
+                
+                # 🚀 Key ကို မဖျက်ခင် အသုံးပြုခဲ့သမျှ Traffic ကို Node DB ထဲသို့ သွားပေါင်းထည့်မည်
+                if nid and used_bytes > 0:
+                    ndb = {}
+                    if os.path.exists(NODES_DB):
+                        try:
+                            with open(NODES_DB, 'r') as f: ndb = json.load(f)
+                        except: pass
+                    if nid not in ndb: ndb[nid] = {"used_bytes": 0, "limit_tb": 0, "health": "green"}
+                    ndb[nid]["used_bytes"] = float(ndb[nid].get("used_bytes", 0)) + used_bytes
+                    with open(NODES_DB, 'w') as f: json.dump(ndb, f)
+                
                 if ip:
                     cmd = get_safe_delete_cmd(username, info.get('protocol', 'v2'), info.get('port', '443'))
                     combined_cmd = f"{cmd} ; systemctl reset-failed xray ; systemctl restart xray"
                     execute_ssh_bg(str(ip).strip(), [combined_cmd])
+                
                 del db[username]
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
 
@@ -171,18 +186,36 @@ def bulk_delete_keys(usernames):
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
             cmds_by_ip = {}
+            
+            # 🚀 Bulk ဖျက်သည့်အခါတွင်လည်း Traffic များကို သိမ်းဆည်းရန်
+            ndb = {}
+            if os.path.exists(NODES_DB):
+                try:
+                    with open(NODES_DB, 'r') as f: ndb = json.load(f)
+                except: pass
+                
             for uname in usernames:
                 if uname in db:
-                    ip = get_robust_ip(db[uname].get('node'))
+                    info = db[uname]
+                    nid = info.get('node')
+                    used_bytes = float(info.get('used_bytes', 0))
+                    
+                    # မှတ်တမ်းပေါင်းထည့်ခြင်း
+                    if nid and used_bytes > 0:
+                        if nid not in ndb: ndb[nid] = {"used_bytes": 0, "limit_tb": 0, "health": "green"}
+                        ndb[nid]["used_bytes"] = float(ndb[nid].get("used_bytes", 0)) + used_bytes
+                        
+                    ip = get_robust_ip(nid)
                     if ip:
                         ip = str(ip).strip()
-                        cmd = get_safe_delete_cmd(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
+                        cmd = get_safe_delete_cmd(uname, info.get('protocol', 'v2'), info.get('port', '443'))
                         cmds_by_ip.setdefault(ip, []).append(cmd)
                     del db[uname]
+                    
             with open(USERS_DB, 'w') as f: json.dump(db, f)
+            with open(NODES_DB, 'w') as f: json.dump(ndb, f)
             
             for ip, cmds in cmds_by_ip.items():
-                # 🚀 Delete လုပ်ရာတွင်လည်း Rate Limit ကို ကျော်ဖြတ်မည်
                 prefix = "systemctl() { true; }; export -f systemctl; "
                 suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
                 combined_cmd = prefix + " ; ".join(cmds) + suffix
@@ -258,7 +291,6 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
         with open(USERS_DB, 'w') as f: json.dump(db, f)
 
         for ip, cmds in cmds_by_ip.items():
-            # 🚀 Migration ပြုလုပ်ရာတွင်လည်း Rate Limit ကို ကျော်ဖြတ်မည်
             prefix = "systemctl() { true; }; export -f systemctl; "
             suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
             combined_cmd = prefix + " ; ".join(cmds) + suffix
