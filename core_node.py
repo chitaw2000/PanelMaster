@@ -104,10 +104,11 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
             with open(USERS_DB, 'w') as f: json.dump(db, f)
             
             for ip, ip_cmds in cmds_by_ip.items():
-                # 🚀 စက္ကန့်ပိုင်းအတွင်း ဆက်တိုက် Run လျှင် ဖိုင်ရေးမှတ်မှု ကျော်သွားတတ်သဖြင့်၊
-                # Command တစ်ခုနှင့်တစ်ခု ကြားတွင် 0.5 စက္ကန့် အသက်ရှူပေါက် (sleep) ထည့်ပေးလိုက်ပါသည်။
-                combined_cmd = " ; sleep 0.5 ; ".join(ip_cmds)
-                combined_cmd += " ; sleep 1 ; systemctl restart xray"
+                # 🚀 ဤနေရာသည် Hack ဖြစ်သည်။ Script များမှ ခေါ်သော Restart ကို ပိတ်ထားမည်။ 
+                # အားလုံးပြီးမှသာ reset-failed ခေါ်၍ တစ်ကြိမ်တည်း Restart လုပ်ပါမည်။
+                prefix = "systemctl() { true; }; export -f systemctl; "
+                suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+                combined_cmd = prefix + " ; ".join(ip_cmds) + suffix
                 execute_ssh_bg(ip, [combined_cmd])
                 
         return True, "Success"
@@ -128,7 +129,7 @@ def toggle_key(username):
                         if user['protocol'] == 'v2': cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
                         else: cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
                     
-                    combined_cmd = f"{cmd} ; systemctl restart xray"
+                    combined_cmd = f"{cmd} ; systemctl reset-failed xray ; systemctl restart xray"
                     execute_ssh_bg(str(ip).strip(), [combined_cmd])
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
 
@@ -160,7 +161,7 @@ def delete_key(username):
                 ip = get_robust_ip(info.get('node'))
                 if ip:
                     cmd = get_safe_delete_cmd(username, info.get('protocol', 'v2'), info.get('port', '443'))
-                    combined_cmd = f"{cmd} ; systemctl restart xray"
+                    combined_cmd = f"{cmd} ; systemctl reset-failed xray ; systemctl restart xray"
                     execute_ssh_bg(str(ip).strip(), [combined_cmd])
                 del db[username]
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
@@ -181,9 +182,10 @@ def bulk_delete_keys(usernames):
             with open(USERS_DB, 'w') as f: json.dump(db, f)
             
             for ip, cmds in cmds_by_ip.items():
-                # 🚀 Delete တွင်လည်း အသေအချာ မှတ်သားနိုင်ရန် sleep ထည့်ပေးပါသည်
-                combined_cmd = " ; sleep 0.5 ; ".join(cmds)
-                combined_cmd += " ; sleep 1 ; systemctl restart xray"
+                # 🚀 Delete လုပ်ရာတွင်လည်း Rate Limit ကို ကျော်ဖြတ်မည်
+                prefix = "systemctl() { true; }; export -f systemctl; "
+                suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+                combined_cmd = prefix + " ; ".join(cmds) + suffix
                 execute_ssh_bg(ip, [combined_cmd])
 
 def rebalance_auto_node(group_id, new_limit, specific_node=None):
@@ -256,9 +258,10 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
         with open(USERS_DB, 'w') as f: json.dump(db, f)
 
         for ip, cmds in cmds_by_ip.items():
-            # 🚀 Migration ပြုလုပ်ရာတွင်လည်း ပေါင်း Run မည်
-            combined_cmd = " ; sleep 0.5 ; ".join(cmds)
-            combined_cmd += " ; sleep 1 ; systemctl restart xray"
+            # 🚀 Migration ပြုလုပ်ရာတွင်လည်း Rate Limit ကို ကျော်ဖြတ်မည်
+            prefix = "systemctl() { true; }; export -f systemctl; "
+            suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+            combined_cmd = prefix + " ; ".join(cmds) + suffix
             execute_ssh_bg(ip, [combined_cmd])
             
         if migrated_count < len(excess_users):
