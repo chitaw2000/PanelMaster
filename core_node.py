@@ -30,40 +30,58 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 with open(USERS_DB, 'r') as f: db = json.load(f)
             except: pass
 
-        if is_auto:
-            target_node, target_ip = find_available_node(group_id, len(usernames), current_db=db)
-            if not target_node: return False, "❌ Error: Limit Reached! No space available in any server for this Auto Node."
-        else:
-            target_node = node_id
-            target_ip = get_all_servers().get(node_id, {}).get('ip')
-            if not target_ip: return False, "❌ Error: Node Server is offline or not found!"
-
-        target_ip = str(target_ip).strip()
-        used_ports = [int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out' and i.get('node') == target_node]
-        max_p = max(used_ports) if used_ports else 10000
-
         existing_ids = [int(u.get('key_id', 0)) for u in db.values() if isinstance(u, dict) and str(u.get('key_id', '')).isdigit()]
         next_id = max(existing_ids) + 1 if existing_ids else 1
-
         exp = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
-        cmds = []
+
+        cmds_by_ip = {}
+        max_p_by_node = {} 
         
+        # 🚀 Node တစ်ခုချင်းစီအတွက် အမြင့်ဆုံး Port များကို သီးသန့် ကြိုရှာထားမည်
+        for uinfo in db.values():
+            if uinfo.get('protocol') == 'out':
+                nid = uinfo.get('node')
+                p = int(uinfo.get('port', 10000))
+                max_p_by_node[nid] = max(max_p_by_node.get(nid, 10000), p)
+
         for u in usernames:
             if u in db: continue
+            
+            # 🚀 Auto-balancer အစစ်: Key တစ်ခုချင်းစီအတွက် နေရာလွတ်ကို ရှာပြီး အချိုးကျ ခွဲထည့်မည်
+            if is_auto:
+                target_node, target_ip = find_available_node(group_id, 1, current_db=db)
+                if not target_node:
+                    # နေရာမလောက်တော့ပါက ရသလောက်ပဲ ထည့်ပြီး ရပ်မည်
+                    if not cmds_by_ip:
+                        return False, "❌ Error: Limit Reached! No space available in any server for this Auto Node."
+                    break 
+            else:
+                target_node = node_id
+                target_ip = get_all_servers().get(node_id, {}).get('ip')
+                if not target_ip: return False, "❌ Error: Node Server is offline or not found!"
+
+            target_ip = str(target_ip).strip()
+            max_p = max_p_by_node.get(target_node, 10000)
+
             uid = str(uuid.uuid4()).strip()
             safe_u = urllib.parse.quote(u)
             
             if proto == 'v2':
                 port = "443"
                 k = f"vless://{uid}@{target_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
-                cmds.append(f"/usr/local/bin/v2ray-node-add-vless {u} {uid}")
+                cmd = f"/usr/local/bin/v2ray-node-add-vless {u} {uid}"
             else:
-                max_p += 1; port = str(max_p)
+                max_p += 1
+                max_p_by_node[target_node] = max_p  # Update port for this specific node
+                port = str(max_p)
                 raw_ss = f"chacha20-ietf-poly1305:{uid}@{target_ip}:{port}"
                 ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
                 k = f"ss://{ss_conf}#{safe_u}"
-                cmds.append(f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp")
-                
+                cmd = f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 && ufw allow {port}/udp >/dev/null 2>&1"
+            
+            cmds_by_ip.setdefault(target_ip, []).append(cmd)
+            
+            # 🚀 DB ထဲသို့ ချက်ချင်း update လုပ်ပေးခြင်းဖြင့် Auto Node limit တွက်ချက်မှု မှန်ကန်စေမည်
             db[u] = {
                 "node": target_node, "group": group_id, "protocol": proto, "uuid": uid, 
                 "port": port, "total_gb": float(gb), "expire_date": exp, 
@@ -72,12 +90,17 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
             }
             next_id += 1
         
-        if cmds:
+        # 🚀 JSON Overwrite (Crash) ဖြစ်ခြင်းကို ကာကွယ်ရန် Command များကို တစ်တန်းတည်း (Sequential) ပေါင်း၍ Run မည်
+        if cmds_by_ip:
             with open(USERS_DB, 'w') as f: json.dump(db, f)
-            cmds.append("systemctl restart xray")
-            execute_ssh_bg(target_ip, cmds)
             
-    return True, "Success"
+            for ip, ip_cmds in cmds_by_ip.items():
+                ip_cmds.append("systemctl restart xray")
+                # Command ၅၀ ရှိလျှင် "cmd1 ; cmd2 ; cmd3" ပုံစံဖြင့် တစ်ဆက်တည်း ပေါင်းပေးလိုက်ပါသည်
+                combined_cmd = " ; ".join(ip_cmds)
+                execute_ssh_bg(ip, [combined_cmd])
+                
+        return True, "Success"
 
 def toggle_key(username):
     with db_lock:
@@ -94,7 +117,9 @@ def toggle_key(username):
                         uid = user['uuid']
                         if user['protocol'] == 'v2': cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
                         else: cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
-                    execute_ssh_bg(str(ip).strip(), [cmd, "systemctl restart xray"])
+                    
+                    combined_cmd = f"{cmd} ; systemctl restart xray"
+                    execute_ssh_bg(str(ip).strip(), [combined_cmd])
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
 
 def edit_key(username, total_gb, expire_date):
@@ -124,7 +149,8 @@ def delete_key(username):
                 info = db[username]; ip = get_all_servers().get(info.get('node'), {}).get('ip')
                 if ip:
                     cmd = get_safe_delete_cmd(username, info.get('protocol', 'v2'), info.get('port', '443'))
-                    execute_ssh_bg(str(ip).strip(), [cmd, "systemctl restart xray"])
+                    combined_cmd = f"{cmd} ; systemctl restart xray"
+                    execute_ssh_bg(str(ip).strip(), [combined_cmd])
                 del db[username]
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
 
@@ -143,9 +169,12 @@ def bulk_delete_keys(usernames):
                         cmds_by_ip.setdefault(ip, []).append(cmd)
                     del db[uname]
             with open(USERS_DB, 'w') as f: json.dump(db, f)
+            
             for ip, cmds in cmds_by_ip.items():
                 cmds.append("systemctl restart xray")
-                execute_ssh_bg(ip, cmds)
+                # 🚀 Delete လုပ်ရာတွင်လည်း Crash မဖြစ်စေရန် ပေါင်း Run မည်
+                combined_cmd = " ; ".join(cmds)
+                execute_ssh_bg(ip, [combined_cmd])
 
 def rebalance_auto_node(group_id, new_limit, specific_node=None):
     groups = load_auto_groups()
@@ -218,7 +247,9 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
 
         for ip, cmds in cmds_by_ip.items():
             cmds.append("systemctl restart xray")
-            execute_ssh_bg(ip, cmds)
+            # 🚀 Crash မဖြစ်စေရန် ပေါင်း Run မည်
+            combined_cmd = " ; ".join(cmds)
+            execute_ssh_bg(ip, [combined_cmd])
             
         if migrated_count < len(excess_users):
             return False, f"Limit Updated. Migrated {migrated_count} keys. Failed to migrate {len(excess_users) - migrated_count} keys (No space)."
