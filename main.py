@@ -581,7 +581,6 @@ def api_stats(node_id):
     except: 
         return jsonify({"status": "error"})
 
-# 🚀 THE CRITICAL FIX: Redirect အစား JSON ပြန်ပို့ပါမည်။ ဤမှသာ UI လန်းလန်းလေး အလုပ်လုပ်ပါမည်။
 @app.route('/install_node/<node_id>', methods=['POST'])
 def install_node_action(node_id):
     ip = get_target_ip(node_id)
@@ -589,7 +588,8 @@ def install_node_action(node_id):
         ip_str = str(ip).strip()
         cmd = f"ssh -o StrictHostKeyChecking=no root@{ip_str} 'bash -s' < /root/PanelMaster/install_node.sh"
         subprocess.run(cmd, shell=True)
-    return jsonify({"status": "success"})
+    # မူရင်းအတိုင်း Redirect လုပ်မည်
+    return redirect(request.referrer)
 
 @app.route('/restart_xray/<node_id>', methods=['POST'])
 def restart_xray_action(node_id):
