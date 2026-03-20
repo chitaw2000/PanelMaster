@@ -581,6 +581,7 @@ def api_stats(node_id):
     except: 
         return jsonify({"status": "error"})
 
+# 🚀 ဤနေရာတွင် ဆာဗာက သွင်းပြီးသည်အထိ တကယ်စောင့်ပေးမည်။ ထို့နောက် Browser သို့ Redirect ပြန်ပို့ပေးမည်။
 @app.route('/install_node/<node_id>', methods=['POST'])
 def install_node_action(node_id):
     ip = get_target_ip(node_id)
@@ -588,7 +589,6 @@ def install_node_action(node_id):
         ip_str = str(ip).strip()
         cmd = f"ssh -o StrictHostKeyChecking=no root@{ip_str} 'bash -s' < /root/PanelMaster/install_node.sh"
         subprocess.run(cmd, shell=True)
-    # မူရင်းအတိုင်း Redirect လုပ်မည်
     return redirect(request.referrer)
 
 @app.route('/restart_xray/<node_id>', methods=['POST'])
