@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, redirect, session, url_for, send_file, jsonify
-import json, os, re, subprocess, urllib.parse, base64
+import json, os, re, subprocess, urllib.parse
 from datetime import datetime, timedelta
 
 from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, load_config, save_config
@@ -195,6 +195,7 @@ def dashboard():
         g_used_gb = group_used_bytes.get(gid, 0) / (1024**3)
         group_stats.append({"id": gid, "name": gdata.get("name", gid), "limit": limit, "node_count": len(g_nodes), "total_keys": g_keys, "used_gb": g_used_gb})
 
+    # 🚀 THE FIX: Backup များကို Custom နှင့် Auto ခွဲခြားခြင်း
     raw_backups = get_node_backups()
     custom_backups = {}
     auto_backups = {}
@@ -215,6 +216,7 @@ def dashboard():
         else:
             orphaned_backups[nid] = files
             
+    # အလွတ်ဖြစ်နေသော Auto Group များကို ဖယ်ရှားမည်
     auto_backups = {k: v for k, v in auto_backups.items() if v["nodes"]}
 
     return render_template('dashboard.html', nodes=node_stats, groups=group_stats, config=config, custom_backups=custom_backups, auto_backups=auto_backups, orphaned_backups=orphaned_backups, sick_nodes=sick_nodes, sick_count=sick_count)
@@ -641,7 +643,6 @@ def toggle_user(username):
     toggle_key(username)
     return redirect(request.referrer)
 
-# 🚀 THE FIX: ဤနေရာတွင် Password / UUID ကို ပြင်ဆင်သောအခါ Base64 ဖြင့် သေချာစွာ ပြန်လည် Encode လုပ်မည်
 @app.route('/edit_user/<username>', methods=['POST'])
 def edit_user_route(username):
     try: gb = float(request.form.get('total_gb') or 0)
@@ -664,24 +665,13 @@ def edit_user_route(username):
                 if old_uuid and old_uuid != new_uuid:
                     if 'uuid' in uinfo: uinfo['uuid'] = new_uuid
                     elif 'password' in uinfo: uinfo['password'] = new_uuid
+                    if 'key' in uinfo and old_uuid in uinfo['key']:
+                        uinfo['key'] = uinfo['key'].replace(old_uuid, new_uuid)
+                    with open(USERS_DB, 'w') as f: json.dump(db, f)
                     
                     node_id = uinfo.get('node')
                     nodes = get_all_servers()
                     node_ip = nodes.get(node_id, {}).get('ip')
-                    proto = uinfo.get('protocol', 'v2')
-                    port = str(uinfo.get('port', '443'))
-                    
-                    # 🚀 Key အသစ်ကို လုံးဝ (လုံးဝ) အသစ်ပြန်တည်ဆောက်မည်
-                    if proto == 'v2':
-                        uinfo['key'] = f"vless://{new_uuid}@{node_ip}:{port}?encryption=none&security=none&type=ws&host={node_ip}&path=%2F#PanelMaster-{username}"
-                    else:
-                        # Base64 ဖြင့် SS Key ကို အသစ်ပြန်လုပ်ခြင်း
-                        b64_cred = base64.b64encode(f"chacha20-ietf-poly1305:{new_uuid}".encode()).decode()
-                        uinfo['key'] = f"ss://{b64_cred}@{node_ip}:{port}#PanelMaster-{username}"
-                        
-                    with open(USERS_DB, 'w') as f: json.dump(db, f)
-                    
-                    # ဆာဗာရှိ Config ထဲတွင် သွားရောက် အစားထိုးမည်
                     if node_ip:
                         cmd = f"sed -i 's/{old_uuid}/{new_uuid}/g' /usr/local/etc/xray/config.json && systemctl restart xray"
                         execute_ssh_bg(str(node_ip).strip(), [cmd])
