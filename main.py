@@ -38,7 +38,6 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
-# 🚀 THE FIX: IP ကို မည်သည့် Format မှမရွေး အတိအကျ ဆွဲထုတ်ပေးမည့် Function
 def get_target_ip(node_id):
     nodes = get_all_servers()
     if node_id in nodes and nodes[node_id].get('ip'):
@@ -49,10 +48,9 @@ def get_target_ip(node_id):
             for line in f:
                 line = line.strip()
                 if not line: continue
-                # | နှင့် Space နှစ်မျိုးလုံးကို အလုပ်လုပ်စေရန်
                 if line.startswith(f"{node_id}|") or line.startswith(f"{node_id} "):
                     parts = line.replace('|', ' ').split()
-                    return parts[-1] # IP သည် အမြဲတမ်း နောက်ဆုံးတွင်ရှိသည်
+                    return parts[-1]
     return None
 
 @app.route('/api/user_ip/<username>')
@@ -439,13 +437,15 @@ def node_view(node_id):
     is_alarm = limit_tb > 0 and used_gb >= limit_gb
     health = ninfo.get("health", "green")
             
-    other_nodes = [nid for nodes.keys() if nid != node_id]
+    # 🚀 THE CRITICAL FIX: Syntax Error ကို ပြင်ဆင်ပြီးပါပြီ
+    other_nodes = [nid for nid in nodes.keys() if nid != node_id]
+    
     return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, config=config, used_gb=used_gb, limit_tb=limit_tb, is_alarm=is_alarm, health=health)
 
 @app.route('/add_node', methods=['POST'])
 def add_node():
     n_id = request.form.get('node_id', '').strip().replace(" ", "_")
-    n_name = request.form.get('node_name', '').strip()
+    n_name = request.form.get('node_name', '').strip() 
     n_ip = request.form.get('node_ip', '').strip()
     
     if n_id and n_name and n_ip:
@@ -457,7 +457,7 @@ def add_node():
             with open(NODES_LIST, 'w') as f: 
                 f.write("")
                 
-        # 🚀 THE FIX: မူရင်း Golden State အတိုင်း | ဖြင့်သာ မှတ်မည်
+        # မူရင်း Pipe Format อတိုင်း ပြန်သိမ်းမည်
         with open(NODES_LIST, 'a') as f: 
             f.write(f"\n{n_id}|{n_name}|{n_ip}")
             
@@ -533,7 +533,7 @@ def replace_id(current_id):
 
 @app.route('/api/check_ssh/<node_id>')
 def check_ssh(node_id):
-    ip = get_target_ip(node_id) # 🚀 အသစ်ရေးထားသော Bulletproof Extractor ကို သုံးသည်
+    ip = get_target_ip(node_id)
     if not ip: 
         return jsonify({"status": "error", "msg": "IP not found in nodes list."})
     
@@ -587,7 +587,6 @@ def api_stats(node_id):
 def install_node_action(node_id):
     ip = get_target_ip(node_id)
     if ip: 
-        # 🚀 THE FIX: မူရင်း Golden State အတိုင်း /root/PanelMaster/install_node.sh ကိုသာ လှမ်း Run မည်
         execute_ssh_bg(ip, ["bash -s < /root/PanelMaster/install_node.sh"])
     return redirect(request.referrer)
 
