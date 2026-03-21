@@ -104,6 +104,8 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
             with open(USERS_DB, 'w') as f: json.dump(db, f)
             
             for ip, ip_cmds in cmds_by_ip.items():
+                # 🚀 ဤနေရာသည် Hack ဖြစ်သည်။ Script များမှ ခေါ်သော Restart ကို ပိတ်ထားမည်။ 
+                # အားလုံးပြီးမှသာ reset-failed ခေါ်၍ တစ်ကြိမ်တည်း Restart လုပ်ပါမည်။
                 prefix = "systemctl() { true; }; export -f systemctl; "
                 suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
                 combined_cmd = prefix + " ; ".join(ip_cmds) + suffix
@@ -180,6 +182,7 @@ def bulk_delete_keys(usernames):
             with open(USERS_DB, 'w') as f: json.dump(db, f)
             
             for ip, cmds in cmds_by_ip.items():
+                # 🚀 Delete လုပ်ရာတွင်လည်း Rate Limit ကို ကျော်ဖြတ်မည်
                 prefix = "systemctl() { true; }; export -f systemctl; "
                 suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
                 combined_cmd = prefix + " ; ".join(cmds) + suffix
@@ -255,6 +258,7 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
         with open(USERS_DB, 'w') as f: json.dump(db, f)
 
         for ip, cmds in cmds_by_ip.items():
+            # 🚀 Migration ပြုလုပ်ရာတွင်လည်း Rate Limit ကို ကျော်ဖြတ်မည်
             prefix = "systemctl() { true; }; export -f systemctl; "
             suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
             combined_cmd = prefix + " ; ".join(cmds) + suffix
