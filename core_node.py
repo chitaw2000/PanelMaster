@@ -85,9 +85,12 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 max_p += 1
                 max_p_by_node[target_node] = max_p  
                 port = str(max_p)
-                raw_ss = f"chacha20-ietf-poly1305:{uid}@{target_ip}:{port}"
-                ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
-                k = f"ss://{ss_conf}#{safe_u}"
+                
+                # 🚀 Outline App သေချာပေါက် လက်ခံစေရန် URL-Safe Base64 ပြောင်းထားပါသည်
+                credentials = f"chacha20-ietf-poly1305:{uid}"
+                b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
+                k = f"ss://{b64_creds}@{target_ip}:{port}#{safe_u}"
+                
                 cmd = f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 && ufw allow {port}/udp >/dev/null 2>&1"
             
             cmds_by_ip.setdefault(target_ip, []).append(cmd)
@@ -104,8 +107,6 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
             with open(USERS_DB, 'w') as f: json.dump(db, f)
             
             for ip, ip_cmds in cmds_by_ip.items():
-                # 🚀 ဤနေရာသည် Hack ဖြစ်သည်။ Script များမှ ခေါ်သော Restart ကို ပိတ်ထားမည်။ 
-                # အားလုံးပြီးမှသာ reset-failed ခေါ်၍ တစ်ကြိမ်တည်း Restart လုပ်ပါမည်။
                 prefix = "systemctl() { true; }; export -f systemctl; "
                 suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
                 combined_cmd = prefix + " ; ".join(ip_cmds) + suffix
@@ -182,7 +183,6 @@ def bulk_delete_keys(usernames):
             with open(USERS_DB, 'w') as f: json.dump(db, f)
             
             for ip, cmds in cmds_by_ip.items():
-                # 🚀 Delete လုပ်ရာတွင်လည်း Rate Limit ကို ကျော်ဖြတ်မည်
                 prefix = "systemctl() { true; }; export -f systemctl; "
                 suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
                 combined_cmd = prefix + " ; ".join(cmds) + suffix
@@ -231,7 +231,7 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
             cmd_del = get_safe_delete_cmd(uname, proto, old_port)
             cmds_by_ip.setdefault(old_ip, []).append(cmd_del)
             
-            used_ports = [int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out' and i.get('node') == new_node_id]
+            used_ports = [int(i.get('port', 10000)) for i in db.values() if isinstance(i, dict) and i.get('protocol') == 'out' and i.get('node') == new_node_id]
             new_port = str(max(used_ports) + 1) if used_ports else "10001"
             
             uid = uinfo.get('uuid')
@@ -242,9 +242,11 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
                 k = f"vless://{uid}@{new_node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
                 cmd_add = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
             else:
-                raw_ss = f"chacha20-ietf-poly1305:{uid}@{new_node_ip}:{new_port}"
-                ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
-                k = f"ss://{ss_conf}#{safe_u}"
+                # 🚀 Outline App သေချာပေါက် လက်ခံစေရန် URL-Safe Base64
+                credentials = f"chacha20-ietf-poly1305:{uid}"
+                b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
+                k = f"ss://{b64_creds}@{new_node_ip}:{new_port}#{safe_u}"
+                
                 cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port}"
                 cmds_by_ip.setdefault(new_node_ip, []).append(f"ufw allow {new_port}/tcp && ufw allow {new_port}/udp")
 
@@ -258,7 +260,6 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
         with open(USERS_DB, 'w') as f: json.dump(db, f)
 
         for ip, cmds in cmds_by_ip.items():
-            # 🚀 Migration ပြုလုပ်ရာတွင်လည်း Rate Limit ကို ကျော်ဖြတ်မည်
             prefix = "systemctl() { true; }; export -f systemctl; "
             suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
             combined_cmd = prefix + " ; ".join(cmds) + suffix
