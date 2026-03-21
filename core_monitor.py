@@ -1,4 +1,5 @@
 import time, json, subprocess, os, threading
+from datetime import datetime
 from utils import get_all_servers, db_lock, NODES_DB
 from core_engine import execute_ssh_bg, get_safe_delete_cmd
 
@@ -70,22 +71,36 @@ def background_traffic_monitor():
                         ndb[node_id]["used_bytes"] += delta
                         ndb_changed = True
                         
-                        # 🚀 GB ပြည့်ပါက သေချာပေါက် ပိတ်မည်
+                        # 🚀 Expire ဖြစ်ခြင်းကို စစ်ဆေးမည်
+                        is_expired = False
+                        exp_str = uinfo.get('expire_date')
+                        if exp_str:
+                            try:
+                                exp_date = datetime.strptime(exp_str, "%Y-%m-%d")
+                                if datetime.now() > exp_date:
+                                    is_expired = True
+                            except: pass
+
+                        # 🚀 GB ပြည့်ခြင်းကို စစ်ဆေးမည်
                         tot_gb = float(uinfo.get('total_gb', 0))
+                        is_gb_full = False
                         if tot_gb > 0:
                             max_bytes = tot_gb * (1024**3)
-                            if float(uinfo['used_bytes']) >= max_bytes and not uinfo.get('is_blocked', False):
-                                uinfo['is_blocked'] = True
-                                uinfo['is_online'] = False
-                                node_ip = nodes.get(node_id, {}).get('ip')
-                                if node_ip:
-                                    cmd_str = get_safe_delete_cmd(uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443'))
-                                    users_to_block_by_ip.setdefault(node_ip, []).append(cmd_str)
+                            if float(uinfo.get('used_bytes', 0)) >= max_bytes:
+                                is_gb_full = True
+
+                        if (is_expired or is_gb_full) and not uinfo.get('is_blocked', False):
+                            uinfo['is_blocked'] = True
+                            uinfo['is_online'] = False
+                            node_ip = nodes.get(node_id, {}).get('ip')
+                            if node_ip:
+                                cmd_str = get_safe_delete_cmd(uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443'))
+                                users_to_block_by_ip.setdefault(node_ip, []).append(cmd_str)
                 
                 if db_changed:
-                    with open(USERS_DB, 'w') as f: json.dump(db, f)
+                    with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
                 if ndb_changed:
-                    with open(NODES_DB, 'w') as f: json.dump(ndb, f)
+                    with open(NODES_DB, 'w') as f: json.dump(ndb, f, indent=4)
 
             for node_ip, cmds in users_to_block_by_ip.items():
                 cmds.append("systemctl restart xray")
