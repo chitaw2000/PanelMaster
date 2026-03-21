@@ -1,3 +1,9 @@
+from core_engine import execute_ssh_bg, get_safe_delete_cmd
+from core_monitor import start_background_monitor
+from core_node import add_keys, toggle_key, delete_key, bulk_delete_keys, renew_key, edit_key, rebalance_auto_node, generate_token # 🚀 generate_token ထည့်ပါ
+from core_ip import get_active_ips
+from core_api import get_ssconf_data # 🚀 ဒါလေး အသစ်ထည့်ပါ
+
 from flask import Flask, render_template, request, redirect, session, url_for, send_file, jsonify
 import json, os, re, subprocess, urllib.parse, base64
 from datetime import datetime, timedelta
@@ -10,6 +16,16 @@ from core_engine import execute_ssh_bg, get_safe_delete_cmd
 from core_monitor import start_background_monitor
 from core_node import add_keys, toggle_key, delete_key, bulk_delete_keys, renew_key, edit_key, rebalance_auto_node
 from core_ip import get_active_ips
+
+# 🚀 SSCONF API Route
+@app.route('/<token>.json')
+def api_ssconf(token):
+    data = get_ssconf_data(token)
+    if data:
+        return jsonify(data)
+    else:
+        return jsonify({"error": "Invalid token or key is blocked/expired."}), 404
+
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -239,9 +255,11 @@ def add_auto_group():
     gid = request.form.get('group_id', '').strip().replace(" ", "_")
     gname = request.form.get('group_name', '').strip()
     limit = int(request.form.get('limit', 30))
+    api_domain = request.form.get('api_domain', '').strip() # 🚀 API Domain လက်ခံမည်
+    
     if gid and gname:
         groups = load_auto_groups()
-        groups[gid] = {"name": gname, "limit": limit, "nodes": {}}
+        groups[gid] = {"name": gname, "limit": limit, "api_domain": api_domain, "nodes": {}}
         save_auto_groups(groups)
     return redirect(url_for('dashboard'))
 
