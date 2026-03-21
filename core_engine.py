@@ -13,7 +13,8 @@ def execute_ssh_bg(ip, cmds):
         return
         
     if isinstance(cmds, list):
-        script_content = " ; ".join(cmds)
+        # 🚀 ဤနေရာလေးကို ပြင်လိုက်ပါသည် (Bulk ထုတ်ပါက ဖိုင်လုမရေးစေရန် ဝ.၅ စက္ကန့် နားပေးမည်)
+        script_content = " ; sleep 0.5 ; ".join(cmds)
     else:
         script_content = cmds
         
