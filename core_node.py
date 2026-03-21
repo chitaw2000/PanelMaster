@@ -2,7 +2,7 @@ import json, os, uuid, base64, urllib.parse
 from datetime import datetime, timedelta
 from utils import db_lock, get_all_servers
 from core_auto import find_available_node, load_auto_groups, save_auto_groups
-from core_engine import execute_ssh_bg, get_safe_delete_cmd
+from core_engine import execute_ssh_bg, get_vless_delete_cmd, get_ss_delete_cmd
 
 try:
     from config import USERS_DB, NODES_LIST
@@ -14,7 +14,6 @@ def get_robust_ip(node_id):
     nodes = get_all_servers()
     if node_id in nodes and nodes[node_id].get('ip'):
         return str(nodes[node_id]['ip']).strip()
-    
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f:
             for line in f:
@@ -48,28 +47,27 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
         next_id = max(existing_ids) + 1 if existing_ids else 1
         exp = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
 
-        cmds_by_ip = {}
+        vless_cmds = {}
+        ss_cmds = {}
         max_p_by_node = {} 
         
         for uinfo in db.values():
-            if uinfo.get('protocol') == 'out':
+            if isinstance(uinfo, dict) and uinfo.get('protocol') == 'out':
                 nid = uinfo.get('node')
-                p = int(uinfo.get('port', 10000))
+                try: p = int(uinfo.get('port', 10000))
+                except: p = 10000
                 max_p_by_node[nid] = max(max_p_by_node.get(nid, 10000), p)
 
         for u in usernames:
             if u in db: continue
-            
             if is_auto:
                 target_node, target_ip = find_available_node(group_id, 1, current_db=db)
                 if not target_node:
-                    if not cmds_by_ip:
-                        return False, "❌ Error: Limit Reached! No space available in any server for this Auto Node."
-                    break 
+                    return False, "❌ Error: Limit Reached! No space available in any server."
             else:
                 target_node = node_id
                 target_ip = get_robust_ip(node_id)
-                if not target_ip: return False, "❌ Error: Node Server is offline or not found!"
+                if not target_ip: return False, "❌ Error: Node Server is offline!"
 
             target_ip = str(target_ip).strip()
             max_p = max_p_by_node.get(target_node, 10000)
@@ -81,19 +79,16 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 port = "443"
                 k = f"vless://{uid}@{target_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
                 cmd = f"/usr/local/bin/v2ray-node-add-vless {u} {uid}"
+                vless_cmds.setdefault(target_ip, []).append(cmd)
             else:
                 max_p += 1
                 max_p_by_node[target_node] = max_p  
                 port = str(max_p)
-                
-                # 🚀 Outline App သေချာပေါက် လက်ခံစေရန် URL-Safe Base64 ပြောင်းထားပါသည်
                 credentials = f"chacha20-ietf-poly1305:{uid}"
                 b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
                 k = f"ss://{b64_creds}@{target_ip}:{port}#{safe_u}"
-                
                 cmd = f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 && ufw allow {port}/udp >/dev/null 2>&1"
-            
-            cmds_by_ip.setdefault(target_ip, []).append(cmd)
+                ss_cmds.setdefault(target_ip, []).append(cmd)
             
             db[u] = {
                 "node": target_node, "group": group_id, "protocol": proto, "uuid": uid, 
@@ -103,15 +98,20 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
             }
             next_id += 1
         
-        if cmds_by_ip:
-            with open(USERS_DB, 'w') as f: json.dump(db, f)
+        with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
+        
+        # 🚀 VLESS အား ပုံမှန်အတိုင်း အလုပ်လုပ်စေမည်
+        for ip, cmds in vless_cmds.items():
+            cmds.append("systemctl restart xray")
+            execute_ssh_bg(ip, cmds)
             
-            for ip, ip_cmds in cmds_by_ip.items():
-                prefix = "systemctl() { true; }; export -f systemctl; "
-                suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-                combined_cmd = prefix + " ; ".join(ip_cmds) + suffix
-                execute_ssh_bg(ip, [combined_cmd])
-                
+        # 🚀 SS အား Hack ဖြင့် အလုပ်လုပ်စေမည်
+        for ip, cmds in ss_cmds.items():
+            prefix = "systemctl() { if [[ \"$*\" == *\"xray\"* ]]; then true; else command systemctl \"$@\"; fi }; export -f systemctl; "
+            suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+            combined_cmd = prefix + " ; ".join(cmds) + suffix
+            execute_ssh_bg(ip, [combined_cmd])
+            
         return True, "Success"
 
 def toggle_key(username):
@@ -122,17 +122,21 @@ def toggle_key(username):
                 user = db[username]; user['is_blocked'] = not user.get('is_blocked', False)
                 ip = get_robust_ip(user.get('node'))
                 if ip:
+                    protocol = user.get('protocol', 'v2')
                     if user['is_blocked']: 
                         user['is_online'] = False
-                        cmd = get_safe_delete_cmd(username, user.get('protocol', 'v2'), user.get('port', '443'))
+                        cmd = get_vless_delete_cmd(username) if protocol == 'v2' else get_ss_delete_cmd(username, user.get('port'))
                     else:
                         uid = user['uuid']
-                        if user['protocol'] == 'v2': cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
-                        else: cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
+                        cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}" if protocol == 'v2' else f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
                     
-                    combined_cmd = f"{cmd} ; systemctl reset-failed xray ; systemctl restart xray"
-                    execute_ssh_bg(str(ip).strip(), [combined_cmd])
-                with open(USERS_DB, 'w') as f: json.dump(db, f)
+                    if protocol == 'v2':
+                        execute_ssh_bg(str(ip).strip(), [f"{cmd} ; systemctl restart xray"])
+                    else:
+                        prefix = "systemctl() { if [[ \"$*\" == *\"xray\"* ]]; then true; else command systemctl \"$@\"; fi }; export -f systemctl; "
+                        suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+                        execute_ssh_bg(str(ip).strip(), [prefix + cmd + suffix])
+                with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
 def edit_key(username, total_gb, expire_date):
     with db_lock:
@@ -141,7 +145,29 @@ def edit_key(username, total_gb, expire_date):
             if username in db:
                 if total_gb is not None: db[username]['total_gb'] = float(total_gb)
                 if expire_date: db[username]['expire_date'] = expire_date
-                with open(USERS_DB, 'w') as f: json.dump(db, f)
+                
+                exp_date = datetime.strptime(db[username]['expire_date'], "%Y-%m-%d")
+                if datetime.now() <= exp_date and db[username].get('is_blocked', False) == True:
+                    tot_gb = float(db[username].get('total_gb', 0))
+                    max_bytes = tot_gb * (1024**3) if tot_gb > 0 else float('inf')
+                    
+                    if float(db[username].get('used_bytes', 0)) < max_bytes:
+                        db[username]['is_blocked'] = False
+                        ip = get_robust_ip(db[username].get('node'))
+                        if ip:
+                            uid = db[username]['uuid']
+                            protocol = db[username]['protocol']
+                            port = db[username]['port']
+                            if protocol == 'v2':
+                                cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
+                                execute_ssh_bg(str(ip).strip(), [f"{cmd} ; systemctl restart xray"])
+                            else:
+                                cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port}"
+                                prefix = "systemctl() { if [[ \"$*\" == *\"xray\"* ]]; then true; else command systemctl \"$@\"; fi }; export -f systemctl; "
+                                suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+                                execute_ssh_bg(str(ip).strip(), [prefix + cmd + suffix])
+
+                with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
 def renew_key(username, add_gb, add_days):
     with db_lock:
@@ -151,7 +177,22 @@ def renew_key(username, add_gb, add_days):
                 db[username]['total_gb'] = float(add_gb); db[username]['days'] = int(add_days)
                 db[username]['expire_date'] = (datetime.now() + timedelta(days=int(add_days))).strftime("%Y-%m-%d")
                 db[username]['used_bytes'] = 0; db[username]['last_raw_bytes'] = 0; db[username]['is_blocked'] = False; db[username]['is_online'] = False
-                with open(USERS_DB, 'w') as f: json.dump(db, f)
+                
+                ip = get_robust_ip(db[username].get('node'))
+                if ip:
+                    uid = db[username]['uuid']
+                    protocol = db[username]['protocol']
+                    port = db[username]['port']
+                    if protocol == 'v2':
+                        cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
+                        execute_ssh_bg(str(ip).strip(), [f"{cmd} ; systemctl restart xray"])
+                    else:
+                        cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port}"
+                        prefix = "systemctl() { if [[ \"$*\" == *\"xray\"* ]]; then true; else command systemctl \"$@\"; fi }; export -f systemctl; "
+                        suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+                        execute_ssh_bg(str(ip).strip(), [prefix + cmd + suffix])
+                    
+                with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
 def delete_key(username):
     with db_lock:
@@ -160,30 +201,44 @@ def delete_key(username):
             if username in db:
                 info = db[username]
                 ip = get_robust_ip(info.get('node'))
+                protocol = info.get('protocol', 'v2')
                 if ip:
-                    cmd = get_safe_delete_cmd(username, info.get('protocol', 'v2'), info.get('port', '443'))
-                    combined_cmd = f"{cmd} ; systemctl reset-failed xray ; systemctl restart xray"
-                    execute_ssh_bg(str(ip).strip(), [combined_cmd])
+                    if protocol == 'v2':
+                        cmd = get_vless_delete_cmd(username)
+                        execute_ssh_bg(str(ip).strip(), [f"{cmd} ; systemctl restart xray"])
+                    else:
+                        cmd = get_ss_delete_cmd(username, info.get('port'))
+                        prefix = "systemctl() { if [[ \"$*\" == *\"xray\"* ]]; then true; else command systemctl \"$@\"; fi }; export -f systemctl; "
+                        suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+                        execute_ssh_bg(str(ip).strip(), [prefix + cmd + suffix])
                 del db[username]
-                with open(USERS_DB, 'w') as f: json.dump(db, f)
+                with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
 def bulk_delete_keys(usernames):
     with db_lock:
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
-            cmds_by_ip = {}
+            vless_dels = {}
+            ss_dels = {}
             for uname in usernames:
                 if uname in db:
                     ip = get_robust_ip(db[uname].get('node'))
+                    protocol = db[uname].get('protocol', 'v2')
                     if ip:
                         ip = str(ip).strip()
-                        cmd = get_safe_delete_cmd(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
-                        cmds_by_ip.setdefault(ip, []).append(cmd)
+                        if protocol == 'v2':
+                            vless_dels.setdefault(ip, []).append(get_vless_delete_cmd(uname))
+                        else:
+                            ss_dels.setdefault(ip, []).append(get_ss_delete_cmd(uname, db[uname].get('port')))
                     del db[uname]
-            with open(USERS_DB, 'w') as f: json.dump(db, f)
+            with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
             
-            for ip, cmds in cmds_by_ip.items():
-                prefix = "systemctl() { true; }; export -f systemctl; "
+            for ip, cmds in vless_dels.items():
+                cmds.append("systemctl restart xray")
+                execute_ssh_bg(ip, cmds)
+                
+            for ip, cmds in ss_dels.items():
+                prefix = "systemctl() { if [[ \"$*\" == *\"xray\"* ]]; then true; else command systemctl \"$@\"; fi }; export -f systemctl; "
                 suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
                 combined_cmd = prefix + " ; ".join(cmds) + suffix
                 execute_ssh_bg(ip, [combined_cmd])
@@ -213,7 +268,8 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
 
         if not excess_users: return True, "Success"
 
-        cmds_by_ip = {}
+        vless_cmds = {}
+        ss_cmds = {}
         migrated_count = 0
         
         for uname in excess_users:
@@ -228,8 +284,11 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
             if not new_node_id: break
             
             new_node_ip = str(new_node_ip).strip()
-            cmd_del = get_safe_delete_cmd(uname, proto, old_port)
-            cmds_by_ip.setdefault(old_ip, []).append(cmd_del)
+            
+            if proto == 'v2':
+                vless_cmds.setdefault(old_ip, []).append(get_vless_delete_cmd(uname))
+            else:
+                ss_cmds.setdefault(old_ip, []).append(get_ss_delete_cmd(uname, old_port))
             
             used_ports = [int(i.get('port', 10000)) for i in db.values() if isinstance(i, dict) and i.get('protocol') == 'out' and i.get('node') == new_node_id]
             new_port = str(max(used_ports) + 1) if used_ports else "10001"
@@ -241,26 +300,27 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
                 new_port = "443"
                 k = f"vless://{uid}@{new_node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
                 cmd_add = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
+                vless_cmds.setdefault(new_node_ip, []).append(cmd_add)
             else:
-                # 🚀 Outline App သေချာပေါက် လက်ခံစေရန် URL-Safe Base64
                 credentials = f"chacha20-ietf-poly1305:{uid}"
                 b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
                 k = f"ss://{b64_creds}@{new_node_ip}:{new_port}#{safe_u}"
-                
-                cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port}"
-                cmds_by_ip.setdefault(new_node_ip, []).append(f"ufw allow {new_port}/tcp && ufw allow {new_port}/udp")
-
-            cmds_by_ip.setdefault(new_node_ip, []).append(cmd_add)
+                cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port} ; ufw allow {new_port}/tcp && ufw allow {new_port}/udp"
+                ss_cmds.setdefault(new_node_ip, []).append(cmd_add)
             
             db[uname]['node'] = new_node_id; db[uname]['port'] = new_port; db[uname]['key'] = k
             if old_key_id: db[uname]['key_id'] = old_key_id 
             
             migrated_count += 1
             
-        with open(USERS_DB, 'w') as f: json.dump(db, f)
+        with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
-        for ip, cmds in cmds_by_ip.items():
-            prefix = "systemctl() { true; }; export -f systemctl; "
+        for ip, cmds in vless_cmds.items():
+            cmds.append("systemctl restart xray")
+            execute_ssh_bg(ip, cmds)
+            
+        for ip, cmds in ss_cmds.items():
+            prefix = "systemctl() { if [[ \"$*\" == *\"xray\"* ]]; then true; else command systemctl \"$@\"; fi }; export -f systemctl; "
             suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
             combined_cmd = prefix + " ; ".join(cmds) + suffix
             execute_ssh_bg(ip, [combined_cmd])
