@@ -2,6 +2,7 @@ import subprocess
 import threading
 import base64
 
+# 🚀 THE UNTOUCHABLE SSH ENGINE: Command များကို Base64 ပြောင်း၍ Bash Script အဖြစ် သေချာပေါက် Run မည်
 def _ssh_task(ip, script_content):
     try:
         b64 = base64.b64encode(script_content.encode('utf-8')).decode('utf-8')
@@ -18,11 +19,9 @@ def execute_ssh_bg(ip, cmds):
         script_content = cmds
     threading.Thread(target=_ssh_task, args=(ip, script_content), daemon=True).start()
 
+# 🚀 မူရင်းအတိုင်း ၁၀၀% အလုပ်လုပ်ခဲ့သော Safe Delete Script (Hang မဖြစ်ရန် ကာကွယ်ထားသည်)
 def get_safe_delete_cmd(username, protocol, port):
     if protocol == 'v2':
         return f"yes | /usr/local/bin/v2ray-node-del-vless '{username}' >/dev/null 2>&1 || true"
     else:
-        # 🚀 Master Panel မှနေ၍ Zombie Port အား config.json မှ အမြစ်ပြတ် ရှင်းလင်းမည့် Python Command
-        py_clean = f"python3 -c \"import json; p='/usr/local/etc/xray/config.json'; d=json.load(open(p)); d['inbounds']=[i for i in d.get('inbounds',[]) if str(i.get('port',''))!='{port}']; json.dump(d,open(p,'w'),indent=4)\""
-        
-        return f"{py_clean} ; yes | /usr/local/bin/v2ray-node-del-out '{username}' {port} >/dev/null 2>&1 || true ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true"
+        return f"yes | /usr/local/bin/v2ray-node-del-out '{username}' {port} >/dev/null 2>&1 || true ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true"
