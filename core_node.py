@@ -116,10 +116,14 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
             uid = str(uuid.uuid4()).strip()
             safe_u = urllib.parse.quote(username)
             
+            if target_ip not in cmds_by_ip:
+                cmds_by_ip[target_ip] = []
+                
             if proto == 'v2':
                 port = "443"
                 k = f"vless://{uid}@{target_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
                 cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
+                cmds_by_ip[target_ip].append(cmd)
             else:
                 max_p += 1
                 max_p_by_node[target_node] = max_p  
@@ -127,11 +131,13 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 raw_ss = f"chacha20-ietf-poly1305:{uid}@{target_ip}:{port}"
                 ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
                 k = f"ss://{ss_conf}#{safe_u}"
-                cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 ; ufw allow {port}/udp >/dev/null 2>&1"
-            
-            if target_ip not in cmds_by_ip:
-                cmds_by_ip[target_ip] = []
-            cmds_by_ip[target_ip].append(cmd)
+                
+                cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port}"
+                cmds_by_ip[target_ip].append(cmd)
+                
+                # UFW Command များကို ပြတ်မကျန်စေရန် သီးသန့်ခွဲရေးထားပါသည်
+                ufw_cmd = f"ufw allow {port}/tcp >/dev/null 2>&1 && ufw allow {port}/udp >/dev/null 2>&1"
+                cmds_by_ip[target_ip].append(ufw_cmd)
             
             db[username] = {
                 "node": target_node, "group": group_id, "protocol": proto, "uuid": uid, 
@@ -195,7 +201,6 @@ def edit_key(username, total_gb, expire_date):
                 if total_gb is not None: db[username]['total_gb'] = float(total_gb)
                 if expire_date: db[username]['expire_date'] = expire_date
                 
-                # သက်တမ်းတိုးပေးပြီးပါက Block ထားသည်ကို ပြန်ဖွင့်ပေးမည်
                 exp_date = datetime.strptime(db[username]['expire_date'], "%Y-%m-%d")
                 if datetime.now() <= exp_date and db[username].get('is_blocked', False) == True:
                     tot_gb = float(db[username].get('total_gb', 0))
@@ -359,16 +364,40 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
             uid = uinfo.get('uuid')
             safe_u = urllib.parse.quote(uname)
 
+            if new_node_ip not in cmds_by_ip:
+                cmds_by_ip[new_node_ip] = []
+
             if proto == 'v2':
                 new_port = "443"
                 k = f"vless://{uid}@{new_node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
                 cmd_add = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
+                cmds_by_ip[new_node_ip].append(cmd_add)
             else:
                 raw_ss = f"chacha20-ietf-poly1305:{uid}@{new_node_ip}:{new_port}"
                 ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
                 k = f"ss://{ss_conf}#{safe_u}"
                 cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port}"
+                cmds_by_ip[new_node_ip].append(cmd_add)
                 
-                if new_node_ip not in cmds_by_ip:
-                    cmds_by_ip[new_node_ip] = []
-                cmds_by_ip[new_node_ip].append(f"ufw allow {new_port}/tcp >/dev/null 2>&1 && ufw allow {new_port}/udp >/dev/null
+                # UFW Command များကို ပြတ်မကျန်စေရန် သီးသန့်ခွဲရေးထားပါသည်
+                ufw_cmd = f"ufw allow {new_port}/tcp >/dev/null 2>&1 && ufw allow {new_port}/udp >/dev/null 2>&1"
+                cmds_by_ip[new_node_ip].append(ufw_cmd)
+
+            db[uname]['node'] = new_node_id
+            db[uname]['port'] = new_port
+            db[uname]['key'] = k
+            if old_key_id: 
+                db[uname]['key_id'] = old_key_id 
+            
+            migrated_count += 1
+            
+        with open(USERS_DB, 'w') as f: 
+            json.dump(db, f, indent=4)
+
+        for ip, cmds in cmds_by_ip.items():
+            cmds.append("systemctl restart xray")
+            execute_ssh_bg(ip, cmds)
+            
+        if migrated_count < len(excess_users):
+            return False, f"Limit Updated. Migrated {migrated_count} keys. Failed to migrate {len(excess_users) - migrated_count} keys (No space)."
+        return True, "Success"
