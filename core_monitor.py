@@ -70,7 +70,6 @@ def background_traffic_monitor():
                         ndb[node_id]["used_bytes"] += delta
                         ndb_changed = True
                         
-                        # 🚀 GB ပြည့်ပါက သေချာပေါက် ပိတ်မည်
                         tot_gb = float(uinfo.get('total_gb', 0))
                         if tot_gb > 0:
                             max_bytes = tot_gb * (1024**3)
