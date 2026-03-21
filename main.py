@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, redirect, session, url_for, send_file, jsonify
-import json, os, re, subprocess, urllib.parse
+import json, os, re, subprocess, urllib.parse, base64  # 🚀 base64 ကို Import လုပ်ထားပါသည်
 from datetime import datetime, timedelta
 
 from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, load_config, save_config
@@ -38,7 +38,6 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
-# 🚀 IP ကို မည်သည့် Format မှမရွေး အတိအကျ ဆွဲထုတ်ပေးမည့် Function
 def get_target_ip(node_id):
     nodes = get_all_servers()
     if node_id in nodes and nodes[node_id].get('ip'):
@@ -369,7 +368,7 @@ def delete_server_from_group(group_id, node_id):
             if os.path.exists(USERS_DB):
                 with open(USERS_DB, 'r') as f: 
                     db = json.load(f)
-                users_to_delete = [u for u, info in db.items() if isinstance(info, dict) and info.get('node') == node_id]
+                users_to_delete = [u for u, info in db.items() if info.get('node') == node_id]
         if users_to_delete: 
             bulk_delete_keys(users_to_delete)
             
@@ -817,19 +816,21 @@ def download_backup_global():
         return send_file(USERS_DB, as_attachment=True, download_name=f"qito_db_backup.json")
     return "No DB found."
 
+# 🚀 Backup Restore ပြုလုပ်ရာတွင် IP အသစ်များအား အလိုအလျောက် Update လုပ်ပေးမည့်စနစ်
 @app.route('/upload_backup', methods=['POST'])
 def upload_backup():
     file = request.files.get('backup_file')
     if file: 
         file.save(USERS_DB)
         
-        # 🚀 ဖြည့်စွက်ချက်: Backup တင်ပြီးနောက် User များကို Node ဆီသို့ Force Sync လုပ်မည်
         try:
             with db_lock:
                 with open(USERS_DB, 'r') as f:
                     db = json.load(f)
             
+            db_changed = False
             cmds_by_ip = {}
+            
             for uname, uinfo in db.items():
                 if not isinstance(uinfo, dict): continue
                 
@@ -840,14 +841,31 @@ def upload_backup():
                 uid = uinfo.get('uuid')
                 port = uinfo.get('port')
                 proto = uinfo.get('protocol')
+                safe_u = urllib.parse.quote(uname)
                 
+                # 🚀 Node အသစ်၏ IP ဖြင့် Key များကို ပြန်လည်တည်ဆောက်မည်
                 if proto == 'v2':
+                    new_key = f"vless://{uid}@{node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
                     cmd = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
                 else:
+                    credentials = f"chacha20-ietf-poly1305:{uid}"
+                    b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
+                    new_key = f"ss://{b64_creds}@{node_ip}:{port}#{safe_u}"
                     cmd = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
+                
+                # 🚀 IP ပြောင်းလဲသွားပါက Database တွင် အလိုလို အစားထိုး သိမ်းဆည်းပေးမည်
+                if uinfo.get('key') != new_key:
+                    uinfo['key'] = new_key
+                    db_changed = True
                 
                 cmds_by_ip.setdefault(node_ip, []).append(cmd)
             
+            # ပြောင်းလဲသွားသော IP အသစ်များအား Database သို့ ပြန်လည်သိမ်းဆည်းမည်
+            if db_changed:
+                with open(USERS_DB, 'w') as f:
+                    json.dump(db, f, indent=4)
+            
+            # Node အသစ်ရှိ Xray ထဲသို့ User များကို ပြန်ထည့်သွင်းမည် (Force Sync)
             for ip, cmds in cmds_by_ip.items():
                 prefix = "systemctl() { true; }; export -f systemctl; "
                 suffix = " ; unset -f systemctl; systemctl restart xray"
