@@ -11,7 +11,6 @@ from core_monitor import start_background_monitor
 from core_node import add_keys, toggle_key, delete_key, bulk_delete_keys, renew_key, edit_key, rebalance_auto_node
 from core_ip import get_active_ips
 
-# 🚀 core_api.py မှ JSON ထုတ်ပေးမည့် Function ကို လှမ်းခေါ်ခြင်း
 try:
     from core_api import get_ssconf_data
 except ImportError:
@@ -28,7 +27,6 @@ start_background_monitor()
 
 @app.before_request
 def check_auth():
-    # 🚀 .json api ကို login မလိုဘဲ ပေးဖတ်ခွင့်ပြုမည်
     if request.endpoint not in ['login', 'static', 'api_stats', 'api_user_ip', 'api_ssconf'] and not session.get('logged_in'): 
         return redirect(url_for('login'))
 
@@ -45,7 +43,6 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
-# 🚀 API Route: Token ဖြင့် JSON တောင်းခံပါက ပြန်လည်ပေးပို့မည်
 @app.route('/<token>.json')
 def api_ssconf(token):
     if get_ssconf_data:
@@ -58,7 +55,6 @@ def get_target_ip(node_id):
     nodes = get_all_servers()
     if node_id in nodes and nodes[node_id].get('ip'):
         return str(nodes[node_id]['ip']).strip()
-    
     if os.path.exists(NODES_LIST):
         with open(NODES_LIST, 'r') as f:
             for line in f:
@@ -224,8 +220,6 @@ def dashboard():
         g_nodes = gdata.get("nodes", {})
         g_keys = sum(1 for i in db.values() if isinstance(i, dict) and i.get("group") == gid)
         g_used_gb = group_used_bytes.get(gid, 0) / (1024**3)
-        
-        # 🚀 UI သို့ API Domain ပါ လှမ်းပို့ပေးမည်
         api_domain = gdata.get("api_domain", "")
         group_stats.append({"id": gid, "name": gdata.get("name", gid), "limit": limit, "api_domain": api_domain, "node_count": len(g_nodes), "total_keys": g_keys, "used_gb": g_used_gb})
 
@@ -253,7 +247,6 @@ def dashboard():
 
     return render_template('dashboard.html', nodes=node_stats, groups=group_stats, config=config, custom_backups=custom_backups, auto_backups=auto_backups, orphaned_backups=orphaned_backups, sick_nodes=sick_nodes, sick_count=sick_count)
 
-# 🚀 Auto Group ပြုလုပ်ရာတွင် api_domain ကိုပါ သိမ်းဆည်းမည်
 @app.route('/add_auto_group', methods=['POST'])
 def add_auto_group():
     gid = request.form.get('group_id', '').strip().replace(" ", "_")
@@ -341,7 +334,9 @@ def group_view(group_id):
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             
             info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
-            is_expired = True if (info.get('expire_date') and current_date_str > info.get('expire_date')) else False
+            
+            exp_str = info.get('expire_date')
+            is_expired = True if (exp_str and current_date_str > exp_str) else False
             
             if is_expired: info['status_label'] = "Expired"
             elif info.get('is_blocked'): info['status_label'] = "Blocked"
@@ -382,6 +377,159 @@ def group_view(group_id):
         server_stats.append({"id": nid, "ip": nip, "count": counts[nid], "limit": limit, "used_gb": used_gb, "limit_tb": limit_tb, "is_alarm": is_alarm, "health": health})
         
     return render_template('group.html', group_id=group_id, group=group, users=users, server_stats=server_stats, group_used_gb=group_used_gb)
+
+@app.route('/switch_user_node/<username>', methods=['POST'])
+def switch_user_node(username):
+    target_node = request.form.get('target_node')
+    if not target_node: return redirect(request.referrer)
+    
+    with db_lock:
+        if not os.path.exists(USERS_DB): return redirect(request.referrer)
+        with open(USERS_DB, 'r') as f: db = json.load(f)
+        
+        if username not in db: return redirect(request.referrer)
+        uinfo = db[username]
+        old_node = uinfo.get('node')
+        
+        if old_node == target_node: return redirect(request.referrer)
+        
+        old_ip = get_target_ip(old_node)
+        new_ip = get_target_ip(target_node)
+        if not new_ip: return redirect(request.referrer)
+        
+        proto = uinfo.get('protocol', 'v2')
+        uid = uinfo.get('uuid')
+        old_port = uinfo.get('port')
+        safe_u = urllib.parse.quote(username)
+        
+        if old_ip:
+            cmd_del = get_safe_delete_cmd(username, proto, old_port)
+            if proto == 'v2':
+                execute_ssh_bg(old_ip, [f"{cmd_del} ; systemctl restart xray"])
+            else:
+                prefix = "systemctl() { true; }; export -f systemctl; "
+                suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+                execute_ssh_bg(old_ip, [prefix + cmd_del + suffix])
+                
+        if proto == 'v2':
+            new_port = "443"
+            new_key = f"vless://{uid}@{new_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
+            cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
+        else:
+            used_ports = [int(i.get('port', 10000)) for i in db.values() if isinstance(i, dict) and i.get('protocol') == 'out' and i.get('node') == target_node]
+            new_port = str(max(used_ports) + 1) if used_ports else "10001"
+            credentials = f"chacha20-ietf-poly1305:{uid}"
+            b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
+            new_key = f"ss://{b64_creds}@{new_ip}:{new_port}#{safe_u}"
+            cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {new_port} ; ufw allow {new_port}/tcp >/dev/null 2>&1 || true ; ufw allow {new_port}/udp >/dev/null 2>&1 || true"
+            
+        uinfo['node'] = target_node
+        uinfo['port'] = new_port
+        uinfo['key'] = new_key
+        
+        with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
+        
+    if proto == 'v2':
+        execute_ssh_bg(new_ip, [f"{cmd_add} ; systemctl restart xray"])
+    else:
+        prefix = "systemctl() { true; }; export -f systemctl; "
+        suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+        execute_ssh_bg(new_ip, [prefix + cmd_add + suffix])
+        
+    return redirect(request.referrer)
+
+@app.route('/node/<node_id>')
+def node_view(node_id):
+    nodes = get_all_servers()
+    if node_id not in nodes: 
+        return redirect(url_for('dashboard'))
+        
+    node_info = nodes[node_id]
+    node_ip = str(node_info.get('ip', '')).strip()
+    
+    db = {}
+    ndb = {}
+    with db_lock:
+        if os.path.exists(USERS_DB):
+            try:
+                with open(USERS_DB, 'r') as f: db = json.load(f)
+            except: pass
+        if os.path.exists(NODES_DB):
+            try:
+                with open(NODES_DB, 'r') as f: ndb = json.load(f)
+            except: pass
+            
+    config = load_config()
+    active_users = check_live_status(db)
+    users = []
+    node_used_bytes = 0
+    current_date_str = datetime.now().strftime("%Y-%m-%d")
+    
+    db_changed = False
+    cmds_to_sync = []
+    
+    for uname, info in db.items():
+        if not isinstance(info, dict): continue 
+        if info.get('node') == node_id:
+            
+            uid = info.get('uuid')
+            port = info.get('port')
+            proto = info.get('protocol', 'v2')
+            safe_u = urllib.parse.quote(uname)
+            
+            if proto == 'v2':
+                expected_key = f"vless://{uid}@{node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
+                cmd = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
+            else:
+                credentials = f"chacha20-ietf-poly1305:{uid}"
+                b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
+                expected_key = f"ss://{b64_creds}@{node_ip}:{port}#{safe_u}"
+                cmd = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
+                
+            if info.get('key') != expected_key:
+                info['key'] = expected_key
+                db_changed = True
+                if not info.get('is_blocked', False):
+                    cmds_to_sync.append(cmd)
+            
+            info['used_bytes'] = float(info.get('used_bytes', 0))
+            info['total_gb'] = float(info.get('total_gb', 0))
+            info['used_gb_str'] = f"{(info['used_bytes'] / (1024**3)):.2f}"
+            info['username'] = uname
+            info['actual_key'] = info.get('key') or "No Key Found"
+            info['is_active'] = uname in active_users and not info.get('is_blocked')
+            
+            info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
+            
+            exp_str = info.get('expire_date')
+            is_expired = True if (exp_str and current_date_str > exp_str) else False
+            
+            if is_expired: info['status_label'] = "Expired"
+            elif info.get('is_blocked'): info['status_label'] = "Blocked"
+            elif info['is_active']: info['status_label'] = "Online"
+            else: info['status_label'] = "Offline"
+                
+            users.append(info)
+            node_used_bytes += info['used_bytes']
+            
+    if db_changed:
+        with db_lock:
+            with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
+    if cmds_to_sync and node_ip:
+        prefix = "systemctl() { true; }; export -f systemctl; "
+        suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+        execute_ssh_bg(node_ip, [prefix + " ; ".join(cmds_to_sync) + suffix])
+            
+    ninfo = ndb.get(node_id, {})
+    limit_tb = float(ninfo.get("limit_tb", 0))
+    used_gb = node_used_bytes / (1024**3)
+    limit_gb = limit_tb * 1024
+    is_alarm = limit_tb > 0 and used_gb >= limit_gb
+    health = ninfo.get("health", "green")
+            
+    other_nodes = [nid for nid in nodes.keys() if nid != node_id]
+    
+    return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_ip, users=users, other_nodes=other_nodes, config=config, used_gb=used_gb, limit_tb=limit_tb, is_alarm=is_alarm, health=health)
 
 @app.route('/add_server_to_group/<group_id>', methods=['POST'])
 def add_server_to_group(group_id):
@@ -465,97 +613,6 @@ def add_user_auto():
     if not success: 
         return f"<script>alert('{msg}'); window.history.back();</script>"
     return redirect(f'/group/{gid}')
-
-@app.route('/node/<node_id>')
-def node_view(node_id):
-    nodes = get_all_servers()
-    if node_id not in nodes: 
-        return redirect(url_for('dashboard'))
-        
-    node_info = nodes[node_id]
-    node_ip = str(node_info.get('ip', '')).strip()
-    
-    db = {}
-    ndb = {}
-    with db_lock:
-        if os.path.exists(USERS_DB):
-            try:
-                with open(USERS_DB, 'r') as f: db = json.load(f)
-            except: pass
-        if os.path.exists(NODES_DB):
-            try:
-                with open(NODES_DB, 'r') as f: ndb = json.load(f)
-            except: pass
-            
-    config = load_config()
-    active_users = check_live_status(db)
-    users = []
-    node_used_bytes = 0
-    current_date_str = datetime.now().strftime("%Y-%m-%d")
-    
-    db_changed = False
-    cmds_to_sync = []
-    
-    for uname, info in db.items():
-        if not isinstance(info, dict): continue 
-        if info.get('node') == node_id:
-            
-            uid = info.get('uuid')
-            port = info.get('port')
-            proto = info.get('protocol', 'v2')
-            safe_u = urllib.parse.quote(uname)
-            
-            if proto == 'v2':
-                expected_key = f"vless://{uid}@{node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
-                cmd = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
-            else:
-                credentials = f"chacha20-ietf-poly1305:{uid}"
-                b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
-                expected_key = f"ss://{b64_creds}@{node_ip}:{port}#{safe_u}"
-                cmd = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
-                
-            if info.get('key') != expected_key:
-                info['key'] = expected_key
-                db_changed = True
-                if not info.get('is_blocked', False):
-                    cmds_to_sync.append(cmd)
-            
-            info['used_bytes'] = float(info.get('used_bytes', 0))
-            info['total_gb'] = float(info.get('total_gb', 0))
-            info['used_gb_str'] = f"{(info['used_bytes'] / (1024**3)):.2f}"
-            info['username'] = uname
-            info['actual_key'] = info.get('key') or "No Key Found"
-            info['is_active'] = uname in active_users and not info.get('is_blocked')
-            
-            info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
-            is_expired = True if (info.get('expire_date') and current_date_str > exp_str) else False
-            
-            if is_expired: info['status_label'] = "Expired"
-            elif info.get('is_blocked'): info['status_label'] = "Blocked"
-            elif info['is_active']: info['status_label'] = "Online"
-            else: info['status_label'] = "Offline"
-                
-            users.append(info)
-            node_used_bytes += info['used_bytes']
-            
-    if db_changed:
-        with db_lock:
-            with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
-    if cmds_to_sync and node_ip:
-        prefix = "systemctl() { true; }; export -f systemctl; "
-        suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-        execute_ssh_bg(node_ip, [prefix + " ; ".join(cmds_to_sync) + suffix])
-            
-    ninfo = ndb.get(node_id, {})
-    limit_tb = float(ninfo.get("limit_tb", 0))
-    used_gb = node_used_bytes / (1024**3)
-    limit_gb = limit_tb * 1024
-    is_alarm = limit_tb > 0 and used_gb >= limit_gb
-    health = ninfo.get("health", "green")
-            
-    other_nodes = [nid for nid in nodes.keys() if nid != node_id]
-    
-    return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_ip, users=users, other_nodes=other_nodes, config=config, used_gb=used_gb, limit_tb=limit_tb, is_alarm=is_alarm, health=health)
 
 @app.route('/add_node', methods=['POST'])
 def add_node():
