@@ -295,7 +295,7 @@ def group_view(group_id):
             info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             
-            # 🚀 UI အတွက် Protocol နှင့် Status
+            # 🚀 UI အတွက် Protocol နှင့် Status ပြသမည်
             info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
             exp_str = info.get('expire_date')
             is_expired = True if (exp_str and current_date_str > exp_str) else False
@@ -369,7 +369,7 @@ def delete_server_from_group(group_id, node_id):
             if os.path.exists(USERS_DB):
                 with open(USERS_DB, 'r') as f: 
                     db = json.load(f)
-                users_to_delete = [u for u, info in db.items() if isinstance(info, dict) and info.get('node') == node_id]
+                users_to_delete = [u for u, info in db.items() if info.get('node') == node_id]
         if users_to_delete: 
             bulk_delete_keys(users_to_delete)
             
@@ -461,7 +461,7 @@ def node_view(node_id):
             info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             
-            # 🚀 UI တွင် Protocol နှင့် Status
+            # 🚀 UI တွင် Protocol နှင့် Status ပြသမည်
             info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
             exp_str = info.get('expire_date')
             is_expired = True if (exp_str and current_date_str > exp_str) else False
