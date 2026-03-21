@@ -38,6 +38,7 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
+# 🚀 IP ကို မည်သည့် Format မှမရွေး အတိအကျ ဆွဲထုတ်ပေးမည့် Function
 def get_target_ip(node_id):
     nodes = get_all_servers()
     if node_id in nodes and nodes[node_id].get('ip'):
@@ -169,13 +170,10 @@ def dashboard():
     group_used_bytes = {}
     
     for uname, uinfo in db.items():
-        if not isinstance(uinfo, dict): continue
         nid = uinfo.get('node')
         gid = uinfo.get('group')
-        try: u_bytes = float(uinfo.get('used_bytes', 0))
-        except: u_bytes = 0.0
-        if nid: node_used_bytes[nid] = node_used_bytes.get(nid, 0) + u_bytes
-        if gid: group_used_bytes[gid] = group_used_bytes.get(gid, 0) + u_bytes
+        if nid: node_used_bytes[nid] = node_used_bytes.get(nid, 0) + float(uinfo.get('used_bytes', 0))
+        if gid: group_used_bytes[gid] = group_used_bytes.get(gid, 0) + float(uinfo.get('used_bytes', 0))
     
     all_servers = get_all_servers()
     sick_nodes = {'blue': [], 'yellow': [], 'orange': [], 'red': []}
@@ -187,18 +185,12 @@ def dashboard():
             sick_count += 1
             
     for nid, info in nodes.items():
-        total_count = sum(1 for i in db.values() if isinstance(i, dict) and i.get('node') == nid and not i.get('group'))
-        live_count = sum(1 for uname, i in db.items() if isinstance(i, dict) and i.get('node') == nid and not i.get('group') and uname in active_users and not i.get('is_blocked'))
+        total_count = sum(1 for i in db.values() if i.get('node') == nid and not i.get('group'))
+        live_count = sum(1 for uname, i in db.items() if i.get('node') == nid and not i.get('group') and uname in active_users and not i.get('is_blocked'))
         
         ninfo = ndb.get(nid, {})
         limit_tb = float(ninfo.get("limit_tb", 0))
-        
-        # 🚀 Historical Traffic ကို လုံခြုံစွာ တွက်ချက်မည်
-        try: historical_bytes = float(ninfo.get("used_bytes", 0))
-        except: historical_bytes = 0.0
-        current_active_bytes = float(node_used_bytes.get(nid, 0))
-        
-        used_gb = (current_active_bytes + historical_bytes) / (1024**3)
+        used_gb = node_used_bytes.get(nid, 0) / (1024**3)
         limit_gb = limit_tb * 1024
         is_alarm = limit_gb > 0 and used_gb >= limit_gb
         health = ninfo.get("health", "green")
@@ -212,7 +204,7 @@ def dashboard():
     for gid, gdata in auto_groups.items():
         limit = gdata.get("limit", 30)
         g_nodes = gdata.get("nodes", {})
-        g_keys = sum(1 for i in db.values() if isinstance(i, dict) and i.get("group") == gid)
+        g_keys = sum(1 for i in db.values() if i.get("group") == gid)
         g_used_gb = group_used_bytes.get(gid, 0) / (1024**3)
         group_stats.append({"id": gid, "name": gdata.get("name", gid), "limit": limit, "node_count": len(g_nodes), "total_keys": g_keys, "used_gb": g_used_gb})
 
@@ -286,15 +278,9 @@ def group_view(group_id):
     group_total_bytes = 0
     
     for uname, info in db.items():
-        if not isinstance(info, dict): continue
         if info.get('group') == group_id:
-            try: u_bytes = float(info.get('used_bytes', 0))
-            except: u_bytes = 0.0
-            info['used_bytes'] = u_bytes
-            
-            try: info['total_gb'] = float(info.get('total_gb', 0))
-            except: info['total_gb'] = 0.0
-            
+            info['used_bytes'] = float(info.get('used_bytes', 0))
+            info['total_gb'] = float(info.get('total_gb', 0))
             info['used_gb_str'] = f"{(info['used_bytes'] / (1024**3)):.2f}"
             info['username'] = uname
             info['actual_key'] = info.get('key') or "No Key Found"
@@ -359,7 +345,7 @@ def delete_server_from_group(group_id, node_id):
             if os.path.exists(USERS_DB):
                 with open(USERS_DB, 'r') as f: 
                     db = json.load(f)
-                users_to_delete = [u for u, info in db.items() if isinstance(info, dict) and info.get('node') == node_id]
+                users_to_delete = [u for u, info in db.items() if info.get('node') == node_id]
         if users_to_delete: 
             bulk_delete_keys(users_to_delete)
             
@@ -435,15 +421,9 @@ def node_view(node_id):
     users = []
     node_used_bytes = 0
     for uname, info in db.items():
-        if not isinstance(info, dict): continue
         if info.get('node') == node_id:
-            try: u_bytes = float(info.get('used_bytes', 0))
-            except: u_bytes = 0.0
-            info['used_bytes'] = u_bytes
-            
-            try: info['total_gb'] = float(info.get('total_gb', 0))
-            except: info['total_gb'] = 0.0
-            
+            info['used_bytes'] = float(info.get('used_bytes', 0))
+            info['total_gb'] = float(info.get('total_gb', 0))
             info['used_gb_str'] = f"{(info['used_bytes'] / (1024**3)):.2f}"
             info['username'] = uname
             info['actual_key'] = info.get('key') or "No Key Found"
@@ -453,16 +433,12 @@ def node_view(node_id):
             
     ninfo = ndb.get(node_id, {})
     limit_tb = float(ninfo.get("limit_tb", 0))
-    
-    # 🚀 Historical Traffic ကို လုံခြုံစွာ တွက်ချက်မည်
-    try: historical_bytes = float(ninfo.get("used_bytes", 0))
-    except: historical_bytes = 0.0
-    used_gb = (node_used_bytes + historical_bytes) / (1024**3)
-    
+    used_gb = node_used_bytes / (1024**3)
     limit_gb = limit_tb * 1024
     is_alarm = limit_tb > 0 and used_gb >= limit_gb
     health = ninfo.get("health", "green")
             
+    # Syntax Error Fix ပြီးသားပါ
     other_nodes = [nid for nid in nodes.keys() if nid != node_id]
     
     return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, config=config, used_gb=used_gb, limit_tb=limit_tb, is_alarm=is_alarm, health=health)
@@ -482,9 +458,11 @@ def add_node():
             with open(NODES_LIST, 'w') as f: 
                 f.write("")
                 
+        # (ID | Name | IP) ပြည့်စုံစွာ ပြန်သိမ်းမည်
         with open(NODES_LIST, 'a') as f: 
             f.write(f"\n{n_id}|{n_name}|{n_ip}")
             
+    # "yes" Bug ရှင်းလင်းပြီးပါပြီ
     return redirect(f"/node/{n_id}?newly_added={n_id}")
 
 @app.route('/delete_node/<node_id>', methods=['POST'])
@@ -612,6 +590,7 @@ def install_node_action(node_id):
     ip = get_target_ip(node_id)
     if ip: 
         ip_str = str(ip).strip()
+        # 🚀 Xray Install ခလုတ်နှိပ်လျှင် Sync ဖြင့် တိုက်ရိုက် Run ပြီး ပြီးသည်အထိ စောင့်မည်
         cmd = f"ssh -o StrictHostKeyChecking=no root@{ip_str} 'bash -s' < /root/PanelMaster/install_node.sh"
         subprocess.run(cmd, shell=True)
     return redirect(request.referrer)
@@ -646,7 +625,7 @@ def add_user_manual():
     nid = request.form.get('node_id')
     nip = get_target_ip(nid)
     if not nip: 
-        return f"<script>alert('Error: Target Node IP is missing or offline!'); window.history.back();</script>"
+        return redirect(f'/node/{nid}')
     
     gid = ""
     groups = load_auto_groups()
@@ -778,7 +757,7 @@ def purge_node(node_id):
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: 
                 db = json.load(f)
-            users_to_delete = [u for u, info in db.items() if isinstance(info, dict) and info.get('node') == node_id]
+            users_to_delete = [u for u, info in db.items() if info.get('node') == node_id]
             for u in users_to_delete: 
                 del db[u]
             with open(USERS_DB, 'w') as f: 
