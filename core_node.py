@@ -104,10 +104,9 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
             with open(USERS_DB, 'w') as f: json.dump(db, f)
             
             for ip, ip_cmds in cmds_by_ip.items():
-                prefix = "systemctl() { true; }; export -f systemctl; "
-                suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-                combined_cmd = prefix + " ; ".join(ip_cmds) + suffix
-                execute_ssh_bg(ip, [combined_cmd])
+                # 🚀 Hack များကို အကုန်ဖြုတ်ပစ်လိုက်ပါပြီ။
+                ip_cmds.append("systemctl restart xray")
+                execute_ssh_bg(ip, ip_cmds)
                 
         return True, "Success"
 
@@ -127,7 +126,7 @@ def toggle_key(username):
                         if user['protocol'] == 'v2': cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
                         else: cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
                     
-                    combined_cmd = f"{cmd} ; systemctl reset-failed xray ; systemctl restart xray"
+                    combined_cmd = f"{cmd} ; systemctl restart xray"
                     execute_ssh_bg(str(ip).strip(), [combined_cmd])
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
 
@@ -159,7 +158,7 @@ def delete_key(username):
                 ip = get_robust_ip(info.get('node'))
                 if ip:
                     cmd = get_safe_delete_cmd(username, info.get('protocol', 'v2'), info.get('port', '443'))
-                    combined_cmd = f"{cmd} ; systemctl reset-failed xray ; systemctl restart xray"
+                    combined_cmd = f"{cmd} ; systemctl restart xray"
                     execute_ssh_bg(str(ip).strip(), [combined_cmd])
                 del db[username]
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
@@ -180,10 +179,8 @@ def bulk_delete_keys(usernames):
             with open(USERS_DB, 'w') as f: json.dump(db, f)
             
             for ip, cmds in cmds_by_ip.items():
-                prefix = "systemctl() { true; }; export -f systemctl; "
-                suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-                combined_cmd = prefix + " ; ".join(cmds) + suffix
-                execute_ssh_bg(ip, [combined_cmd])
+                cmds.append("systemctl restart xray")
+                execute_ssh_bg(ip, cmds)
 
 def rebalance_auto_node(group_id, new_limit, specific_node=None):
     groups = load_auto_groups()
@@ -255,10 +252,8 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
         with open(USERS_DB, 'w') as f: json.dump(db, f)
 
         for ip, cmds in cmds_by_ip.items():
-            prefix = "systemctl() { true; }; export -f systemctl; "
-            suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-            combined_cmd = prefix + " ; ".join(cmds) + suffix
-            execute_ssh_bg(ip, [combined_cmd])
+            cmds.append("systemctl restart xray")
+            execute_ssh_bg(ip, cmds)
             
         if migrated_count < len(excess_users):
             return False, f"Limit Updated. Migrated {migrated_count} keys. Failed to migrate {len(excess_users) - migrated_count} keys (No space)."
