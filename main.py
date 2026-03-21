@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, redirect, session, url_for, send_file, jsonify
-import json, os, re, subprocess, urllib.parse, base64  # 🚀 base64 ကို Import လုပ်ထားပါသည်
+import json, os, re, subprocess, urllib.parse, base64
 from datetime import datetime, timedelta
 
 from config import SECRET_KEY, USERS_DB, NODES_LIST, CONFIG_FILE, ADMIN_PASS, load_config, save_config
@@ -280,40 +280,65 @@ def group_view(group_id):
     group_total_bytes = 0
     current_date_str = datetime.now().strftime("%Y-%m-%d")
     
+    db_changed = False
+    cmds_by_ip = {}
+    
     for uname, info in db.items():
         if not isinstance(info, dict): continue
         if info.get('group') == group_id:
-            try: u_bytes = float(info.get('used_bytes', 0))
-            except: u_bytes = 0.0
-            info['used_bytes'] = u_bytes
             
-            try: info['total_gb'] = float(info.get('total_gb', 0))
-            except: info['total_gb'] = 0.0
+            # 🚀 Auto-Heal (IP အဟောင်းဖြစ်နေပါက အလိုလို အသစ်ချိန်းပေးမည့် စနစ်)
+            nid = info.get('node')
+            node_ip = get_target_ip(nid)
             
+            if node_ip:
+                uid = info.get('uuid')
+                port = info.get('port')
+                proto = info.get('protocol', 'v2')
+                safe_u = urllib.parse.quote(uname)
+                
+                if proto == 'v2':
+                    expected_key = f"vless://{uid}@{node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
+                    cmd = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
+                else:
+                    credentials = f"chacha20-ietf-poly1305:{uid}"
+                    b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
+                    expected_key = f"ss://{b64_creds}@{node_ip}:{port}#{safe_u}"
+                    cmd = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
+                    
+                if info.get('key') != expected_key:
+                    info['key'] = expected_key
+                    db_changed = True
+                    if not info.get('is_blocked', False):
+                        cmds_by_ip.setdefault(node_ip, []).append(cmd)
+            
+            info['used_bytes'] = float(info.get('used_bytes', 0))
+            info['total_gb'] = float(info.get('total_gb', 0))
             info['used_gb_str'] = f"{(info['used_bytes'] / (1024**3)):.2f}"
             info['username'] = uname
             info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             
             info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
-            exp_str = info.get('expire_date')
-            is_expired = True if (exp_str and current_date_str > exp_str) else False
+            is_expired = True if (info.get('expire_date') and current_date_str > info.get('expire_date')) else False
             
-            if is_expired:
-                info['status_label'] = "Expired"
-            elif info.get('is_blocked'):
-                info['status_label'] = "Blocked"
-            elif info['is_active']:
-                info['status_label'] = "Online"
-            else:
-                info['status_label'] = "Offline"
+            if is_expired: info['status_label'] = "Expired"
+            elif info.get('is_blocked'): info['status_label'] = "Blocked"
+            elif info['is_active']: info['status_label'] = "Online"
+            else: info['status_label'] = "Offline"
                 
             users.append(info)
-            
-            nid = info.get('node')
             if nid in counts: counts[nid] += 1
             if nid: node_used_bytes[nid] = node_used_bytes.get(nid, 0) + info['used_bytes']
             group_total_bytes += info['used_bytes']
+            
+    if db_changed:
+        with db_lock:
+            with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
+    for ip, cmds in cmds_by_ip.items():
+        prefix = "systemctl() { true; }; export -f systemctl; "
+        suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+        execute_ssh_bg(ip, [prefix + " ; ".join(cmds) + suffix])
             
     users = sorted(users, key=lambda x: int(x.get('key_id', 0)))
     group_used_gb = group_total_bytes / (1024**3)
@@ -427,6 +452,8 @@ def node_view(node_id):
         return redirect(url_for('dashboard'))
         
     node_info = nodes[node_id]
+    node_ip = str(node_info.get('ip', '')).strip()
+    
     db = {}
     ndb = {}
     with db_lock:
@@ -445,36 +472,59 @@ def node_view(node_id):
     node_used_bytes = 0
     current_date_str = datetime.now().strftime("%Y-%m-%d")
     
+    db_changed = False
+    cmds_to_sync = []
+    
     for uname, info in db.items():
         if not isinstance(info, dict): continue 
         if info.get('node') == node_id:
-            try: u_bytes = float(info.get('used_bytes', 0))
-            except: u_bytes = 0.0
-            info['used_bytes'] = u_bytes
             
-            try: info['total_gb'] = float(info.get('total_gb', 0))
-            except: info['total_gb'] = 0.0
+            # 🚀 Auto-Heal (IP အဟောင်းဖြစ်နေပါက အလိုလို အသစ်ချိန်းပေးမည့် စနစ်)
+            uid = info.get('uuid')
+            port = info.get('port')
+            proto = info.get('protocol', 'v2')
+            safe_u = urllib.parse.quote(uname)
             
+            if proto == 'v2':
+                expected_key = f"vless://{uid}@{node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
+                cmd = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
+            else:
+                credentials = f"chacha20-ietf-poly1305:{uid}"
+                b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
+                expected_key = f"ss://{b64_creds}@{node_ip}:{port}#{safe_u}"
+                cmd = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
+                
+            if info.get('key') != expected_key:
+                info['key'] = expected_key
+                db_changed = True
+                if not info.get('is_blocked', False):
+                    cmds_to_sync.append(cmd)
+            
+            info['used_bytes'] = float(info.get('used_bytes', 0))
+            info['total_gb'] = float(info.get('total_gb', 0))
             info['used_gb_str'] = f"{(info['used_bytes'] / (1024**3)):.2f}"
             info['username'] = uname
             info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             
             info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
-            exp_str = info.get('expire_date')
-            is_expired = True if (exp_str and current_date_str > exp_str) else False
+            is_expired = True if (info.get('expire_date') and current_date_str > info.get('expire_date')) else False
             
-            if is_expired:
-                info['status_label'] = "Expired"
-            elif info.get('is_blocked'):
-                info['status_label'] = "Blocked"
-            elif info['is_active']:
-                info['status_label'] = "Online"
-            else:
-                info['status_label'] = "Offline"
+            if is_expired: info['status_label'] = "Expired"
+            elif info.get('is_blocked'): info['status_label'] = "Blocked"
+            elif info['is_active']: info['status_label'] = "Online"
+            else: info['status_label'] = "Offline"
                 
             users.append(info)
             node_used_bytes += info['used_bytes']
+            
+    if db_changed:
+        with db_lock:
+            with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
+    if cmds_to_sync and node_ip:
+        prefix = "systemctl() { true; }; export -f systemctl; "
+        suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+        execute_ssh_bg(node_ip, [prefix + " ; ".join(cmds_to_sync) + suffix])
             
     ninfo = ndb.get(node_id, {})
     limit_tb = float(ninfo.get("limit_tb", 0))
@@ -485,7 +535,7 @@ def node_view(node_id):
             
     other_nodes = [nid for nid in nodes.keys() if nid != node_id]
     
-    return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, config=config, used_gb=used_gb, limit_tb=limit_tb, is_alarm=is_alarm, health=health)
+    return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_ip, users=users, other_nodes=other_nodes, config=config, used_gb=used_gb, limit_tb=limit_tb, is_alarm=is_alarm, health=health)
 
 @app.route('/add_node', methods=['POST'])
 def add_node():
@@ -541,6 +591,7 @@ def delete_node(node_id):
         return redirect(request.referrer)
     return redirect(url_for('dashboard'))
 
+# 🚀 Node အဟောင်းနေရာတွင် အသစ်အစားထိုးပါက IP များကို အလိုလို ပြောင်းလဲပေးမည့်စနစ်
 @app.route('/replace_id/<current_id>', methods=['POST'])
 def replace_id(current_id):
     old_id = request.form.get('old_id', '').strip()
@@ -548,9 +599,9 @@ def replace_id(current_id):
     if current_id not in nodes or not old_id: 
         return redirect(f'/node/{current_id}')
     
+    # ၁. List တွင် နာမည်ပြောင်းမည်
     if os.path.exists(NODES_LIST):
-        with open(NODES_LIST, 'r') as f: 
-            lines = f.readlines()
+        with open(NODES_LIST, 'r') as f: lines = f.readlines()
         with open(NODES_LIST, 'w') as f:
             for line in lines:
                 if line.strip():
@@ -563,7 +614,8 @@ def replace_id(current_id):
                             f.write(f"{old_id} {parts[1]}\n")
                     else: 
                         f.write(line)
-                    
+                        
+    # ၂. Group ထဲတွင် နာမည်ပြောင်းမည်
     groups = load_auto_groups()
     for gid, gdata in groups.items():
         if current_id in gdata.get("nodes", {}):
@@ -572,6 +624,47 @@ def replace_id(current_id):
             groups[gid]["nodes"][old_id] = ndata
             save_auto_groups(groups)
             break
+            
+    # ၃. Database ထဲရှိ User အားလုံး၏ IP များကို ပြောင်းလဲပြီး ဆာဗာသစ်ဆီ Force Sync လုပ်မည်
+    new_ip = get_target_ip(old_id)
+    if new_ip:
+        with db_lock:
+            db = {}
+            if os.path.exists(USERS_DB):
+                with open(USERS_DB, 'r') as f: db = json.load(f)
+            
+            cmds_to_sync = []
+            db_changed = False
+            
+            for uname, uinfo in db.items():
+                if isinstance(uinfo, dict) and uinfo.get('node') == current_id:
+                    uinfo['node'] = old_id
+                    
+                    uid = uinfo.get('uuid')
+                    port = uinfo.get('port')
+                    proto = uinfo.get('protocol', 'v2')
+                    safe_u = urllib.parse.quote(uname)
+                    
+                    if proto == 'v2':
+                        uinfo['key'] = f"vless://{uid}@{new_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
+                        cmd = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
+                    else:
+                        credentials = f"chacha20-ietf-poly1305:{uid}"
+                        b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
+                        uinfo['key'] = f"ss://{b64_creds}@{new_ip}:{port}#{safe_u}"
+                        cmd = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
+                        
+                    db_changed = True
+                    if not uinfo.get('is_blocked', False):
+                        cmds_to_sync.append(cmd)
+                        
+            if db_changed:
+                with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
+                
+        if cmds_to_sync:
+            prefix = "systemctl() { true; }; export -f systemctl; "
+            suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+            execute_ssh_bg(new_ip, [prefix + " ; ".join(cmds_to_sync) + suffix])
             
     return redirect(f'/node/{old_id}')
 
@@ -816,21 +909,27 @@ def download_backup_global():
         return send_file(USERS_DB, as_attachment=True, download_name=f"qito_db_backup.json")
     return "No DB found."
 
-# 🚀 Backup Restore ပြုလုပ်ရာတွင် IP အသစ်များအား အလိုအလျောက် Update လုပ်ပေးမည့်စနစ်
+# 🚀 ကြီးမားသည့် ပြောင်းလဲချက်: Backup တင်လိုက်သည်နှင့် Node/Global မခွဲခြားဘဲ အားလုံးကို အလိုလို Merge လုပ်၍ IP များ Fix ပေးမည်
 @app.route('/upload_backup', methods=['POST'])
 def upload_backup():
     file = request.files.get('backup_file')
-    if file: 
-        file.save(USERS_DB)
+    if not file: return redirect(url_for('dashboard'))
+    
+    try:
+        uploaded_data = json.load(file)
         
-        try:
-            with db_lock:
-                with open(USERS_DB, 'r') as f:
-                    db = json.load(f)
+        with db_lock:
+            db = {}
+            if os.path.exists(USERS_DB):
+                try:
+                    with open(USERS_DB, 'r') as f: db = json.load(f)
+                except: pass
             
-            db_changed = False
+            # 🚀 Node Backup ပဲတင်တင်၊ Global Backup ပဲတင်တင် ပျက်မသွားစေရန် အဟောင်းများနှင့် ပေါင်းစပ်မည် (Merge)
+            for uname, uinfo in uploaded_data.items():
+                db[uname] = uinfo
+            
             cmds_by_ip = {}
-            
             for uname, uinfo in db.items():
                 if not isinstance(uinfo, dict): continue
                 
@@ -840,40 +939,34 @@ def upload_backup():
                 
                 uid = uinfo.get('uuid')
                 port = uinfo.get('port')
-                proto = uinfo.get('protocol')
+                proto = uinfo.get('protocol', 'v2')
                 safe_u = urllib.parse.quote(uname)
                 
-                # 🚀 Node အသစ်၏ IP ဖြင့် Key များကို ပြန်လည်တည်ဆောက်မည်
                 if proto == 'v2':
-                    new_key = f"vless://{uid}@{node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
+                    expected_key = f"vless://{uid}@{node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
                     cmd = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
                 else:
                     credentials = f"chacha20-ietf-poly1305:{uid}"
                     b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
-                    new_key = f"ss://{b64_creds}@{node_ip}:{port}#{safe_u}"
+                    expected_key = f"ss://{b64_creds}@{node_ip}:{port}#{safe_u}"
                     cmd = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
                 
-                # 🚀 IP ပြောင်းလဲသွားပါက Database တွင် အလိုလို အစားထိုး သိမ်းဆည်းပေးမည်
-                if uinfo.get('key') != new_key:
-                    uinfo['key'] = new_key
-                    db_changed = True
+                uinfo['key'] = expected_key
+                if not uinfo.get('is_blocked', False):
+                    cmds_by_ip.setdefault(node_ip, []).append(cmd)
+            
+            with open(USERS_DB, 'w') as f:
+                json.dump(db, f, indent=4)
                 
-                cmds_by_ip.setdefault(node_ip, []).append(cmd)
+        # 🚀 Node အားလုံးဆီသို့ Key အသစ်များကို တပြိုင်နက်တည်း Force Sync လုပ်မည်
+        for ip, cmds in cmds_by_ip.items():
+            prefix = "systemctl() { true; }; export -f systemctl; "
+            suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+            execute_ssh_bg(ip, [prefix + " ; ".join(cmds) + suffix])
             
-            # ပြောင်းလဲသွားသော IP အသစ်များအား Database သို့ ပြန်လည်သိမ်းဆည်းမည်
-            if db_changed:
-                with open(USERS_DB, 'w') as f:
-                    json.dump(db, f, indent=4)
-            
-            # Node အသစ်ရှိ Xray ထဲသို့ User များကို ပြန်ထည့်သွင်းမည် (Force Sync)
-            for ip, cmds in cmds_by_ip.items():
-                prefix = "systemctl() { true; }; export -f systemctl; "
-                suffix = " ; unset -f systemctl; systemctl restart xray"
-                execute_ssh_bg(ip, [prefix + " ; ".join(cmds) + suffix])
-                
-        except Exception as e:
-            print(f"Sync Error: {e}")
-            
+    except Exception as e:
+        print(f"Restore Error: {e}")
+        
     return redirect(url_for('dashboard'))
 
 @app.route('/save_settings_basic', methods=['POST'])
