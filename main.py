@@ -193,7 +193,7 @@ def dashboard():
         ninfo = ndb.get(nid, {})
         limit_tb = float(ninfo.get("limit_tb", 0))
         
-        # 🚀 အသစ်ပြင်ဆင်ချက်: ဖျက်လိုက်သော Key များ၏ သမိုင်းဝင် Traffic ကိုပါ ပေါင်းထည့်မည်
+        # 🚀 Historical Traffic ကို လုံခြုံစွာ တွက်ချက်မည်
         try: historical_bytes = float(ninfo.get("used_bytes", 0))
         except: historical_bytes = 0.0
         current_active_bytes = float(node_used_bytes.get(nid, 0))
@@ -454,7 +454,7 @@ def node_view(node_id):
     ninfo = ndb.get(node_id, {})
     limit_tb = float(ninfo.get("limit_tb", 0))
     
-    # 🚀 အသစ်ပြင်ဆင်ချက်: Node ထဲဝင်ကြည့်လျှင်လည်း သမိုင်းဝင် Traffic ပါ ပေါင်းပြမည်
+    # 🚀 Historical Traffic ကို လုံခြုံစွာ တွက်ချက်မည်
     try: historical_bytes = float(ninfo.get("used_bytes", 0))
     except: historical_bytes = 0.0
     used_gb = (node_used_bytes + historical_bytes) / (1024**3)
@@ -646,7 +646,7 @@ def add_user_manual():
     nid = request.form.get('node_id')
     nip = get_target_ip(nid)
     if not nip: 
-        return redirect(f'/node/{nid}')
+        return f"<script>alert('Error: Target Node IP is missing or offline!'); window.history.back();</script>"
     
     gid = ""
     groups = load_auto_groups()
