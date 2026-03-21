@@ -50,7 +50,7 @@ def get_target_ip(node_id):
                 if not line: continue
                 if line.startswith(str(node_id) + "|") or line.startswith(str(node_id) + " "):
                     parts = line.replace('|', ' ').split()
-                    return parts[-1]
+                    return parts[-1].strip()
     return None
 
 @app.route('/api/user_ip/<username>')
@@ -98,7 +98,7 @@ def set_node_health(node_id):
             except: pass
         if node_id not in ndb: ndb[node_id] = {"used_bytes": 0, "limit_tb": 0, "health": "green"}
         ndb[node_id]["health"] = health
-        with open(NODES_DB, 'w') as f: json.dump(ndb, f)
+        with open(NODES_DB, 'w') as f: json.dump(ndb, f, indent=4)
     return redirect(request.referrer)
 
 @app.route('/set_node_traffic/<node_id>', methods=['POST'])
@@ -113,7 +113,7 @@ def set_node_traffic(node_id):
             except: pass
         if node_id not in ndb: ndb[node_id] = {"used_bytes": 0, "limit_tb": 0, "health": "green"}
         ndb[node_id]["limit_tb"] = tb
-        with open(NODES_DB, 'w') as f: json.dump(ndb, f)
+        with open(NODES_DB, 'w') as f: json.dump(ndb, f, indent=4)
     return redirect(request.referrer)
 
 @app.route('/reset_node_traffic/<node_id>', methods=['POST'])
@@ -126,7 +126,7 @@ def reset_node_traffic(node_id):
             except: pass
         if node_id in ndb:
             ndb[node_id]["used_bytes"] = 0
-            with open(NODES_DB, 'w') as f: json.dump(ndb, f)
+            with open(NODES_DB, 'w') as f: json.dump(ndb, f, indent=4)
     return redirect(request.referrer)
 
 def get_node_backups():
@@ -192,7 +192,12 @@ def dashboard():
         
         ninfo = ndb.get(nid, {})
         limit_tb = float(ninfo.get("limit_tb", 0))
-        used_gb = float(node_used_bytes.get(nid, 0)) / (1024**3)
+        
+        try: historical_bytes = float(ninfo.get("used_bytes", 0))
+        except: historical_bytes = 0.0
+        current_active_bytes = float(node_used_bytes.get(nid, 0))
+        
+        used_gb = (current_active_bytes + historical_bytes) / (1024**3)
         limit_gb = limit_tb * 1024
         is_alarm = limit_gb > 0 and used_gb >= limit_gb
         health = ninfo.get("health", "green")
@@ -447,7 +452,10 @@ def node_view(node_id):
             
     ninfo = ndb.get(node_id, {})
     limit_tb = float(ninfo.get("limit_tb", 0))
-    used_gb = node_used_bytes / (1024**3)
+    
+    try: historical_bytes = float(ninfo.get("used_bytes", 0))
+    except: historical_bytes = 0.0
+    used_gb = (node_used_bytes + historical_bytes) / (1024**3)
     
     limit_gb = limit_tb * 1024
     is_alarm = limit_tb > 0 and used_gb >= limit_gb
@@ -490,7 +498,7 @@ def delete_node(node_id):
             lines = f.readlines()
         with open(NODES_LIST, 'w') as f:
             for line in lines:
-                if line.strip() and not line.startswith(f"{node_id}|") and not line.startswith(f"{node_id} "): 
+                if line.strip() and not line.startswith(str(node_id) + "|") and not line.startswith(str(node_id) + " "): 
                     f.write(line)
                     
     groups = load_auto_groups()
@@ -524,7 +532,7 @@ def replace_id(current_id):
         with open(NODES_LIST, 'w') as f:
             for line in lines:
                 if line.strip():
-                    if line.startswith(f"{current_id}|") or line.startswith(f"{current_id} "):
+                    if line.startswith(str(current_id) + "|") or line.startswith(str(current_id) + " "):
                         if '|' in line:
                             parts = line.split('|')
                             f.write(f"{old_id}|{parts[1]}|{parts[2]}\n")
@@ -701,7 +709,7 @@ def edit_user_route(username):
                     elif 'password' in uinfo: uinfo['password'] = new_uuid
                     if 'key' in uinfo and old_uuid in uinfo['key']:
                         uinfo['key'] = uinfo['key'].replace(old_uuid, new_uuid)
-                    with open(USERS_DB, 'w') as f: json.dump(db, f)
+                    with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
                     
                     node_id = uinfo.get('node')
                     node_ip = get_target_ip(node_id)
@@ -772,7 +780,7 @@ def purge_node(node_id):
             for u in users_to_delete: 
                 del db[u]
             with open(USERS_DB, 'w') as f: 
-                json.dump(db, f)
+                json.dump(db, f, indent=4)
                 
     if os.path.exists(BACKUP_DIR):
         for f in os.listdir(BACKUP_DIR):
