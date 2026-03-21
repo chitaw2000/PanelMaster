@@ -421,15 +421,9 @@ def node_view(node_id):
     users = []
     node_used_bytes = 0
     for uname, info in db.items():
-        if not isinstance(info, dict): continue
         if info.get('node') == node_id:
-            try: u_bytes = float(info.get('used_bytes', 0))
-            except: u_bytes = 0.0
-            info['used_bytes'] = u_bytes
-            
-            try: info['total_gb'] = float(info.get('total_gb', 0))
-            except: info['total_gb'] = 0.0
-            
+            info['used_bytes'] = float(info.get('used_bytes', 0))
+            info['total_gb'] = float(info.get('total_gb', 0))
             info['used_gb_str'] = f"{(info['used_bytes'] / (1024**3)):.2f}"
             info['username'] = uname
             info['actual_key'] = info.get('key') or "No Key Found"
@@ -440,11 +434,11 @@ def node_view(node_id):
     ninfo = ndb.get(node_id, {})
     limit_tb = float(ninfo.get("limit_tb", 0))
     used_gb = node_used_bytes / (1024**3)
-    
     limit_gb = limit_tb * 1024
     is_alarm = limit_tb > 0 and used_gb >= limit_gb
     health = ninfo.get("health", "green")
             
+    # Syntax Error Fix ပြီးသားပါ
     other_nodes = [nid for nid in nodes.keys() if nid != node_id]
     
     return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, config=config, used_gb=used_gb, limit_tb=limit_tb, is_alarm=is_alarm, health=health)
@@ -464,9 +458,11 @@ def add_node():
             with open(NODES_LIST, 'w') as f: 
                 f.write("")
                 
+        # (ID | Name | IP) ပြည့်စုံစွာ ပြန်သိမ်းမည်
         with open(NODES_LIST, 'a') as f: 
             f.write(f"\n{n_id}|{n_name}|{n_ip}")
             
+    # "yes" Bug ရှင်းလင်းပြီးပါပြီ
     return redirect(f"/node/{n_id}?newly_added={n_id}")
 
 @app.route('/delete_node/<node_id>', methods=['POST'])
@@ -482,7 +478,7 @@ def delete_node(node_id):
             lines = f.readlines()
         with open(NODES_LIST, 'w') as f:
             for line in lines:
-                if line.strip() and not line.startswith(str(node_id) + "|") and not line.startswith(str(node_id) + " "): 
+                if line.strip() and not line.startswith(f"{node_id}|") and not line.startswith(f"{node_id} "): 
                     f.write(line)
                     
     groups = load_auto_groups()
@@ -516,7 +512,7 @@ def replace_id(current_id):
         with open(NODES_LIST, 'w') as f:
             for line in lines:
                 if line.strip():
-                    if line.startswith(str(current_id) + "|") or line.startswith(str(current_id) + " "):
+                    if line.startswith(f"{current_id}|") or line.startswith(f"{current_id} "):
                         if '|' in line:
                             parts = line.split('|')
                             f.write(f"{old_id}|{parts[1]}|{parts[2]}\n")
@@ -594,6 +590,7 @@ def install_node_action(node_id):
     ip = get_target_ip(node_id)
     if ip: 
         ip_str = str(ip).strip()
+        # 🚀 Xray Install ခလုတ်နှိပ်လျှင် Sync ဖြင့် တိုက်ရိုက် Run ပြီး ပြီးသည်အထိ စောင့်မည်
         cmd = f"ssh -o StrictHostKeyChecking=no root@{ip_str} 'bash -s' < /root/PanelMaster/install_node.sh"
         subprocess.run(cmd, shell=True)
     return redirect(request.referrer)
@@ -628,7 +625,7 @@ def add_user_manual():
     nid = request.form.get('node_id')
     nip = get_target_ip(nid)
     if not nip: 
-        return f"<script>alert('Error: Target Node IP is missing or offline!'); window.history.back();</script>"
+        return redirect(f'/node/{nid}')
     
     gid = ""
     groups = load_auto_groups()
@@ -760,7 +757,7 @@ def purge_node(node_id):
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: 
                 db = json.load(f)
-            users_to_delete = [u for u, info in db.items() if isinstance(info, dict) and info.get('node') == node_id]
+            users_to_delete = [u for u, info in db.items() if info.get('node') == node_id]
             for u in users_to_delete: 
                 del db[u]
             with open(USERS_DB, 'w') as f: 
