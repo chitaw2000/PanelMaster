@@ -2,7 +2,10 @@ import subprocess
 import threading
 import base64
 
-# 🚀 THE UNTOUCHABLE SSH ENGINE: Command များကို Base64 ပြောင်း၍ Bash Script အဖြစ် သေချာပေါက် Run မည်
+# ---------------------------------------------------------
+# 🚀 THE UNTOUCHABLE SSH ENGINE
+# Command များကို Base64 ပြောင်း၍ Bash Script အဖြစ် သေချာပေါက် Run မည်
+# ---------------------------------------------------------
 def _ssh_task(ip, script_content):
     try:
         b64 = base64.b64encode(script_content.encode('utf-8')).decode('utf-8')
@@ -12,16 +15,25 @@ def _ssh_task(ip, script_content):
         pass
 
 def execute_ssh_bg(ip, cmds):
-    if not cmds: return
+    if not cmds: 
+        return
+        
     if isinstance(cmds, list):
-        script_content = "\n".join(cmds)
+        # 🚀 Command တစ်ခုချင်းစီကြားတွင် 1 စက္ကန့် နားပေးခြင်းဖြင့် ဆာဗာ Overload ကို ကာကွယ်မည်
+        script_content = "\nsleep 1\n".join(cmds)
     else:
         script_content = cmds
+        
     threading.Thread(target=_ssh_task, args=(ip, script_content), daemon=True).start()
 
-# 🚀 မူရင်းအတိုင်း ၁၀၀% အလုပ်လုပ်ခဲ့သော Safe Delete Script (Hang မဖြစ်ရန် ကာကွယ်ထားသည်)
+# ---------------------------------------------------------
+# 🚀 SAFE DELETE COMMAND
+# ဖျက်လိုက်တာတောင် ချိတ်ရနေတဲ့ ပြဿနာကို အမြစ်ပြတ် ရှင်းမည့် Command
+# ---------------------------------------------------------
 def get_safe_delete_cmd(username, protocol, port):
+    # Quotes ဖယ်ထားပေးပြီး echo 'y' ဖြင့် သေချာပေါက် အတည်ပြုစေမည်
     if protocol == 'v2':
-        return f"yes | /usr/local/bin/v2ray-node-del-vless '{username}' >/dev/null 2>&1 || true"
+        return f"echo 'y' | /usr/local/bin/v2ray-node-del-vless {username} >/dev/null 2>&1 || true"
     else:
-        return f"yes | /usr/local/bin/v2ray-node-del-out '{username}' {port} >/dev/null 2>&1 || true ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true"
+        # Out (Shadowsocks) အတွက် UFW Port ပါ တစ်ခါတည်း သေချာ ပိတ်မည်
+        return f"echo 'y' | /usr/local/bin/v2ray-node-del-out {username} {port} >/dev/null 2>&1 || true\nufw delete allow {port}/tcp >/dev/null 2>&1 || true\nufw delete allow {port}/udp >/dev/null 2>&1 || true"
