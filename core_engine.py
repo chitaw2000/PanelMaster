@@ -1,29 +1,25 @@
 import subprocess
 import threading
+import base64
 
 def _ssh_task(ip, script_content):
     try:
-        full_cmd = f"ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=no root@{ip} \"{script_content}\""
+        b64 = base64.b64encode(script_content.encode('utf-8')).decode('utf-8')
+        full_cmd = f"ssh -o ConnectTimeout=20 -o StrictHostKeyChecking=no root@{ip} \"echo {b64} | base64 -d > /tmp/pm_task.sh && bash /tmp/pm_task.sh\""
         subprocess.run(full_cmd, shell=True)
     except Exception:
         pass
 
 def execute_ssh_bg(ip, cmds):
-    if not cmds: 
-        return
-        
+    if not cmds: return
     if isinstance(cmds, list):
-        # 🚀 ဤနေရာလေးကို ပြင်လိုက်ပါသည် (Bulk ထုတ်ပါက ဖိုင်လုမရေးစေရန် ဝ.၅ စက္ကန့် နားပေးမည်)
-        script_content = " ; sleep 0.5 ; ".join(cmds)
+        script_content = "\n".join(cmds)
     else:
         script_content = cmds
-        
     threading.Thread(target=_ssh_task, args=(ip, script_content), daemon=True).start()
 
 def get_safe_delete_cmd(username, protocol, port):
     if protocol == 'v2':
         return f"yes | /usr/local/bin/v2ray-node-del-vless '{username}' >/dev/null 2>&1 || true"
     else:
-        script_cmd = f"yes | /usr/local/bin/v2ray-node-del-out '{username}' {port} >/dev/null 2>&1 || true"
-        ufw_cmd = f"ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true"
-        return f"{script_cmd} ; {ufw_cmd}"
+        return f"yes | /usr/local/bin/v2ray-node-del-out '{username}' {port} >/dev/null 2>&1 || true ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true"
