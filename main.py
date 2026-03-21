@@ -276,6 +276,7 @@ def group_view(group_id):
     
     node_used_bytes = {}
     group_total_bytes = 0
+    current_date_str = datetime.now().strftime("%Y-%m-%d")
     
     for uname, info in db.items():
         if info.get('group') == group_id:
@@ -285,6 +286,21 @@ def group_view(group_id):
             info['username'] = uname
             info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
+            
+            # 🚀 UI တွင် Protocol အတိအကျ ပေါ်စေရန် ထည့်သွင်းခြင်း
+            info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
+            
+            # 🚀 UI တွင် Expired ကို အတိအကျ ပေါ်စေရန် ထည့်သွင်းခြင်း
+            is_expired = True if (info.get('expire_date') and current_date_str > info.get('expire_date')) else False
+            if is_expired:
+                info['status_label'] = "Expired"
+            elif info.get('is_blocked'):
+                info['status_label'] = "Blocked"
+            elif info['is_active']:
+                info['status_label'] = "Online"
+            else:
+                info['status_label'] = "Offline"
+                
             users.append(info)
             
             nid = info.get('node')
@@ -420,6 +436,8 @@ def node_view(node_id):
     active_users = check_live_status(db)
     users = []
     node_used_bytes = 0
+    current_date_str = datetime.now().strftime("%Y-%m-%d")
+    
     for uname, info in db.items():
         if info.get('node') == node_id:
             info['used_bytes'] = float(info.get('used_bytes', 0))
@@ -428,6 +446,21 @@ def node_view(node_id):
             info['username'] = uname
             info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
+            
+            # 🚀 UI တွင် Protocol အတိအကျ ပေါ်စေရန် ထည့်သွင်းခြင်း
+            info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
+            
+            # 🚀 UI တွင် Expired ကို အတိအကျ ပေါ်စေရန် ထည့်သွင်းခြင်း
+            is_expired = True if (info.get('expire_date') and current_date_str > info.get('expire_date')) else False
+            if is_expired:
+                info['status_label'] = "Expired"
+            elif info.get('is_blocked'):
+                info['status_label'] = "Blocked"
+            elif info['is_active']:
+                info['status_label'] = "Online"
+            else:
+                info['status_label'] = "Offline"
+                
             users.append(info)
             node_used_bytes += info['used_bytes']
             
@@ -438,7 +471,6 @@ def node_view(node_id):
     is_alarm = limit_tb > 0 and used_gb >= limit_gb
     health = ninfo.get("health", "green")
             
-    # Syntax Error Fix ပြီးသားပါ
     other_nodes = [nid for nid in nodes.keys() if nid != node_id]
     
     return render_template('node.html', node_id=node_id, node_name=node_info.get('name', ''), node_ip=node_info.get('ip', ''), users=users, other_nodes=other_nodes, config=config, used_gb=used_gb, limit_tb=limit_tb, is_alarm=is_alarm, health=health)
@@ -458,11 +490,9 @@ def add_node():
             with open(NODES_LIST, 'w') as f: 
                 f.write("")
                 
-        # (ID | Name | IP) ပြည့်စုံစွာ ပြန်သိမ်းမည်
         with open(NODES_LIST, 'a') as f: 
             f.write(f"\n{n_id}|{n_name}|{n_ip}")
             
-    # "yes" Bug ရှင်းလင်းပြီးပါပြီ
     return redirect(f"/node/{n_id}?newly_added={n_id}")
 
 @app.route('/delete_node/<node_id>', methods=['POST'])
@@ -590,7 +620,6 @@ def install_node_action(node_id):
     ip = get_target_ip(node_id)
     if ip: 
         ip_str = str(ip).strip()
-        # 🚀 Xray Install ခလုတ်နှိပ်လျှင် Sync ဖြင့် တိုက်ရိုက် Run ပြီး ပြီးသည်အထိ စောင့်မည်
         cmd = f"ssh -o StrictHostKeyChecking=no root@{ip_str} 'bash -s' < /root/PanelMaster/install_node.sh"
         subprocess.run(cmd, shell=True)
     return redirect(request.referrer)
@@ -625,7 +654,7 @@ def add_user_manual():
     nid = request.form.get('node_id')
     nip = get_target_ip(nid)
     if not nip: 
-        return redirect(f'/node/{nid}')
+        return f"<script>alert('Error: Target Node IP is missing or offline!'); window.history.back();</script>"
     
     gid = ""
     groups = load_auto_groups()
@@ -757,7 +786,7 @@ def purge_node(node_id):
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: 
                 db = json.load(f)
-            users_to_delete = [u for u, info in db.items() if info.get('node') == node_id]
+            users_to_delete = [u for u, info in db.items() if isinstance(info, dict) and info.get('node') == node_id]
             for u in users_to_delete: 
                 del db[u]
             with open(USERS_DB, 'w') as f: 
