@@ -53,9 +53,7 @@ def background_traffic_monitor():
                 current_date_str = datetime.now().strftime("%Y-%m-%d")
                 
                 for uname, uinfo in db.items():
-                    # 🚀 Database ထဲရှိ Data မှားယွင်းနေပါက ကျော်သွားရန် (Panel မကျစေရန်)
                     if not isinstance(uinfo, dict): continue
-                    
                     node_id = uinfo.get("node")
                     if node_id in gathered_stats:
                         user_bytes = gathered_stats[node_id]
@@ -63,11 +61,10 @@ def background_traffic_monitor():
                         last_raw = uinfo.get('last_raw_bytes', 0)
                         
                         delta = val - last_raw if val >= last_raw else val
-                        
                         if val > last_raw: uinfo['is_online'] = True
                         else: uinfo['is_online'] = False
                             
-                        uinfo['used_bytes'] = uinfo.get('used_bytes', 0) + delta
+                        uinfo['used_bytes'] = float(uinfo.get('used_bytes', 0)) + delta
                         uinfo['last_raw_bytes'] = val
                         db_changed = True
                         
@@ -75,12 +72,12 @@ def background_traffic_monitor():
                         ndb[node_id]["used_bytes"] += delta
                         ndb_changed = True
                     
-                    # 🚀 ၁။ Date ချင်း တိုက်စစ်မည်
+                    # 🚀 Date ကို တိုက်စစ်မည်
                     is_expired = False
                     if uinfo.get('expire_date') and current_date_str > uinfo.get('expire_date'):
                         is_expired = True
 
-                    # 🚀 ၂။ GB ပြည့်မပြည့် စစ်မည်
+                    # 🚀 GB ကို စစ်မည်
                     tot_gb = float(uinfo.get('total_gb', 0))
                     is_gb_full = False
                     if tot_gb > 0:
@@ -88,7 +85,7 @@ def background_traffic_monitor():
                         if float(uinfo.get('used_bytes', 0)) >= max_bytes:
                             is_gb_full = True
                             
-                    # 🚀 ၃။ Expire (သို့) GB ပြည့်ပါက အဟောင်းကိုသာ ပြန်ခေါ်ပိတ်မည်
+                    # 🚀 မင်းအကြံပြုထားသည့်အတိုင်း နှစ်ခုထဲမှ တစ်ခုငြိပါက Blocked လုပ်၍ Function ပြန်ခေါ်မည်
                     if (is_expired or is_gb_full) and not uinfo.get('is_blocked', False):
                         uinfo['is_blocked'] = True
                         uinfo['is_online'] = False
@@ -99,9 +96,9 @@ def background_traffic_monitor():
                             users_to_block_by_ip.setdefault(node_ip, []).append(cmd_str)
                 
                 if db_changed:
-                    with open(USERS_DB, 'w') as f: json.dump(db, f)
+                    with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
                 if ndb_changed:
-                    with open(NODES_DB, 'w') as f: json.dump(ndb, f)
+                    with open(NODES_DB, 'w') as f: json.dump(ndb, f, indent=4)
 
             for node_ip, cmds in users_to_block_by_ip.items():
                 cmds.append("systemctl restart xray")
