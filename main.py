@@ -281,7 +281,7 @@ def group_view(group_id):
     current_date_str = datetime.now().strftime("%Y-%m-%d")
     
     for uname, info in db.items():
-        if not isinstance(info, dict): continue # 🚀 Safe Check
+        if not isinstance(info, dict): continue
         if info.get('group') == group_id:
             try: u_bytes = float(info.get('used_bytes', 0))
             except: u_bytes = 0.0
@@ -295,6 +295,7 @@ def group_view(group_id):
             info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             
+            # 🚀 UI အတွက် Protocol နှင့် Status
             info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
             exp_str = info.get('expire_date')
             is_expired = True if (exp_str and current_date_str > exp_str) else False
@@ -446,7 +447,7 @@ def node_view(node_id):
     current_date_str = datetime.now().strftime("%Y-%m-%d")
     
     for uname, info in db.items():
-        if not isinstance(info, dict): continue # 🚀 Safe Check
+        if not isinstance(info, dict): continue
         if info.get('node') == node_id:
             try: u_bytes = float(info.get('used_bytes', 0))
             except: u_bytes = 0.0
@@ -460,6 +461,7 @@ def node_view(node_id):
             info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             
+            # 🚀 UI တွင် Protocol နှင့် Status
             info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
             exp_str = info.get('expire_date')
             is_expired = True if (exp_str and current_date_str > exp_str) else False
