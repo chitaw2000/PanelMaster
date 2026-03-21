@@ -1,4 +1,5 @@
 import time, json, subprocess, os, threading
+from datetime import datetime  # 🚀 Expire Date စစ်ရန် ထည့်သွင်းထားသည်
 from utils import get_all_servers, db_lock, NODES_DB
 from core_engine import execute_ssh_bg, get_safe_delete_cmd
 
@@ -70,17 +71,32 @@ def background_traffic_monitor():
                         ndb[node_id]["used_bytes"] += delta
                         ndb_changed = True
                         
-                        # 🚀 GB ပြည့်ပါက သေချာပေါက် ပိတ်မည်
+                        # 🚀 ၁။ Expire Date ကုန်ဆုံးခြင်း ရှိမရှိ စစ်ဆေးမည်
+                        is_expired = False
+                        exp_str = uinfo.get('expire_date')
+                        if exp_str:
+                            try:
+                                exp_date = datetime.strptime(exp_str, "%Y-%m-%d")
+                                if datetime.now() > exp_date:
+                                    is_expired = True
+                            except: pass
+
+                        # 🚀 ၂။ GB Limit ပြည့်ခြင်း ရှိမရှိ စစ်ဆေးမည်
                         tot_gb = float(uinfo.get('total_gb', 0))
+                        is_gb_full = False
                         if tot_gb > 0:
                             max_bytes = tot_gb * (1024**3)
-                            if float(uinfo['used_bytes']) >= max_bytes and not uinfo.get('is_blocked', False):
-                                uinfo['is_blocked'] = True
-                                uinfo['is_online'] = False
-                                node_ip = nodes.get(node_id, {}).get('ip')
-                                if node_ip:
-                                    cmd_str = get_safe_delete_cmd(uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443'))
-                                    users_to_block_by_ip.setdefault(node_ip, []).append(cmd_str)
+                            if float(uinfo.get('used_bytes', 0)) >= max_bytes:
+                                is_gb_full = True
+
+                        # 🚀 ၃။ GB ပြည့်ခြင်း (သို့မဟုတ်) Expire ဖြစ်ခြင်း တစ်ခုခုဖြစ်ပါက သေချာပေါက် ပိတ်မည်
+                        if (is_expired or is_gb_full) and not uinfo.get('is_blocked', False):
+                            uinfo['is_blocked'] = True
+                            uinfo['is_online'] = False
+                            node_ip = nodes.get(node_id, {}).get('ip')
+                            if node_ip:
+                                cmd_str = get_safe_delete_cmd(uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443'))
+                                users_to_block_by_ip.setdefault(node_ip, []).append(cmd_str)
                 
                 if db_changed:
                     with open(USERS_DB, 'w') as f: json.dump(db, f)
