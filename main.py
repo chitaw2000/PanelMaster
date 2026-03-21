@@ -38,6 +38,7 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
+# 🚀 IP ကို မည်သည့် Format မှမရွေး အတိအကျ ဆွဲထုတ်ပေးမည့် Function
 def get_target_ip(node_id):
     nodes = get_all_servers()
     if node_id in nodes and nodes[node_id].get('ip'):
@@ -286,11 +287,11 @@ def group_view(group_id):
             info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             
-            # 🚀 UI အတွက် Protocol နှင့် Status ကို တွက်ချက်ပေးမည်
+            # 🚀 UI တွင် Protocol အတိအကျ ပေါ်စေရန် ထည့်သွင်းခြင်း
             info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
-            exp_str = info.get('expire_date')
-            is_expired = True if (exp_str and current_date_str > exp_str) else False
             
+            # 🚀 UI တွင် Expired ကို အတိအကျ ပေါ်စေရန် ထည့်သွင်းခြင်း
+            is_expired = True if (info.get('expire_date') and current_date_str > info.get('expire_date')) else False
             if is_expired:
                 info['status_label'] = "Expired"
             elif info.get('is_blocked'):
@@ -446,11 +447,11 @@ def node_view(node_id):
             info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             
-            # 🚀 UI အတွက် Protocol နှင့် Status ကို တွက်ချက်ပေးမည်
+            # 🚀 UI တွင် Protocol အတိအကျ ပေါ်စေရန် ထည့်သွင်းခြင်း
             info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
-            exp_str = info.get('expire_date')
-            is_expired = True if (exp_str and current_date_str > exp_str) else False
             
+            # 🚀 UI တွင် Expired ကို အတိအကျ ပေါ်စေရန် ထည့်သွင်းခြင်း
+            is_expired = True if (info.get('expire_date') and current_date_str > info.get('expire_date')) else False
             if is_expired:
                 info['status_label'] = "Expired"
             elif info.get('is_blocked'):
@@ -831,11 +832,4 @@ def config_action():
         if val not in config.get(target_list, []):
             config.setdefault(target_list, []).append(val)
     elif action == 'del' and val:
-        if val in config.get(target_list, []):
-            config[target_list].remove(val)
-            
-    save_config(config)
-    return redirect(url_for('dashboard'))
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8888)
+        if val in config.get(target_
