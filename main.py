@@ -48,7 +48,7 @@ def get_target_ip(node_id):
             for line in f:
                 line = line.strip()
                 if not line: continue
-                if line.startswith(f"{node_id}|") or line.startswith(f"{node_id} "):
+                if line.startswith(str(node_id) + "|") or line.startswith(str(node_id) + " "):
                     parts = line.replace('|', ' ').split()
                     return parts[-1]
     return None
