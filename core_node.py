@@ -7,8 +7,6 @@ from datetime import datetime, timedelta
 
 from utils import db_lock, get_all_servers
 from core_auto import find_available_node, load_auto_groups, save_auto_groups
-
-# 🚀 Engine အသစ်မှ Command များကို ယူသုံးမည်
 from core_engine import execute_ssh_bg, get_block_cmd, get_unblock_cmd, get_safe_delete_cmd
 
 try:
@@ -164,7 +162,7 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 raw_ss = f"chacha20-ietf-poly1305:{uid}@{target_ip}:{port}"
                 ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
                 key_string = f"ss://{ss_conf}#{safe_username}"
-                command = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp"
+                command = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 && ufw allow {port}/udp >/dev/null 2>&1"
             
             if target_ip not in cmds_by_ip:
                 cmds_by_ip[target_ip] = []
@@ -193,11 +191,8 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 json.dump(db, f)
             
             for ip, commands in cmds_by_ip.items():
-                safe_command_list = []
-                for cmd in commands:
-                    safe_command_list.append(cmd)
-                safe_command_list.append("systemctl restart xray")
-                execute_ssh_bg(ip, safe_command_list)
+                commands.append("systemctl restart xray")
+                execute_ssh_bg(ip, commands)
                 
         return True, "Success"
 
@@ -210,7 +205,6 @@ def toggle_key(username):
             if username in db:
                 user = db[username]
                 
-                # အခြေအနေ ပြောင်းလဲခြင်း (Block/Unblock)
                 if user.get('is_blocked', False) == False:
                     user['is_blocked'] = True
                     user['is_online'] = False
@@ -225,7 +219,6 @@ def toggle_key(username):
                     protocol = user.get('protocol', 'v2')
                     port = user.get('port', '443')
                     
-                    # 🚀 Engine အသစ်ကို ယူသုံးမည်
                     if is_blocking_action == True: 
                         cmd = get_block_cmd(username, protocol, port, uid)
                     else:
@@ -287,7 +280,6 @@ def delete_key(username):
                     protocol = info.get('protocol', 'v2')
                     port = info.get('port', '443')
                     
-                    # 🚀 Engine မှ Safe Delete ကို ယူသုံးမည်
                     cmd = get_safe_delete_cmd(username, protocol, port, uid)
                     execute_ssh_bg(str(ip).strip(), [cmd, "systemctl restart xray"])
                     
@@ -301,7 +293,6 @@ def bulk_delete_keys(usernames):
             with open(USERS_DB, 'r') as f: 
                 db = json.load(f)
                 
-            nodes = get_all_servers()
             cmds_by_ip = {}
                     
             for uname in usernames:
@@ -315,14 +306,13 @@ def bulk_delete_keys(usernames):
                     except Exception:
                         pass
 
-                    ip = nodes.get(node_id, {}).get('ip')
+                    ip = get_robust_ip(node_id)
                     if ip:
                         ip = str(ip).strip()
                         uid = info.get('uuid')
                         protocol = info.get('protocol', 'v2')
                         port = info.get('port', '443')
                         
-                        # 🚀 Engine မှ Safe Delete ကို ယူသုံးမည်
                         cmd = get_safe_delete_cmd(uname, protocol, port, uid)
                         
                         if ip not in cmds_by_ip:
@@ -376,7 +366,7 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
         for uname in excess_users:
             uinfo = db[uname]
             old_node = uinfo.get('node')
-            old_ip = str(get_all_servers().get(old_node, {}).get('ip')).strip()
+            old_ip = str(get_robust_ip(old_node)).strip()
             old_port = uinfo.get('port')
             proto = uinfo.get('protocol')
             old_key_id = uinfo.get('key_id') 
@@ -388,7 +378,6 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
             
             new_node_ip = str(new_node_ip).strip()
             
-            # 🚀 Engine မှ Safe Delete ကို ယူသုံးမည်
             cmd_del = get_safe_delete_cmd(uname, proto, old_port, old_uuid)
             
             if old_ip not in cmds_by_ip:
