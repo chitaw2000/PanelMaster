@@ -38,7 +38,6 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
-# 🚀 IP ကို မည်သည့် Format မှမရွေး အတိအကျ ဆွဲထုတ်ပေးမည့် Function
 def get_target_ip(node_id):
     nodes = get_all_servers()
     if node_id in nodes and nodes[node_id].get('ip'):
@@ -170,10 +169,13 @@ def dashboard():
     group_used_bytes = {}
     
     for uname, uinfo in db.items():
+        if not isinstance(uinfo, dict): continue
         nid = uinfo.get('node')
         gid = uinfo.get('group')
-        if nid: node_used_bytes[nid] = node_used_bytes.get(nid, 0) + float(uinfo.get('used_bytes', 0))
-        if gid: group_used_bytes[gid] = group_used_bytes.get(gid, 0) + float(uinfo.get('used_bytes', 0))
+        try: u_bytes = float(uinfo.get('used_bytes', 0))
+        except: u_bytes = 0.0
+        if nid: node_used_bytes[nid] = node_used_bytes.get(nid, 0) + u_bytes
+        if gid: group_used_bytes[gid] = group_used_bytes.get(gid, 0) + u_bytes
     
     all_servers = get_all_servers()
     sick_nodes = {'blue': [], 'yellow': [], 'orange': [], 'red': []}
@@ -185,12 +187,12 @@ def dashboard():
             sick_count += 1
             
     for nid, info in nodes.items():
-        total_count = sum(1 for i in db.values() if i.get('node') == nid and not i.get('group'))
-        live_count = sum(1 for uname, i in db.items() if i.get('node') == nid and not i.get('group') and uname in active_users and not i.get('is_blocked'))
+        total_count = sum(1 for i in db.values() if isinstance(i, dict) and i.get('node') == nid and not i.get('group'))
+        live_count = sum(1 for uname, i in db.items() if isinstance(i, dict) and i.get('node') == nid and not i.get('group') and uname in active_users and not i.get('is_blocked'))
         
         ninfo = ndb.get(nid, {})
         limit_tb = float(ninfo.get("limit_tb", 0))
-        used_gb = node_used_bytes.get(nid, 0) / (1024**3)
+        used_gb = float(node_used_bytes.get(nid, 0)) / (1024**3)
         limit_gb = limit_tb * 1024
         is_alarm = limit_gb > 0 and used_gb >= limit_gb
         health = ninfo.get("health", "green")
@@ -204,7 +206,7 @@ def dashboard():
     for gid, gdata in auto_groups.items():
         limit = gdata.get("limit", 30)
         g_nodes = gdata.get("nodes", {})
-        g_keys = sum(1 for i in db.values() if i.get("group") == gid)
+        g_keys = sum(1 for i in db.values() if isinstance(i, dict) and i.get("group") == gid)
         g_used_gb = group_used_bytes.get(gid, 0) / (1024**3)
         group_stats.append({"id": gid, "name": gdata.get("name", gid), "limit": limit, "node_count": len(g_nodes), "total_keys": g_keys, "used_gb": g_used_gb})
 
@@ -279,19 +281,24 @@ def group_view(group_id):
     current_date_str = datetime.now().strftime("%Y-%m-%d")
     
     for uname, info in db.items():
+        if not isinstance(info, dict): continue # 🚀 Safe Check
         if info.get('group') == group_id:
-            info['used_bytes'] = float(info.get('used_bytes', 0))
-            info['total_gb'] = float(info.get('total_gb', 0))
+            try: u_bytes = float(info.get('used_bytes', 0))
+            except: u_bytes = 0.0
+            info['used_bytes'] = u_bytes
+            
+            try: info['total_gb'] = float(info.get('total_gb', 0))
+            except: info['total_gb'] = 0.0
+            
             info['used_gb_str'] = f"{(info['used_bytes'] / (1024**3)):.2f}"
             info['username'] = uname
             info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             
-            # 🚀 UI တွင် Protocol အတိအကျ ပေါ်စေရန် ထည့်သွင်းခြင်း
             info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
+            exp_str = info.get('expire_date')
+            is_expired = True if (exp_str and current_date_str > exp_str) else False
             
-            # 🚀 UI တွင် Expired ကို အတိအကျ ပေါ်စေရန် ထည့်သွင်းခြင်း
-            is_expired = True if (info.get('expire_date') and current_date_str > info.get('expire_date')) else False
             if is_expired:
                 info['status_label'] = "Expired"
             elif info.get('is_blocked'):
@@ -361,7 +368,7 @@ def delete_server_from_group(group_id, node_id):
             if os.path.exists(USERS_DB):
                 with open(USERS_DB, 'r') as f: 
                     db = json.load(f)
-                users_to_delete = [u for u, info in db.items() if info.get('node') == node_id]
+                users_to_delete = [u for u, info in db.items() if isinstance(info, dict) and info.get('node') == node_id]
         if users_to_delete: 
             bulk_delete_keys(users_to_delete)
             
@@ -439,19 +446,24 @@ def node_view(node_id):
     current_date_str = datetime.now().strftime("%Y-%m-%d")
     
     for uname, info in db.items():
+        if not isinstance(info, dict): continue # 🚀 Safe Check
         if info.get('node') == node_id:
-            info['used_bytes'] = float(info.get('used_bytes', 0))
-            info['total_gb'] = float(info.get('total_gb', 0))
+            try: u_bytes = float(info.get('used_bytes', 0))
+            except: u_bytes = 0.0
+            info['used_bytes'] = u_bytes
+            
+            try: info['total_gb'] = float(info.get('total_gb', 0))
+            except: info['total_gb'] = 0.0
+            
             info['used_gb_str'] = f"{(info['used_bytes'] / (1024**3)):.2f}"
             info['username'] = uname
             info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             
-            # 🚀 UI တွင် Protocol အတိအကျ ပေါ်စေရန် ထည့်သွင်းခြင်း
             info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
+            exp_str = info.get('expire_date')
+            is_expired = True if (exp_str and current_date_str > exp_str) else False
             
-            # 🚀 UI တွင် Expired ကို အတိအကျ ပေါ်စေရန် ထည့်သွင်းခြင်း
-            is_expired = True if (info.get('expire_date') and current_date_str > info.get('expire_date')) else False
             if is_expired:
                 info['status_label'] = "Expired"
             elif info.get('is_blocked'):
@@ -759,7 +771,7 @@ def create_node_backup(node_id):
             with open(USERS_DB, 'r') as f: 
                 db = json.load(f)
             for uname, info in db.items():
-                if info.get('node') == node_id: 
+                if isinstance(info, dict) and info.get('node') == node_id: 
                     node_data[uname] = info
         if node_data:
             with open(os.path.join(BACKUP_DIR, backup_name), 'w') as f: 
