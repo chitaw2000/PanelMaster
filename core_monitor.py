@@ -5,7 +5,7 @@ import os
 import threading
 from datetime import datetime
 from utils import get_all_servers, db_lock, NODES_DB
-from core_engine import execute_ssh_bg, get_safe_delete_cmd
+from core_engine import execute_ssh_bg, get_block_cmd
 
 try:
     from config import USERS_DB, NODES_LIST
@@ -88,16 +88,13 @@ def background_traffic_monitor():
                         
                     node_id = uinfo.get("node")
                     
-                    # Traffic Updates
+                    # Traffic တွက်ချက်ခြင်း
                     if node_id in gathered_stats:
                         user_bytes = gathered_stats[node_id]
                         val = user_bytes.get(uname, uinfo.get('last_raw_bytes', 0))
                         last_raw = uinfo.get('last_raw_bytes', 0)
                         
-                        if val >= last_raw:
-                            delta = val - last_raw
-                        else:
-                            delta = val
+                        delta = val - last_raw if val >= last_raw else val
                         
                         if val > last_raw: 
                             uinfo['is_online'] = True
@@ -114,7 +111,7 @@ def background_traffic_monitor():
                             ndb[node_id]["used_bytes"] = float(ndb[node_id].get("used_bytes", 0)) + delta
                             ndb_changed = True
 
-                    # 🚀 စစ်ဆေးခြင်း: Expire ဖြစ်ခြင်း သို့မဟုတ် GB ပြည့်ခြင်း
+                    # 🚀 Expire ဖြစ်ခြင်း သို့မဟုတ် GB ပြည့်ခြင်းကို စစ်ဆေးမည်
                     is_expired = False
                     exp_str = uinfo.get('expire_date')
                     if exp_str:
@@ -132,7 +129,7 @@ def background_traffic_monitor():
                         if float(uinfo.get('used_bytes', 0)) >= max_bytes:
                             is_gb_full = True
 
-                    # ပိတ်ရန် လိုအပ်ပါက ပိတ်မည်
+                    # ပိတ်ရန်လိုအပ်ပါက ပိတ်မည်
                     if (is_expired or is_gb_full) and not uinfo.get('is_blocked', False):
                         uinfo['is_blocked'] = True
                         uinfo['is_online'] = False
@@ -142,7 +139,7 @@ def background_traffic_monitor():
                         if node_ip:
                             protocol = uinfo.get('protocol', 'v2')
                             port = uinfo.get('port', '443')
-                            cmd_str = get_safe_delete_cmd(uname, protocol, port)
+                            cmd_str = get_block_cmd(uname, protocol, port)
                             
                             if node_ip not in users_to_block_by_ip:
                                 users_to_block_by_ip[node_ip] = []
@@ -155,6 +152,7 @@ def background_traffic_monitor():
                     with open(NODES_DB, 'w') as f: 
                         json.dump(ndb, f)
 
+            # Block လုပ်ထားသည်များကို Restart ချမည်
             for node_ip, cmds in users_to_block_by_ip.items():
                 cmds.append("systemctl restart xray")
                 execute_ssh_bg(node_ip, cmds)
