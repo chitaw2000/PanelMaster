@@ -88,7 +88,6 @@ def background_traffic_monitor():
                         
                     node_id = uinfo.get("node")
                     
-                    # Traffic တွက်ချက်ခြင်း
                     if node_id in gathered_stats:
                         user_bytes = gathered_stats[node_id]
                         val = user_bytes.get(uname, uinfo.get('last_raw_bytes', 0))
@@ -96,7 +95,8 @@ def background_traffic_monitor():
                         
                         delta = val - last_raw if val >= last_raw else val
                         
-                        if val > last_raw: 
+                        # 🚀 မသုံးဘဲ စိမ်းနေသည့် ပြဿနာရှင်းရန် (5KB ထက်ကျော်မှသာ Online ဟုသတ်မှတ်မည်)
+                        if delta > 5000: 
                             uinfo['is_online'] = True
                         else: 
                             uinfo['is_online'] = False
@@ -111,7 +111,7 @@ def background_traffic_monitor():
                             ndb[node_id]["used_bytes"] = float(ndb[node_id].get("used_bytes", 0)) + delta
                             ndb_changed = True
 
-                    # 🚀 Expire ဖြစ်ခြင်း သို့မဟုတ် GB ပြည့်ခြင်းကို စစ်ဆေးမည်
+                    # 🚀 Expire သို့မဟုတ် GB ပြည့်ခြင်း စစ်ဆေးမည်
                     is_expired = False
                     exp_str = uinfo.get('expire_date')
                     if exp_str:
@@ -129,7 +129,6 @@ def background_traffic_monitor():
                         if float(uinfo.get('used_bytes', 0)) >= max_bytes:
                             is_gb_full = True
 
-                    # ပိတ်ရန်လိုအပ်ပါက ပိတ်မည်
                     if (is_expired or is_gb_full) and not uinfo.get('is_blocked', False):
                         uinfo['is_blocked'] = True
                         uinfo['is_online'] = False
@@ -150,9 +149,8 @@ def background_traffic_monitor():
                         json.dump(db, f, indent=4)
                 if ndb_changed:
                     with open(NODES_DB, 'w') as f: 
-                        json.dump(ndb, f)
+                        json.dump(ndb, f, indent=4)
 
-            # Block လုပ်ထားသည်များကို Restart ချမည်
             for node_ip, cmds in users_to_block_by_ip.items():
                 cmds.append("systemctl restart xray")
                 execute_ssh_bg(node_ip, cmds)
