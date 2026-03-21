@@ -86,11 +86,10 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 max_p_by_node[target_node] = max_p  
                 port = str(max_p)
                 
-                # 🚀 Outline App သေချာပေါက် လက်ခံစေရန် URL-Safe Base64 ပြောင်းထားပါသည်
+                # 🚀 Outline App လက်ခံစေရန် URL-Safe Base64 Format
                 credentials = f"chacha20-ietf-poly1305:{uid}"
                 b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
                 k = f"ss://{b64_creds}@{target_ip}:{port}#{safe_u}"
-                
                 cmd = f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 && ufw allow {port}/udp >/dev/null 2>&1"
             
             cmds_by_ip.setdefault(target_ip, []).append(cmd)
@@ -242,13 +241,10 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
                 k = f"vless://{uid}@{new_node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
                 cmd_add = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
             else:
-                # 🚀 Outline App သေချာပေါက် လက်ခံစေရန် URL-Safe Base64
                 credentials = f"chacha20-ietf-poly1305:{uid}"
                 b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
                 k = f"ss://{b64_creds}@{new_node_ip}:{new_port}#{safe_u}"
-                
-                cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port}"
-                cmds_by_ip.setdefault(new_node_ip, []).append(f"ufw allow {new_port}/tcp && ufw allow {new_port}/udp")
+                cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port} ; ufw allow {new_port}/tcp && ufw allow {new_port}/udp"
 
             cmds_by_ip.setdefault(new_node_ip, []).append(cmd_add)
             
