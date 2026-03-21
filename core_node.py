@@ -1,4 +1,4 @@
-import json, os, uuid, base64, urllib.parse, random, string
+import json, os, uuid, base64, urllib.parse
 from datetime import datetime, timedelta
 from utils import db_lock, get_all_servers
 from core_auto import find_available_node, load_auto_groups, save_auto_groups
@@ -25,16 +25,16 @@ def get_robust_ip(node_id):
     return None
 
 def sanitize_usernames(raw_list):
-    return [str(u).strip().replace(" ", "_").replace("\r", "").replace("\n", "") for u in raw_list if u]
-
-# 🚀 API အတွက် Token အသစ်ထုတ်ပေးမည့် Function
-def generate_token():
-    chars = string.ascii_letters + string.digits
-    return ''.join(random.choice(chars) for _ in range(32))
+    clean = []
+    for u in raw_list:
+        if not u: continue
+        u = str(u).strip().replace(" ", "_").replace("\r", "").replace("\n", "")
+        if u: clean.append(u)
+    return clean
 
 def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
     usernames = sanitize_usernames(raw_usernames)
-    if not usernames: return False, "❌ No usernames!"
+    if not usernames: return False, "❌ No valid usernames provided!"
 
     db = {}
     with db_lock:
@@ -74,7 +74,6 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
 
             uid = str(uuid.uuid4()).strip()
             safe_u = urllib.parse.quote(u)
-            token = generate_token() # 🚀 User အသစ်တိုင်းအတွက် Token ထုတ်မည်
             
             if proto == 'v2':
                 port = "443"
@@ -95,7 +94,7 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 "node": target_node, "group": group_id, "protocol": proto, "uuid": uid, 
                 "port": port, "total_gb": float(gb), "expire_date": exp, 
                 "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False, 
-                "key": k, "key_id": next_id, "token": token # 🚀 Database တွင် Token သိမ်းမည်
+                "key": k, "key_id": next_id
             }
             next_id += 1
         
