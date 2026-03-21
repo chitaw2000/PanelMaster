@@ -85,13 +85,10 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 max_p += 1
                 max_p_by_node[target_node] = max_p  
                 port = str(max_p)
-                
-                # 🚀 Outline App အတိအကျ လက်ခံစေရန် URL-Safe Base64
-                credentials = f"chacha20-ietf-poly1305:{uid}"
-                b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
-                k = f"ss://{b64_creds}@{target_ip}:{port}#{safe_u}"
-                
-                cmd = f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 ; ufw allow {port}/udp >/dev/null 2>&1"
+                raw_ss = f"chacha20-ietf-poly1305:{uid}@{target_ip}:{port}"
+                ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
+                k = f"ss://{ss_conf}#{safe_u}"
+                cmd = f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 && ufw allow {port}/udp >/dev/null 2>&1"
             
             cmds_by_ip.setdefault(target_ip, []).append(cmd)
             
@@ -104,9 +101,11 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
             next_id += 1
         
         if cmds_by_ip:
-            with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
+            with open(USERS_DB, 'w') as f: json.dump(db, f)
             
             for ip, ip_cmds in cmds_by_ip.items():
+                # 🚀 ဤနေရာသည် Hack ဖြစ်သည်။ Script များမှ ခေါ်သော Restart ကို ပိတ်ထားမည်။ 
+                # အားလုံးပြီးမှသာ reset-failed ခေါ်၍ တစ်ကြိမ်တည်း Restart လုပ်ပါမည်။
                 prefix = "systemctl() { true; }; export -f systemctl; "
                 suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
                 combined_cmd = prefix + " ; ".join(ip_cmds) + suffix
@@ -132,7 +131,7 @@ def toggle_key(username):
                     
                     combined_cmd = f"{cmd} ; systemctl reset-failed xray ; systemctl restart xray"
                     execute_ssh_bg(str(ip).strip(), [combined_cmd])
-                with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
+                with open(USERS_DB, 'w') as f: json.dump(db, f)
 
 def edit_key(username, total_gb, expire_date):
     with db_lock:
@@ -141,27 +140,7 @@ def edit_key(username, total_gb, expire_date):
             if username in db:
                 if total_gb is not None: db[username]['total_gb'] = float(total_gb)
                 if expire_date: db[username]['expire_date'] = expire_date
-                
-                # 🚀 သက်တမ်းတိုးပေးပြီးပါက Block ထားသည်ကို ပြန်ဖွင့်ပေးမည်
-                exp_date = datetime.strptime(db[username]['expire_date'], "%Y-%m-%d")
-                if datetime.now() <= exp_date and db[username].get('is_blocked', False) == True:
-                    tot_gb = float(db[username].get('total_gb', 0))
-                    max_bytes = tot_gb * (1024**3) if tot_gb > 0 else float('inf')
-                    
-                    if float(db[username].get('used_bytes', 0)) < max_bytes:
-                        db[username]['is_blocked'] = False
-                        ip = get_robust_ip(db[username].get('node'))
-                        if ip:
-                            uid = db[username]['uuid']
-                            protocol = db[username]['protocol']
-                            port = db[username]['port']
-                            if protocol == 'v2':
-                                cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
-                            else:
-                                cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port}"
-                            execute_ssh_bg(str(ip).strip(), [f"{cmd} ; systemctl restart xray"])
-
-                with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
+                with open(USERS_DB, 'w') as f: json.dump(db, f)
 
 def renew_key(username, add_gb, add_days):
     with db_lock:
@@ -171,19 +150,7 @@ def renew_key(username, add_gb, add_days):
                 db[username]['total_gb'] = float(add_gb); db[username]['days'] = int(add_days)
                 db[username]['expire_date'] = (datetime.now() + timedelta(days=int(add_days))).strftime("%Y-%m-%d")
                 db[username]['used_bytes'] = 0; db[username]['last_raw_bytes'] = 0; db[username]['is_blocked'] = False; db[username]['is_online'] = False
-                
-                ip = get_robust_ip(db[username].get('node'))
-                if ip:
-                    uid = db[username]['uuid']
-                    protocol = db[username]['protocol']
-                    port = db[username]['port']
-                    if protocol == 'v2':
-                        cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
-                    else:
-                        cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port}"
-                    execute_ssh_bg(str(ip).strip(), [f"{cmd} ; systemctl restart xray"])
-
-                with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
+                with open(USERS_DB, 'w') as f: json.dump(db, f)
 
 def delete_key(username):
     with db_lock:
@@ -197,7 +164,7 @@ def delete_key(username):
                     combined_cmd = f"{cmd} ; systemctl reset-failed xray ; systemctl restart xray"
                     execute_ssh_bg(str(ip).strip(), [combined_cmd])
                 del db[username]
-                with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
+                with open(USERS_DB, 'w') as f: json.dump(db, f)
 
 def bulk_delete_keys(usernames):
     with db_lock:
@@ -212,9 +179,10 @@ def bulk_delete_keys(usernames):
                         cmd = get_safe_delete_cmd(uname, db[uname].get('protocol', 'v2'), db[uname].get('port', '443'))
                         cmds_by_ip.setdefault(ip, []).append(cmd)
                     del db[uname]
-            with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
+            with open(USERS_DB, 'w') as f: json.dump(db, f)
             
             for ip, cmds in cmds_by_ip.items():
+                # 🚀 Delete လုပ်ရာတွင်လည်း Rate Limit ကို ကျော်ဖြတ်မည်
                 prefix = "systemctl() { true; }; export -f systemctl; "
                 suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
                 combined_cmd = prefix + " ; ".join(cmds) + suffix
@@ -263,7 +231,7 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
             cmd_del = get_safe_delete_cmd(uname, proto, old_port)
             cmds_by_ip.setdefault(old_ip, []).append(cmd_del)
             
-            used_ports = [int(i.get('port', 10000)) for i in db.values() if isinstance(i, dict) and i.get('protocol') == 'out' and i.get('node') == new_node_id]
+            used_ports = [int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out' and i.get('node') == new_node_id]
             new_port = str(max(used_ports) + 1) if used_ports else "10001"
             
             uid = uinfo.get('uuid')
@@ -274,10 +242,11 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
                 k = f"vless://{uid}@{new_node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
                 cmd_add = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
             else:
-                credentials = f"chacha20-ietf-poly1305:{uid}"
-                b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
-                k = f"ss://{b64_creds}@{new_node_ip}:{new_port}#{safe_u}"
-                cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port} ; ufw allow {new_port}/tcp >/dev/null 2>&1 ; ufw allow {new_port}/udp >/dev/null 2>&1"
+                raw_ss = f"chacha20-ietf-poly1305:{uid}@{new_node_ip}:{new_port}"
+                ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
+                k = f"ss://{ss_conf}#{safe_u}"
+                cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port}"
+                cmds_by_ip.setdefault(new_node_ip, []).append(f"ufw allow {new_port}/tcp && ufw allow {new_port}/udp")
 
             cmds_by_ip.setdefault(new_node_ip, []).append(cmd_add)
             
@@ -286,9 +255,10 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
             
             migrated_count += 1
             
-        with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
+        with open(USERS_DB, 'w') as f: json.dump(db, f)
 
         for ip, cmds in cmds_by_ip.items():
+            # 🚀 Migration ပြုလုပ်ရာတွင်လည်း Rate Limit ကို ကျော်ဖြတ်မည်
             prefix = "systemctl() { true; }; export -f systemctl; "
             suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
             combined_cmd = prefix + " ; ".join(cmds) + suffix
