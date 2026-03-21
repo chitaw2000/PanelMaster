@@ -38,6 +38,7 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
+# 🚀 IP ကို မည်သည့် Format မှမရွေး အတိအကျ ဆွဲထုတ်ပေးမည့် Function
 def get_target_ip(node_id):
     nodes = get_all_servers()
     if node_id in nodes and nodes[node_id].get('ip'):
@@ -295,7 +296,6 @@ def group_view(group_id):
             info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             
-            # 🚀 UI အတွက် Protocol နှင့် Status ပြသမည်
             info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
             exp_str = info.get('expire_date')
             is_expired = True if (exp_str and current_date_str > exp_str) else False
@@ -369,7 +369,7 @@ def delete_server_from_group(group_id, node_id):
             if os.path.exists(USERS_DB):
                 with open(USERS_DB, 'r') as f: 
                     db = json.load(f)
-                users_to_delete = [u for u, info in db.items() if info.get('node') == node_id]
+                users_to_delete = [u for u, info in db.items() if isinstance(info, dict) and info.get('node') == node_id]
         if users_to_delete: 
             bulk_delete_keys(users_to_delete)
             
@@ -447,7 +447,7 @@ def node_view(node_id):
     current_date_str = datetime.now().strftime("%Y-%m-%d")
     
     for uname, info in db.items():
-        if not isinstance(info, dict): continue
+        if not isinstance(info, dict): continue 
         if info.get('node') == node_id:
             try: u_bytes = float(info.get('used_bytes', 0))
             except: u_bytes = 0.0
@@ -461,7 +461,6 @@ def node_view(node_id):
             info['actual_key'] = info.get('key') or "No Key Found"
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             
-            # 🚀 UI တွင် Protocol နှင့် Status ပြသမည်
             info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
             exp_str = info.get('expire_date')
             is_expired = True if (exp_str and current_date_str > exp_str) else False
@@ -668,7 +667,7 @@ def add_user_manual():
     nid = request.form.get('node_id')
     nip = get_target_ip(nid)
     if not nip: 
-        return f"<script>alert('Error: Target Node IP is missing or offline!'); window.history.back();</script>"
+        return redirect(f'/node/{nid}')
     
     gid = ""
     groups = load_auto_groups()
@@ -823,6 +822,40 @@ def upload_backup():
     file = request.files.get('backup_file')
     if file: 
         file.save(USERS_DB)
+        
+        # 🚀 ဖြည့်စွက်ချက်: Backup တင်ပြီးနောက် User များကို Node ဆီသို့ Force Sync လုပ်မည်
+        try:
+            with db_lock:
+                with open(USERS_DB, 'r') as f:
+                    db = json.load(f)
+            
+            cmds_by_ip = {}
+            for uname, uinfo in db.items():
+                if not isinstance(uinfo, dict): continue
+                
+                node_id = uinfo.get('node')
+                node_ip = get_target_ip(node_id)
+                if not node_ip: continue
+                
+                uid = uinfo.get('uuid')
+                port = uinfo.get('port')
+                proto = uinfo.get('protocol')
+                
+                if proto == 'v2':
+                    cmd = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
+                else:
+                    cmd = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
+                
+                cmds_by_ip.setdefault(node_ip, []).append(cmd)
+            
+            for ip, cmds in cmds_by_ip.items():
+                prefix = "systemctl() { true; }; export -f systemctl; "
+                suffix = " ; unset -f systemctl; systemctl restart xray"
+                execute_ssh_bg(ip, [prefix + " ; ".join(cmds) + suffix])
+                
+        except Exception as e:
+            print(f"Sync Error: {e}")
+            
     return redirect(url_for('dashboard'))
 
 @app.route('/save_settings_basic', methods=['POST'])
