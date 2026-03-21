@@ -1,10 +1,5 @@
-import json
-import os
-import uuid
-import base64
-import urllib.parse
+import json, os, uuid, base64, urllib.parse
 from datetime import datetime, timedelta
-
 from utils import db_lock, get_all_servers
 from core_auto import find_available_node, load_auto_groups, save_auto_groups
 from core_engine import execute_ssh_bg, get_safe_delete_cmd
@@ -14,7 +9,6 @@ try:
 except ImportError:
     USERS_DB = "/root/PanelMaster/users_db.json"
     NODES_LIST = "/root/PanelMaster/nodes_list.txt"
-
 
 def get_robust_ip(node_id):
     nodes = get_all_servers()
@@ -28,9 +22,8 @@ def get_robust_ip(node_id):
                 if not line: continue
                 if line.startswith(f"{node_id}|") or line.startswith(f"{node_id} "):
                     parts = line.replace('|', ' ').split()
-                    return parts[-1].strip()
+                    return parts[-1]
     return None
-
 
 def sanitize_usernames(raw_list):
     clean = []
@@ -40,11 +33,9 @@ def sanitize_usernames(raw_list):
         if u: clean.append(u)
     return clean
 
-
 def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
     usernames = sanitize_usernames(raw_usernames)
-    if not usernames: 
-        return False, "❌ No valid usernames provided!"
+    if not usernames: return False, "❌ No valid usernames provided!"
 
     db = {}
     with db_lock:
@@ -61,10 +52,9 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
         max_p_by_node = {} 
         
         for uinfo in db.values():
-            if isinstance(uinfo, dict) and uinfo.get('protocol') == 'out':
+            if uinfo.get('protocol') == 'out':
                 nid = uinfo.get('node')
-                try: p = int(uinfo.get('port', 10000))
-                except: p = 10000
+                p = int(uinfo.get('port', 10000))
                 max_p_by_node[nid] = max(max_p_by_node.get(nid, 10000), p)
 
         for u in usernames:
@@ -98,7 +88,7 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 raw_ss = f"chacha20-ietf-poly1305:{uid}@{target_ip}:{port}"
                 ss_conf = base64.b64encode(raw_ss.encode('utf-8')).decode('utf-8').strip()
                 k = f"ss://{ss_conf}#{safe_u}"
-                cmd = f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp && ufw allow {port}/udp"
+                cmd = f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 && ufw allow {port}/udp >/dev/null 2>&1"
             
             cmds_by_ip.setdefault(target_ip, []).append(cmd)
             
@@ -114,8 +104,10 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
             with open(USERS_DB, 'w') as f: json.dump(db, f)
             
             for ip, ip_cmds in cmds_by_ip.items():
-                ip_cmds.append("systemctl restart xray")
-                execute_ssh_bg(ip, ip_cmds)
+                prefix = "systemctl() { true; }; export -f systemctl; "
+                suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+                combined_cmd = prefix + " ; ".join(ip_cmds) + suffix
+                execute_ssh_bg(ip, [combined_cmd])
                 
         return True, "Success"
 
@@ -124,10 +116,8 @@ def toggle_key(username):
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: db = json.load(f)
             if username in db:
-                user = db[username]
-                user['is_blocked'] = not user.get('is_blocked', False)
+                user = db[username]; user['is_blocked'] = not user.get('is_blocked', False)
                 ip = get_robust_ip(user.get('node'))
-                
                 if ip:
                     if user['is_blocked']: 
                         user['is_online'] = False
@@ -137,7 +127,8 @@ def toggle_key(username):
                         if user['protocol'] == 'v2': cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
                         else: cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
                     
-                    execute_ssh_bg(str(ip).strip(), [cmd, "systemctl restart xray"])
+                    combined_cmd = f"{cmd} ; systemctl reset-failed xray ; systemctl restart xray"
+                    execute_ssh_bg(str(ip).strip(), [combined_cmd])
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
 
 def edit_key(username, total_gb, expire_date):
@@ -166,10 +157,10 @@ def delete_key(username):
             if username in db:
                 info = db[username]
                 ip = get_robust_ip(info.get('node'))
-                
                 if ip:
                     cmd = get_safe_delete_cmd(username, info.get('protocol', 'v2'), info.get('port', '443'))
-                    execute_ssh_bg(str(ip).strip(), [cmd, "systemctl restart xray"])
+                    combined_cmd = f"{cmd} ; systemctl reset-failed xray ; systemctl restart xray"
+                    execute_ssh_bg(str(ip).strip(), [combined_cmd])
                 del db[username]
                 with open(USERS_DB, 'w') as f: json.dump(db, f)
 
@@ -189,8 +180,10 @@ def bulk_delete_keys(usernames):
             with open(USERS_DB, 'w') as f: json.dump(db, f)
             
             for ip, cmds in cmds_by_ip.items():
-                cmds.append("systemctl restart xray")
-                execute_ssh_bg(ip, cmds)
+                prefix = "systemctl() { true; }; export -f systemctl; "
+                suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+                combined_cmd = prefix + " ; ".join(cmds) + suffix
+                execute_ssh_bg(ip, [combined_cmd])
 
 def rebalance_auto_node(group_id, new_limit, specific_node=None):
     groups = load_auto_groups()
@@ -235,7 +228,7 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
             cmd_del = get_safe_delete_cmd(uname, proto, old_port)
             cmds_by_ip.setdefault(old_ip, []).append(cmd_del)
             
-            used_ports = [int(i.get('port', 10000)) for i in db.values() if isinstance(i, dict) and i.get('protocol') == 'out' and i.get('node') == new_node_id]
+            used_ports = [int(i.get('port', 10000)) for i in db.values() if i.get('protocol') == 'out' and i.get('node') == new_node_id]
             new_port = str(max(used_ports) + 1) if used_ports else "10001"
             
             uid = uinfo.get('uuid')
@@ -262,8 +255,10 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
         with open(USERS_DB, 'w') as f: json.dump(db, f)
 
         for ip, cmds in cmds_by_ip.items():
-            cmds.append("systemctl restart xray")
-            execute_ssh_bg(ip, cmds)
+            prefix = "systemctl() { true; }; export -f systemctl; "
+            suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+            combined_cmd = prefix + " ; ".join(cmds) + suffix
+            execute_ssh_bg(ip, [combined_cmd])
             
         if migrated_count < len(excess_users):
             return False, f"Limit Updated. Migrated {migrated_count} keys. Failed to migrate {len(excess_users) - migrated_count} keys (No space)."
