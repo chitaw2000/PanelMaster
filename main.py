@@ -169,10 +169,13 @@ def dashboard():
     group_used_bytes = {}
     
     for uname, uinfo in db.items():
+        if not isinstance(uinfo, dict): continue
         nid = uinfo.get('node')
         gid = uinfo.get('group')
-        if nid: node_used_bytes[nid] = node_used_bytes.get(nid, 0) + float(uinfo.get('used_bytes', 0))
-        if gid: group_used_bytes[gid] = group_used_bytes.get(gid, 0) + float(uinfo.get('used_bytes', 0))
+        try: u_bytes = float(uinfo.get('used_bytes', 0))
+        except: u_bytes = 0.0
+        if nid: node_used_bytes[nid] = node_used_bytes.get(nid, 0) + u_bytes
+        if gid: group_used_bytes[gid] = group_used_bytes.get(gid, 0) + u_bytes
     
     all_servers = get_all_servers()
     sick_nodes = {'blue': [], 'yellow': [], 'orange': [], 'red': []}
@@ -184,17 +187,18 @@ def dashboard():
             sick_count += 1
             
     for nid, info in nodes.items():
-        total_count = sum(1 for i in db.values() if i.get('node') == nid and not i.get('group'))
-        live_count = sum(1 for uname, i in db.items() if i.get('node') == nid and not i.get('group') and uname in active_users and not i.get('is_blocked'))
+        total_count = sum(1 for i in db.values() if isinstance(i, dict) and i.get('node') == nid and not i.get('group'))
+        live_count = sum(1 for uname, i in db.items() if isinstance(i, dict) and i.get('node') == nid and not i.get('group') and uname in active_users and not i.get('is_blocked'))
         
         ninfo = ndb.get(nid, {})
         limit_tb = float(ninfo.get("limit_tb", 0))
         
-        # 🚀 အသစ်ပြင်ဆင်ချက်: ဖျက်လိုက်သော Key များ၏ Traffic ကိုပါ ပေါင်းထည့်မည်
-        historical_bytes = float(ninfo.get("used_bytes", 0))
+        # 🚀 အသစ်ပြင်ဆင်ချက်: ဖျက်လိုက်သော Key များ၏ သမိုင်းဝင် Traffic ကိုပါ ပေါင်းထည့်မည်
+        try: historical_bytes = float(ninfo.get("used_bytes", 0))
+        except: historical_bytes = 0.0
         current_active_bytes = float(node_used_bytes.get(nid, 0))
-        used_gb = (current_active_bytes + historical_bytes) / (1024**3)
         
+        used_gb = (current_active_bytes + historical_bytes) / (1024**3)
         limit_gb = limit_tb * 1024
         is_alarm = limit_gb > 0 and used_gb >= limit_gb
         health = ninfo.get("health", "green")
@@ -208,7 +212,7 @@ def dashboard():
     for gid, gdata in auto_groups.items():
         limit = gdata.get("limit", 30)
         g_nodes = gdata.get("nodes", {})
-        g_keys = sum(1 for i in db.values() if i.get("group") == gid)
+        g_keys = sum(1 for i in db.values() if isinstance(i, dict) and i.get("group") == gid)
         g_used_gb = group_used_bytes.get(gid, 0) / (1024**3)
         group_stats.append({"id": gid, "name": gdata.get("name", gid), "limit": limit, "node_count": len(g_nodes), "total_keys": g_keys, "used_gb": g_used_gb})
 
@@ -282,9 +286,15 @@ def group_view(group_id):
     group_total_bytes = 0
     
     for uname, info in db.items():
+        if not isinstance(info, dict): continue
         if info.get('group') == group_id:
-            info['used_bytes'] = float(info.get('used_bytes', 0))
-            info['total_gb'] = float(info.get('total_gb', 0))
+            try: u_bytes = float(info.get('used_bytes', 0))
+            except: u_bytes = 0.0
+            info['used_bytes'] = u_bytes
+            
+            try: info['total_gb'] = float(info.get('total_gb', 0))
+            except: info['total_gb'] = 0.0
+            
             info['used_gb_str'] = f"{(info['used_bytes'] / (1024**3)):.2f}"
             info['username'] = uname
             info['actual_key'] = info.get('key') or "No Key Found"
@@ -349,7 +359,7 @@ def delete_server_from_group(group_id, node_id):
             if os.path.exists(USERS_DB):
                 with open(USERS_DB, 'r') as f: 
                     db = json.load(f)
-                users_to_delete = [u for u, info in db.items() if info.get('node') == node_id]
+                users_to_delete = [u for u, info in db.items() if isinstance(info, dict) and info.get('node') == node_id]
         if users_to_delete: 
             bulk_delete_keys(users_to_delete)
             
@@ -425,9 +435,15 @@ def node_view(node_id):
     users = []
     node_used_bytes = 0
     for uname, info in db.items():
+        if not isinstance(info, dict): continue
         if info.get('node') == node_id:
-            info['used_bytes'] = float(info.get('used_bytes', 0))
-            info['total_gb'] = float(info.get('total_gb', 0))
+            try: u_bytes = float(info.get('used_bytes', 0))
+            except: u_bytes = 0.0
+            info['used_bytes'] = u_bytes
+            
+            try: info['total_gb'] = float(info.get('total_gb', 0))
+            except: info['total_gb'] = 0.0
+            
             info['used_gb_str'] = f"{(info['used_bytes'] / (1024**3)):.2f}"
             info['username'] = uname
             info['actual_key'] = info.get('key') or "No Key Found"
@@ -438,8 +454,9 @@ def node_view(node_id):
     ninfo = ndb.get(node_id, {})
     limit_tb = float(ninfo.get("limit_tb", 0))
     
-    # 🚀 အသစ်ပြင်ဆင်ချက်: Node ထဲဝင်ကြည့်လျှင်လည်း ဖျက်လိုက်သော Traffic ပါ ပေါင်းပြမည်
-    historical_bytes = float(ninfo.get("used_bytes", 0))
+    # 🚀 အသစ်ပြင်ဆင်ချက်: Node ထဲဝင်ကြည့်လျှင်လည်း သမိုင်းဝင် Traffic ပါ ပေါင်းပြမည်
+    try: historical_bytes = float(ninfo.get("used_bytes", 0))
+    except: historical_bytes = 0.0
     used_gb = (node_used_bytes + historical_bytes) / (1024**3)
     
     limit_gb = limit_tb * 1024
@@ -761,7 +778,7 @@ def purge_node(node_id):
         if os.path.exists(USERS_DB):
             with open(USERS_DB, 'r') as f: 
                 db = json.load(f)
-            users_to_delete = [u for u, info in db.items() if info.get('node') == node_id]
+            users_to_delete = [u for u, info in db.items() if isinstance(info, dict) and info.get('node') == node_id]
             for u in users_to_delete: 
                 del db[u]
             with open(USERS_DB, 'w') as f: 
