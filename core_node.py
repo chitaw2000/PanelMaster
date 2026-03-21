@@ -2,7 +2,7 @@ import json, os, uuid, base64, urllib.parse
 from datetime import datetime, timedelta
 from utils import db_lock, get_all_servers
 from core_auto import find_available_node, load_auto_groups, save_auto_groups
-from core_engine import execute_ssh_bg, get_vless_delete_cmd, get_ss_delete_cmd
+from core_engine import execute_ssh_bg, get_safe_delete_cmd
 
 try:
     from config import USERS_DB, NODES_LIST
@@ -87,7 +87,7 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 credentials = f"chacha20-ietf-poly1305:{uid}"
                 b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
                 k = f"ss://{b64_creds}@{target_ip}:{port}#{safe_u}"
-                cmd = f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 && ufw allow {port}/udp >/dev/null 2>&1"
+                cmd = f"/usr/local/bin/v2ray-node-add-out {u} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 ; ufw allow {port}/udp >/dev/null 2>&1"
                 ss_cmds.setdefault(target_ip, []).append(cmd)
             
             db[u] = {
@@ -100,14 +100,12 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
         
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-        # 🚀 VLESS အား ပုံမှန်အတိုင်း အလုပ်လုပ်စေမည်
         for ip, cmds in vless_cmds.items():
             cmds.append("systemctl restart xray")
             execute_ssh_bg(ip, cmds)
             
-        # 🚀 SS အား Hack ဖြင့် အလုပ်လုပ်စေမည်
         for ip, cmds in ss_cmds.items():
-            prefix = "systemctl() { if [[ \"$*\" == *\"xray\"* ]]; then true; else command systemctl \"$@\"; fi }; export -f systemctl; "
+            prefix = "systemctl() { true; }; export -f systemctl; "
             suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
             combined_cmd = prefix + " ; ".join(cmds) + suffix
             execute_ssh_bg(ip, [combined_cmd])
@@ -125,7 +123,7 @@ def toggle_key(username):
                     protocol = user.get('protocol', 'v2')
                     if user['is_blocked']: 
                         user['is_online'] = False
-                        cmd = get_vless_delete_cmd(username) if protocol == 'v2' else get_ss_delete_cmd(username, user.get('port'))
+                        cmd = get_safe_delete_cmd(username, protocol, user.get('port', '443'))
                     else:
                         uid = user['uuid']
                         cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}" if protocol == 'v2' else f"/usr/local/bin/v2ray-node-add-out {username} {uid} {user['port']}"
@@ -133,7 +131,7 @@ def toggle_key(username):
                     if protocol == 'v2':
                         execute_ssh_bg(str(ip).strip(), [f"{cmd} ; systemctl restart xray"])
                     else:
-                        prefix = "systemctl() { if [[ \"$*\" == *\"xray\"* ]]; then true; else command systemctl \"$@\"; fi }; export -f systemctl; "
+                        prefix = "systemctl() { true; }; export -f systemctl; "
                         suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
                         execute_ssh_bg(str(ip).strip(), [prefix + cmd + suffix])
                 with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
@@ -163,7 +161,7 @@ def edit_key(username, total_gb, expire_date):
                                 execute_ssh_bg(str(ip).strip(), [f"{cmd} ; systemctl restart xray"])
                             else:
                                 cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port}"
-                                prefix = "systemctl() { if [[ \"$*\" == *\"xray\"* ]]; then true; else command systemctl \"$@\"; fi }; export -f systemctl; "
+                                prefix = "systemctl() { true; }; export -f systemctl; "
                                 suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
                                 execute_ssh_bg(str(ip).strip(), [prefix + cmd + suffix])
 
@@ -188,7 +186,7 @@ def renew_key(username, add_gb, add_days):
                         execute_ssh_bg(str(ip).strip(), [f"{cmd} ; systemctl restart xray"])
                     else:
                         cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port}"
-                        prefix = "systemctl() { if [[ \"$*\" == *\"xray\"* ]]; then true; else command systemctl \"$@\"; fi }; export -f systemctl; "
+                        prefix = "systemctl() { true; }; export -f systemctl; "
                         suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
                         execute_ssh_bg(str(ip).strip(), [prefix + cmd + suffix])
                     
@@ -203,12 +201,11 @@ def delete_key(username):
                 ip = get_robust_ip(info.get('node'))
                 protocol = info.get('protocol', 'v2')
                 if ip:
+                    cmd = get_safe_delete_cmd(username, protocol, info.get('port', '443'))
                     if protocol == 'v2':
-                        cmd = get_vless_delete_cmd(username)
                         execute_ssh_bg(str(ip).strip(), [f"{cmd} ; systemctl restart xray"])
                     else:
-                        cmd = get_ss_delete_cmd(username, info.get('port'))
-                        prefix = "systemctl() { if [[ \"$*\" == *\"xray\"* ]]; then true; else command systemctl \"$@\"; fi }; export -f systemctl; "
+                        prefix = "systemctl() { true; }; export -f systemctl; "
                         suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
                         execute_ssh_bg(str(ip).strip(), [prefix + cmd + suffix])
                 del db[username]
@@ -226,10 +223,11 @@ def bulk_delete_keys(usernames):
                     protocol = db[uname].get('protocol', 'v2')
                     if ip:
                         ip = str(ip).strip()
+                        cmd = get_safe_delete_cmd(uname, protocol, db[uname].get('port', '443'))
                         if protocol == 'v2':
-                            vless_dels.setdefault(ip, []).append(get_vless_delete_cmd(uname))
+                            vless_dels.setdefault(ip, []).append(cmd)
                         else:
-                            ss_dels.setdefault(ip, []).append(get_ss_delete_cmd(uname, db[uname].get('port')))
+                            ss_dels.setdefault(ip, []).append(cmd)
                     del db[uname]
             with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
             
@@ -238,7 +236,7 @@ def bulk_delete_keys(usernames):
                 execute_ssh_bg(ip, cmds)
                 
             for ip, cmds in ss_dels.items():
-                prefix = "systemctl() { if [[ \"$*\" == *\"xray\"* ]]; then true; else command systemctl \"$@\"; fi }; export -f systemctl; "
+                prefix = "systemctl() { true; }; export -f systemctl; "
                 suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
                 combined_cmd = prefix + " ; ".join(cmds) + suffix
                 execute_ssh_bg(ip, [combined_cmd])
@@ -284,11 +282,12 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
             if not new_node_id: break
             
             new_node_ip = str(new_node_ip).strip()
+            cmd_del = get_safe_delete_cmd(uname, proto, old_port)
             
             if proto == 'v2':
-                vless_cmds.setdefault(old_ip, []).append(get_vless_delete_cmd(uname))
+                vless_cmds.setdefault(old_ip, []).append(cmd_del)
             else:
-                ss_cmds.setdefault(old_ip, []).append(get_ss_delete_cmd(uname, old_port))
+                ss_cmds.setdefault(old_ip, []).append(cmd_del)
             
             used_ports = [int(i.get('port', 10000)) for i in db.values() if isinstance(i, dict) and i.get('protocol') == 'out' and i.get('node') == new_node_id]
             new_port = str(max(used_ports) + 1) if used_ports else "10001"
@@ -320,7 +319,7 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
             execute_ssh_bg(ip, cmds)
             
         for ip, cmds in ss_cmds.items():
-            prefix = "systemctl() { if [[ \"$*\" == *\"xray\"* ]]; then true; else command systemctl \"$@\"; fi }; export -f systemctl; "
+            prefix = "systemctl() { true; }; export -f systemctl; "
             suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
             combined_cmd = prefix + " ; ".join(cmds) + suffix
             execute_ssh_bg(ip, [combined_cmd])
