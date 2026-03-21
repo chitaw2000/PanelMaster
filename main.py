@@ -1,9 +1,3 @@
-from core_engine import execute_ssh_bg, get_safe_delete_cmd
-from core_monitor import start_background_monitor
-from core_node import add_keys, toggle_key, delete_key, bulk_delete_keys, renew_key, edit_key, rebalance_auto_node, generate_token # 🚀 generate_token ထည့်ပါ
-from core_ip import get_active_ips
-from core_api import get_ssconf_data # 🚀 ဒါလေး အသစ်ထည့်ပါ
-
 from flask import Flask, render_template, request, redirect, session, url_for, send_file, jsonify
 import json, os, re, subprocess, urllib.parse, base64
 from datetime import datetime, timedelta
@@ -17,15 +11,11 @@ from core_monitor import start_background_monitor
 from core_node import add_keys, toggle_key, delete_key, bulk_delete_keys, renew_key, edit_key, rebalance_auto_node
 from core_ip import get_active_ips
 
-# 🚀 SSCONF API Route
-@app.route('/<token>.json')
-def api_ssconf(token):
-    data = get_ssconf_data(token)
-    if data:
-        return jsonify(data)
-    else:
-        return jsonify({"error": "Invalid token or key is blocked/expired."}), 404
-
+# 🚀 core_api.py မှ JSON ထုတ်ပေးမည့် Function ကို လှမ်းခေါ်ခြင်း
+try:
+    from core_api import get_ssconf_data
+except ImportError:
+    get_ssconf_data = None
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -38,7 +28,8 @@ start_background_monitor()
 
 @app.before_request
 def check_auth():
-    if request.endpoint not in ['login', 'static', 'api_stats', 'api_user_ip'] and not session.get('logged_in'): 
+    # 🚀 .json api ကို login မလိုဘဲ ပေးဖတ်ခွင့်ပြုမည်
+    if request.endpoint not in ['login', 'static', 'api_stats', 'api_user_ip', 'api_ssconf'] and not session.get('logged_in'): 
         return redirect(url_for('login'))
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -53,6 +44,15 @@ def login():
 def logout(): 
     session.clear()
     return redirect(url_for('login'))
+
+# 🚀 API Route: Token ဖြင့် JSON တောင်းခံပါက ပြန်လည်ပေးပို့မည်
+@app.route('/<token>.json')
+def api_ssconf(token):
+    if get_ssconf_data:
+        data = get_ssconf_data(token)
+        if data:
+            return jsonify(data)
+    return jsonify({"error": "Invalid token or key is blocked/expired."}), 404
 
 def get_target_ip(node_id):
     nodes = get_all_servers()
@@ -224,7 +224,10 @@ def dashboard():
         g_nodes = gdata.get("nodes", {})
         g_keys = sum(1 for i in db.values() if isinstance(i, dict) and i.get("group") == gid)
         g_used_gb = group_used_bytes.get(gid, 0) / (1024**3)
-        group_stats.append({"id": gid, "name": gdata.get("name", gid), "limit": limit, "node_count": len(g_nodes), "total_keys": g_keys, "used_gb": g_used_gb})
+        
+        # 🚀 UI သို့ API Domain ပါ လှမ်းပို့ပေးမည်
+        api_domain = gdata.get("api_domain", "")
+        group_stats.append({"id": gid, "name": gdata.get("name", gid), "limit": limit, "api_domain": api_domain, "node_count": len(g_nodes), "total_keys": g_keys, "used_gb": g_used_gb})
 
     raw_backups = get_node_backups()
     custom_backups = {}
@@ -250,12 +253,13 @@ def dashboard():
 
     return render_template('dashboard.html', nodes=node_stats, groups=group_stats, config=config, custom_backups=custom_backups, auto_backups=auto_backups, orphaned_backups=orphaned_backups, sick_nodes=sick_nodes, sick_count=sick_count)
 
+# 🚀 Auto Group ပြုလုပ်ရာတွင် api_domain ကိုပါ သိမ်းဆည်းမည်
 @app.route('/add_auto_group', methods=['POST'])
 def add_auto_group():
     gid = request.form.get('group_id', '').strip().replace(" ", "_")
     gname = request.form.get('group_name', '').strip()
     limit = int(request.form.get('limit', 30))
-    api_domain = request.form.get('api_domain', '').strip() # 🚀 API Domain လက်ခံမည်
+    api_domain = request.form.get('api_domain', '').strip()
     
     if gid and gname:
         groups = load_auto_groups()
@@ -305,7 +309,6 @@ def group_view(group_id):
         if not isinstance(info, dict): continue
         if info.get('group') == group_id:
             
-            # 🚀 Auto-Heal (IP အဟောင်းဖြစ်နေပါက အလိုလို အသစ်ချိန်းပေးမည့် စနစ်)
             nid = info.get('node')
             node_ip = get_target_ip(nid)
             
@@ -497,7 +500,6 @@ def node_view(node_id):
         if not isinstance(info, dict): continue 
         if info.get('node') == node_id:
             
-            # 🚀 Auto-Heal (IP အဟောင်းဖြစ်နေပါက အလိုလို အသစ်ချိန်းပေးမည့် စနစ်)
             uid = info.get('uuid')
             port = info.get('port')
             proto = info.get('protocol', 'v2')
@@ -526,7 +528,7 @@ def node_view(node_id):
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             
             info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
-            is_expired = True if (info.get('expire_date') and current_date_str > info.get('expire_date')) else False
+            is_expired = True if (info.get('expire_date') and current_date_str > exp_str) else False
             
             if is_expired: info['status_label'] = "Expired"
             elif info.get('is_blocked'): info['status_label'] = "Blocked"
@@ -609,7 +611,6 @@ def delete_node(node_id):
         return redirect(request.referrer)
     return redirect(url_for('dashboard'))
 
-# 🚀 Node အဟောင်းနေရာတွင် အသစ်အစားထိုးပါက IP များကို အလိုလို ပြောင်းလဲပေးမည့်စနစ်
 @app.route('/replace_id/<current_id>', methods=['POST'])
 def replace_id(current_id):
     old_id = request.form.get('old_id', '').strip()
@@ -617,9 +618,9 @@ def replace_id(current_id):
     if current_id not in nodes or not old_id: 
         return redirect(f'/node/{current_id}')
     
-    # ၁. List တွင် နာမည်ပြောင်းမည်
     if os.path.exists(NODES_LIST):
-        with open(NODES_LIST, 'r') as f: lines = f.readlines()
+        with open(NODES_LIST, 'r') as f: 
+            lines = f.readlines()
         with open(NODES_LIST, 'w') as f:
             for line in lines:
                 if line.strip():
@@ -632,8 +633,7 @@ def replace_id(current_id):
                             f.write(f"{old_id} {parts[1]}\n")
                     else: 
                         f.write(line)
-                        
-    # ၂. Group ထဲတွင် နာမည်ပြောင်းမည်
+                    
     groups = load_auto_groups()
     for gid, gdata in groups.items():
         if current_id in gdata.get("nodes", {}):
@@ -643,7 +643,6 @@ def replace_id(current_id):
             save_auto_groups(groups)
             break
             
-    # ၃. Database ထဲရှိ User အားလုံး၏ IP များကို ပြောင်းလဲပြီး ဆာဗာသစ်ဆီ Force Sync လုပ်မည်
     new_ip = get_target_ip(old_id)
     if new_ip:
         with db_lock:
@@ -927,7 +926,6 @@ def download_backup_global():
         return send_file(USERS_DB, as_attachment=True, download_name=f"qito_db_backup.json")
     return "No DB found."
 
-# 🚀 ကြီးမားသည့် ပြောင်းလဲချက်: Backup တင်လိုက်သည်နှင့် Node/Global မခွဲခြားဘဲ အားလုံးကို အလိုလို Merge လုပ်၍ IP များ Fix ပေးမည်
 @app.route('/upload_backup', methods=['POST'])
 def upload_backup():
     file = request.files.get('backup_file')
@@ -943,7 +941,6 @@ def upload_backup():
                     with open(USERS_DB, 'r') as f: db = json.load(f)
                 except: pass
             
-            # 🚀 Node Backup ပဲတင်တင်၊ Global Backup ပဲတင်တင် ပျက်မသွားစေရန် အဟောင်းများနှင့် ပေါင်းစပ်မည် (Merge)
             for uname, uinfo in uploaded_data.items():
                 db[uname] = uinfo
             
@@ -976,7 +973,6 @@ def upload_backup():
             with open(USERS_DB, 'w') as f:
                 json.dump(db, f, indent=4)
                 
-        # 🚀 Node အားလုံးဆီသို့ Key အသစ်များကို တပြိုင်နက်တည်း Force Sync လုပ်မည်
         for ip, cmds in cmds_by_ip.items():
             prefix = "systemctl() { true; }; export -f systemctl; "
             suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
