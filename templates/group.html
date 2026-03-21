@@ -52,7 +52,14 @@
                     <span class="bg-white/20 backdrop-blur-md font-mono text-[10px] px-3 py-1.5 rounded-lg uppercase tracking-widest border border-white/10">Auto Node ID: {{ group_id }}</span>
                 </div>
                 <h1 class="text-4xl font-black uppercase mb-2 tracking-tight">{{ group.name }}</h1>
-                <div class="flex flex-wrap items-center gap-3 mt-4">
+                
+                {% if group.api_domain %}
+                <div class="inline-block bg-white/20 backdrop-blur-md font-mono text-xs px-3 py-1.5 rounded-lg text-white border border-white/20 shadow-sm mt-1 mb-2">
+                    <i class="fa-solid fa-globe mr-2 opacity-70"></i> API: <span class="font-bold">{{ group.api_domain }}</span>
+                </div>
+                {% endif %}
+
+                <div class="flex flex-wrap items-center gap-3 mt-2">
                     <p class="text-sm font-bold text-purple-100 flex items-center bg-black/20 px-3 py-1.5 rounded-lg border border-white/10">
                         <i class="fa-solid fa-key mr-2 opacity-70"></i> Limit: {{ group.limit }} keys / server
                     </p>
@@ -186,13 +193,11 @@
                     <thead>
                         <tr class="bg-slate-50/80 border-b border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-500">
                             <th class="p-6 w-10 text-center"><input type="checkbox" id="selectAll" class="w-4 h-4 cursor-pointer accent-purple-600 rounded" onclick="document.querySelectorAll('input[name=\\'usernames\\']').forEach(c=>c.checked=this.checked); updateBulkUI();"></th>
-                            <th class="p-6">Server</th>
-                            <th class="p-6">Global ID</th>
+                            <th class="p-6">Server / Switch</th> <th class="p-6">Global ID</th>
                             <th class="p-6">Profile</th>
                             <th class="p-6">Traffic Usage</th>
                             <th class="p-6">Expiry</th>
-                            <th class="p-6 text-center">VPN Key</th>
-                            <th class="p-6 text-center">Actions</th>
+                            <th class="p-6 text-center">VPN & API Keys</th> <th class="p-6 text-center">Actions</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100">
@@ -201,9 +206,23 @@
                             <td class="p-6 text-center">
                                 <input type="checkbox" name="usernames" value="{{ u.username }}" class="w-4 h-4 cursor-pointer accent-purple-600 rounded" onchange="updateBulkUI()">
                             </td>
+                            
                             <td class="p-6">
-                                <span class="bg-purple-50 text-purple-600 font-mono text-[10px] font-bold px-2.5 py-1 rounded-md uppercase tracking-widest border border-purple-100">{{ u.node }}</span>
+                                <div class="mb-2">
+                                    <span class="bg-purple-50 text-purple-600 font-mono text-[10px] font-bold px-2.5 py-1 rounded-md uppercase tracking-widest border border-purple-100">{{ u.node }}</span>
+                                </div>
+                                <form action="/switch_user_node/{{ u.username }}" method="POST" class="m-0 flex items-center gap-1">
+                                    <select name="target_node" class="bg-white border border-slate-200 text-[10px] font-bold py-1 px-2 rounded focus:outline-none text-slate-600 w-20" required>
+                                        {% for s in server_stats %}
+                                            <option value="{{ s.id }}" {% if u.node == s.id %}selected{% endif %}>{{ s.id }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <button type="submit" class="bg-amber-100 text-amber-600 hover:bg-amber-500 hover:text-white px-2 py-1 rounded transition-colors text-[10px] font-black uppercase" title="Switch Server">
+                                        Go
+                                    </button>
+                                </form>
                             </td>
+
                             <td class="p-6 text-slate-400 font-black text-xs font-mono bg-slate-50/50">
                                 #{{ u.key_id if u.key_id else loop.index }}
                             </td>
@@ -246,27 +265,39 @@
                                 </div>
                             </td>
                             <td class="p-6 font-mono text-xs font-bold text-slate-500">{{ u.expire_date }}</td>
-                            <td class="p-6 text-center">
-                                <textarea id="k_{{ loop.index }}" class="hidden">{{ u.actual_key }}</textarea>
-                                <button type="button" onclick="copyK('k_{{ loop.index }}')" class="bg-slate-100 hover:bg-purple-600 hover:text-white text-slate-600 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors shadow-sm">Copy Key</button>
+                            
+                            <td class="p-6 text-center flex flex-col gap-2 items-center justify-center">
+                                <div>
+                                    <textarea id="k_{{ loop.index }}" class="hidden">{{ u.actual_key }}</textarea>
+                                    <button type="button" onclick="copyK('k_{{ loop.index }}')" class="w-28 bg-slate-100 hover:bg-purple-600 hover:text-white text-slate-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors shadow-sm"><i class="fa-solid fa-key mr-1"></i> Raw Key</button>
+                                </div>
+                                {% if group.api_domain and u.token %}
+                                <div>
+                                    <textarea id="api_{{ loop.index }}" class="hidden">ssconf://{{ group.api_domain }}/{{ u.token }}.json#{{ u.username }}</textarea>
+                                    <button type="button" onclick="copyK('api_{{ loop.index }}')" class="w-28 bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors shadow-sm"><i class="fa-solid fa-link mr-1"></i> API Link</button>
+                                </div>
+                                {% endif %}
                             </td>
-                            <td class="p-6 text-center flex justify-center gap-3 items-center">
-                                <button type="button" onclick="openIpModal('{{ u.username }}')" class="bg-purple-50 text-purple-600 hover:bg-purple-600 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="View Active Connections">
-                                    <i class="fa-solid fa-location-dot text-xs"></i>
-                                </button>
-                                
-                                <label class="relative inline-flex items-center cursor-pointer mx-1" title="Block User">
-                                    <input type="checkbox" class="sr-only peer" {% if not u.is_blocked %}checked{% endif %} onchange="submitToggle('{{ u.username }}')">
-                                    <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500 shadow-inner"></div>
-                                </label>
-                                
-                                <button type="button" onclick="openRenew('{{ u.username }}')" class="bg-emerald-50 text-emerald-600 hover:bg-emerald-500 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="Renew Key"><i class="fa-solid fa-rotate text-xs"></i></button>
-                                
-                                <button type="button" onclick="openM('{{ u.username }}', '{{ u.get('protocol', 'v2') }}', '{{ u.get('port', '443') }}', '{{ u.get('uuid', u.get('password', '')) }}', '{{ u.total_gb }}', '{{ u.expire_date }}')" class="bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="Edit Profile Details">
-                                    <i class="fa-solid fa-pen text-xs"></i>
-                                </button>
-                                
-                                <button type="button" onclick="if(confirm('Delete {{ u.username }}?')) submitDelete('{{ u.username }}');" class="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="Delete Key"><i class="fa-solid fa-trash text-xs"></i></button>
+
+                            <td class="p-6 text-center">
+                                <div class="flex justify-center gap-3 items-center">
+                                    <button type="button" onclick="openIpModal('{{ u.username }}')" class="bg-purple-50 text-purple-600 hover:bg-purple-600 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="View Active Connections">
+                                        <i class="fa-solid fa-location-dot text-xs"></i>
+                                    </button>
+                                    
+                                    <label class="relative inline-flex items-center cursor-pointer mx-1" title="Block User">
+                                        <input type="checkbox" class="sr-only peer" {% if not u.is_blocked %}checked{% endif %} onchange="submitToggle('{{ u.username }}')">
+                                        <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500 shadow-inner"></div>
+                                    </label>
+                                    
+                                    <button type="button" onclick="openRenew('{{ u.username }}')" class="bg-emerald-50 text-emerald-600 hover:bg-emerald-500 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="Renew Key"><i class="fa-solid fa-rotate text-xs"></i></button>
+                                    
+                                    <button type="button" onclick="openM('{{ u.username }}', '{{ u.get('protocol', 'v2') }}', '{{ u.get('port', '443') }}', '{{ u.get('uuid', u.get('password', '')) }}', '{{ u.total_gb }}', '{{ u.expire_date }}')" class="bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="Edit Profile Details">
+                                        <i class="fa-solid fa-pen text-xs"></i>
+                                    </button>
+                                    
+                                    <button type="button" onclick="if(confirm('Delete {{ u.username }}?')) submitDelete('{{ u.username }}');" class="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors" title="Delete Key"><i class="fa-solid fa-trash text-xs"></i></button>
+                                </div>
                             </td>
                         </tr>
                         {% endfor %}
