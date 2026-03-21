@@ -49,7 +49,7 @@ def _save_historical_traffic(node_id, used_bytes):
             
         ndb[node_id]["used_bytes"] = float(ndb[node_id].get("used_bytes", 0)) + float(used_bytes)
         
-        with open(NODES_DB, 'w') as f: json.dump(ndb, f)
+        with open(NODES_DB, 'w') as f: json.dump(ndb, f, indent=4)
     except Exception:
         pass
 
@@ -134,8 +134,6 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 
                 cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port}"
                 cmds_by_ip[target_ip].append(cmd)
-                
-                # UFW Command များကို ပြတ်မကျန်စေရန် သီးသန့်ခွဲရေးထားပါသည်
                 ufw_cmd = f"ufw allow {port}/tcp >/dev/null 2>&1 && ufw allow {port}/udp >/dev/null 2>&1"
                 cmds_by_ip[target_ip].append(ufw_cmd)
             
@@ -186,7 +184,7 @@ def toggle_key(username):
                         if protocol == 'v2': 
                             cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
                         else: 
-                            cmd = f"ufw delete deny {port}/tcp >/dev/null 2>&1 || true ; ufw delete deny {port}/udp >/dev/null 2>&1 || true"
+                            cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port}"
                             
                     execute_ssh_bg(str(ip).strip(), [cmd, "systemctl restart xray"])
                     
@@ -216,7 +214,7 @@ def edit_key(username, total_gb, expire_date):
                             if protocol == 'v2':
                                 cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
                             else:
-                                cmd = f"ufw delete deny {port}/tcp >/dev/null 2>&1 || true ; ufw delete deny {port}/udp >/dev/null 2>&1 || true"
+                                cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port}"
                             execute_ssh_bg(str(ip).strip(), [cmd, "systemctl restart xray"])
 
                 with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
@@ -242,7 +240,7 @@ def renew_key(username, add_gb, add_days):
                     if protocol == 'v2':
                         cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
                     else:
-                        cmd = f"ufw delete deny {port}/tcp >/dev/null 2>&1 || true ; ufw delete deny {port}/udp >/dev/null 2>&1 || true"
+                        cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port}"
                     execute_ssh_bg(str(ip).strip(), [cmd, "systemctl restart xray"])
                 
                 with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
@@ -378,8 +376,6 @@ def rebalance_auto_node(group_id, new_limit, specific_node=None):
                 k = f"ss://{ss_conf}#{safe_u}"
                 cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port}"
                 cmds_by_ip[new_node_ip].append(cmd_add)
-                
-                # UFW Command များကို ပြတ်မကျန်စေရန် သီးသန့်ခွဲရေးထားပါသည်
                 ufw_cmd = f"ufw allow {new_port}/tcp >/dev/null 2>&1 && ufw allow {new_port}/udp >/dev/null 2>&1"
                 cmds_by_ip[new_node_ip].append(ufw_cmd)
 
