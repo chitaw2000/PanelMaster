@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-import json, os, urllib.parse, base64, uuid, random, string, subprocess, threading, time
+import json, os, urllib.parse, base64, uuid, random, string, subprocess, threading
 from datetime import datetime, timedelta
 
 from utils import get_all_servers, db_lock
@@ -29,12 +29,13 @@ def get_target_ip(node_id):
                     return parts[-1]
     return None
 
-# SSH ကို သေချာပေါက် Run မည့်စနစ်
+# 🚀 SSH ကို သေချာပေါက် Run မည့်စနစ် (Bash Syntax ပြဿနာ အမြစ်ပြတ် ရှင်းထားသည်)
 def run_ssh_task(ip, cmd):
     try:
+        # ရှုပ်ထွေးသော Function များ မသုံးတော့ဘဲ တိုက်ရိုက် Run မည်
         export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
-        safe_cmd = cmd.replace("'", "'\\''")
-        full_ssh = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} '{export_path} {safe_cmd}'"
+        safe_cmd = cmd.replace('"', '\\"') # Quote များကို သေချာအောင် ပြင်ဆင်ခြင်း
+        full_ssh = f'ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} "{export_path} {safe_cmd}"'
         subprocess.run(full_ssh, shell=True)
     except Exception as e:
         print(f"SSH Error on {ip}: {e}")
@@ -165,11 +166,9 @@ def api_generate_keys():
                 "prefix": "\u0016\u0003\u0001\u0005\u00f2\u0001\u0000\u0005\u00ee\u0003\u0003"
             }
             
-            # Run SSH creation on EACH node in background
-            cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
-            prefix = "systemctl() { true; }; export -f systemctl; "
-            suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-            threading.Thread(target=run_ssh_task, args=(nip, f"{prefix}{cmd_add}{suffix}"), daemon=True).start()
+            # Run SSH creation on EACH node in background (Clean Command)
+            cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+            threading.Thread(target=run_ssh_task, args=(nip, cmd_add), daemon=True).start()
 
         active_key = db_keys_dict.get(target_node, "")
         existing_ids = [int(u.get('key_id', 0)) for u in db.values() if isinstance(u, dict) and str(u.get('key_id', '')).isdigit()]
@@ -252,7 +251,7 @@ def webhook_switch():
     if old_node == target_node:
         return jsonify({"success": True, "message": f"Already connected to {target_node}"})
     
-    # 🚀 Update Database Only (No SSH needed anymore since key is active on all nodes)
+    # 🚀 Update Database Only (ဆာဗာအားလုံးတွင် Key ရှိပြီးသားဖြစ်သဖြင့် SSH ဝင်ရန် မလိုတော့ပါ)
     proto = uinfo.get('protocol', 'v2')
     uid = uinfo.get('uuid')
     port = uinfo.get('port')
@@ -315,23 +314,18 @@ def api_user_action():
     for nid in g_nodes:
         nip = get_target_ip(nid)
         if not nip: continue
-        
-        prefix = "systemctl() { true; }; export -f systemctl; "
-        suffix = " ; unset -f systemctl; systemctl restart xray"
 
         if action == "suspend" or action == "delete":
             cmd_del = get_safe_delete_cmd(username, proto, port)
-            full_del = f"{cmd_del} ; systemctl restart xray" if proto == 'v2' else f"{prefix}{cmd_del}{suffix}"
+            full_del = f"{cmd_del} ; systemctl restart xray"
             threading.Thread(target=run_ssh_task, args=(nip, full_del), daemon=True).start()
 
         elif action == "resume":
             if proto == 'v2':
-                cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
-                full_add = f"{cmd_add} ; systemctl restart xray"
+                cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid} ; systemctl restart xray"
             else:
-                cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
-                full_add = f"{prefix}{cmd_add}{suffix}"
-            threading.Thread(target=run_ssh_task, args=(nip, full_add), daemon=True).start()
+                cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+            threading.Thread(target=run_ssh_task, args=(nip, cmd_add), daemon=True).start()
 
     if action == "suspend":
         uinfo['is_blocked'] = True
