@@ -1,10 +1,10 @@
 from flask import Blueprint, request, jsonify
-import json, os, urllib.parse, base64, uuid, random, string, time, threading, subprocess
+import json, os, urllib.parse, base64, uuid, random, string
 from datetime import datetime, timedelta
 
 from utils import get_all_servers, db_lock
 from core_auto import load_auto_groups
-from core_engine import get_safe_delete_cmd
+from core_engine import execute_ssh_bg, get_safe_delete_cmd
 
 try:
     from config import USERS_DB, NODES_LIST
@@ -12,7 +12,10 @@ except ImportError:
     USERS_DB = "/root/PanelMaster/users_db.json"
     NODES_LIST = "/root/PanelMaster/nodes_list.txt"
 
+# Blueprint တည်ဆောက်ခြင်း
 api_bp = Blueprint('api_bp', __name__)
+
+# 🚀 Security Key
 MASTER_API_KEY = "My_Super_Secret_VPN_Key_2026"
 
 def get_target_ip(node_id):
@@ -29,28 +32,9 @@ def get_target_ip(node_id):
                     return parts[-1]
     return None
 
-# 🚀 SSH Command များကို အမှားကင်းကင်းနှင့် အစဉ်လိုက် အလုပ်လုပ်စေရန် သီးသန့် Function
-def perform_switch_ssh(old_ip, new_ip, username, proto, old_port, cmd_add, is_blocked):
-    prefix = "systemctl() { true; }; export -f systemctl; "
-    suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-    
-    # ၁။ ဆာဗာဟောင်းမှ သေချာပေါက် ဖျက်မည်
-    if old_ip:
-        cmd_del = get_safe_delete_cmd(username, proto, old_port)
-        full_del = f"{cmd_del} ; systemctl restart xray" if proto == 'v2' else f"{prefix}{cmd_del}{suffix}"
-        try:
-            subprocess.run(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{old_ip} '{full_del}'", shell=True)
-        except: pass
-        
-    # Queue မထစ်စေရန် ၁ စက္ကန့် စောင့်ပေးမည်
-    time.sleep(1)
-    
-    # ၂။ ဆာဗာအသစ်သို့ သေချာပေါက် ပြောင်းထည့်မည် (User က Active ဖြစ်နေမှသာ)
-    if not is_blocked and new_ip:
-        full_add = f"{cmd_add} ; systemctl restart xray" if proto == 'v2' else f"{prefix}{cmd_add}{suffix}"
-        try:
-            subprocess.run(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{new_ip} '{full_add}'", shell=True)
-        except: pass
+# ==========================================
+# EXTERNAL API ROUTES FOR SUB-PANEL
+# ==========================================
 
 @api_bp.route('/conf/<token>.json', methods=['GET'])
 def api_get_ssconf(token):
@@ -186,15 +170,12 @@ def api_generate_keys():
 
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
-    # SSH Command
     cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
     prefix = "systemctl() { true; }; export -f systemctl; "
     suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-    # Thread ဖြင့် Run မည်
-    def init_ssh(ip, cmd):
-        try: subprocess.run(f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} '{cmd}'", shell=True)
-        except: pass
-    threading.Thread(target=init_ssh, args=(str(target_ip).strip(), prefix + cmd_add + suffix), daemon=True).start()
+    
+    # 🚀 မူရင်း execute_ssh_bg ကို ပြန်သုံးခြင်း
+    execute_ssh_bg(str(target_ip).strip(), [prefix + cmd_add + suffix])
 
     return jsonify({
         "success": True,
@@ -270,9 +251,18 @@ def webhook_switch():
     uid = uinfo.get('uuid') or str(uuid.uuid4()).strip() 
     old_port = uinfo.get('port')
     safe_u = urllib.parse.quote(username)
-    is_blocked = uinfo.get('is_blocked', False)
     
-    # Command အသစ်ပြင်ဆင်ခြင်း
+    # 🚀 ၁။ ဆာဗာအဟောင်းမှ ဖြုတ်မည် (execute_ssh_bg ကို တိုက်ရိုက်သုံးခြင်း)
+    if old_ip:
+        cmd_del = get_safe_delete_cmd(username, proto, old_port)
+        if proto == 'v2':
+            execute_ssh_bg(old_ip, [f"{cmd_del} ; systemctl restart xray"])
+        else:
+            prefix = "systemctl() { true; }; export -f systemctl; "
+            suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+            execute_ssh_bg(old_ip, [prefix + cmd_del + suffix])
+            
+    # 🚀 ၂။ ဆာဗာအသစ်သို့ ပြောင်းထည့်မည်
     if proto == 'v2':
         new_port = "443"
         new_key = f"vless://{uid}@{new_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
@@ -294,8 +284,13 @@ def webhook_switch():
     with db_lock:
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    # 🚀 SSH Command များကို အမှားကင်းကင်း Background ဖြင့် Run ခြင်း
-    threading.Thread(target=perform_switch_ssh, args=(old_ip, new_ip, username, proto, old_port, cmd_add, is_blocked), daemon=True).start()
+    # 🚀 ၃။ ဆာဗာအသစ်သို့ Add သည့် Command ပို့ခြင်း
+    if proto == 'v2':
+        execute_ssh_bg(new_ip, [f"{cmd_add} ; systemctl restart xray"])
+    else:
+        prefix = "systemctl() { true; }; export -f systemctl; "
+        suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+        execute_ssh_bg(new_ip, [prefix + cmd_add + suffix])
         
     return jsonify({"success": True, "message": f"Successfully switched to {target_node}"})
 
@@ -337,27 +332,34 @@ def api_user_action():
         uinfo['is_blocked'] = True
         if node_ip:
             cmd_del = get_safe_delete_cmd(username, proto, port)
-            prefix = "systemctl() { true; }; export -f systemctl; "
-            full_del = f"{cmd_del} ; systemctl restart xray" if proto == 'v2' else f"{prefix}{cmd_del} ; unset -f systemctl; systemctl restart xray"
-            threading.Thread(target=lambda: subprocess.run(f"ssh -o StrictHostKeyChecking=no root@{node_ip} '{full_del}'", shell=True), daemon=True).start()
+            if proto == 'v2':
+                execute_ssh_bg(node_ip, [f"{cmd_del} ; systemctl restart xray"])
+            else:
+                prefix = "systemctl() { true; }; export -f systemctl; "
+                suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+                execute_ssh_bg(node_ip, [prefix + cmd_del + suffix])
 
     elif action == "resume":
         uinfo['is_blocked'] = False
         if node_ip:
             if proto == 'v2':
                 cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
+                execute_ssh_bg(node_ip, [f"{cmd_add} ; systemctl restart xray"])
             else:
                 cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
-            prefix = "systemctl() { true; }; export -f systemctl; "
-            full_add = f"{cmd_add} ; systemctl restart xray" if proto == 'v2' else f"{prefix}{cmd_add} ; unset -f systemctl; systemctl restart xray"
-            threading.Thread(target=lambda: subprocess.run(f"ssh -o StrictHostKeyChecking=no root@{node_ip} '{full_add}'", shell=True), daemon=True).start()
+                prefix = "systemctl() { true; }; export -f systemctl; "
+                suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+                execute_ssh_bg(node_ip, [prefix + cmd_add + suffix])
 
     elif action == "delete":
         if node_ip:
             cmd_del = get_safe_delete_cmd(username, proto, port)
-            prefix = "systemctl() { true; }; export -f systemctl; "
-            full_del = f"{cmd_del} ; systemctl restart xray" if proto == 'v2' else f"{prefix}{cmd_del} ; unset -f systemctl; systemctl restart xray"
-            threading.Thread(target=lambda: subprocess.run(f"ssh -o StrictHostKeyChecking=no root@{node_ip} '{full_del}'", shell=True), daemon=True).start()
+            if proto == 'v2':
+                execute_ssh_bg(node_ip, [f"{cmd_del} ; systemctl restart xray"])
+            else:
+                prefix = "systemctl() { true; }; export -f systemctl; "
+                suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+                execute_ssh_bg(node_ip, [prefix + cmd_del + suffix])
         del db[username]
     
     else:
