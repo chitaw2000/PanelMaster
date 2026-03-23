@@ -78,7 +78,7 @@ def background_traffic_monitor():
                         ndb[node_id]["used_bytes"] = float(ndb[node_id].get("used_bytes", 0)) + delta
 
                         # 🚀 Traffic တက်လာပါက Sub-Panel သို့ ချက်ချင်း လှမ်းပို့မည် (Background Thread ဖြင့်)
-                        if delta > 0:
+                        if delta > 0 and uinfo.get('token'):
                             threading.Thread(target=send_gb_webhook, args=(uinfo.get('token'), uinfo['used_bytes'] / (1024**3)), daemon=True).start()
 
                     is_expired = (uinfo.get('expire_date') and current_date_str > uinfo.get('expire_date'))
@@ -92,17 +92,25 @@ def background_traffic_monitor():
                         node_ip = nodes.get(node_id, {}).get('ip')
                         if node_ip:
                             cmd_str = get_safe_delete_cmd(uname, uinfo.get('protocol', 'v2'), uinfo.get('port', '443'))
-                            users_to_block_by_ip.setdefault(node_ip, []).append(cmd_str)
+                            users_to_block_by_ip.setdefault(node_ip, []).append((cmd_str, uinfo.get('protocol', 'v2')))
                 
                 if db_changed:
                     with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
                     if ndb:
                         with open(NODES_DB, 'w') as f: json.dump(ndb, f, indent=4)
 
-            for ip, cmds in users_to_block_by_ip.items():
-                prefix = "systemctl() { true; }; export -f systemctl; "
-                suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-                execute_ssh_bg(ip, [prefix + " ; ".join(cmds) + suffix])
+            # ဆာဗာမှ ပိတ်ခြင်း
+            for ip, cmds_list in users_to_block_by_ip.items():
+                vless_cmds = [c[0] for c in cmds_list if c[1] == 'v2']
+                ss_cmds = [c[0] for c in cmds_list if c[1] != 'v2']
+                
+                if vless_cmds:
+                    vless_cmds.append("systemctl restart xray")
+                    execute_ssh_bg(ip, vless_cmds)
+                if ss_cmds:
+                    prefix = "systemctl() { true; }; export -f systemctl; "
+                    suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+                    execute_ssh_bg(ip, [prefix + " ; ".join(ss_cmds) + suffix])
         except: pass
 
 def start_background_monitor():
