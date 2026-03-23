@@ -29,7 +29,6 @@ def get_target_ip(node_id):
                     return parts[-1]
     return None
 
-# SSH ကို သေချာပေါက် Run မည့်စနစ်
 def run_ssh_task(ip, cmd):
     try:
         export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
@@ -39,12 +38,23 @@ def run_ssh_task(ip, cmd):
     except Exception as e:
         print(f"SSH Error on {ip}: {e}")
 
+# 🚀 CORS ပြဿနာများ မဖြစ်စေရန် ခွင့်ပြုပေးခြင်း
+@api_bp.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, x-api-key'
+    return response
+
+
 # ==========================================
 # EXTERNAL API ROUTES
 # ==========================================
 
-@api_bp.route('/conf/<token>.json', methods=['GET'])
+@api_bp.route('/conf/<token>.json', methods=['GET', 'OPTIONS'])
 def api_get_ssconf(token):
+    if request.method == 'OPTIONS': return jsonify({"success": True}), 200
+    
     with db_lock:
         if not os.path.exists(USERS_DB): return jsonify({"error": "DB not found"}), 404
         with open(USERS_DB, 'r') as f: db = json.load(f)
@@ -70,8 +80,9 @@ def api_get_ssconf(token):
     }
     return jsonify(data)
 
-@api_bp.route('/api/active-groups', methods=['GET'])
+@api_bp.route('/api/active-groups', methods=['GET', 'OPTIONS'])
 def api_get_active_groups():
+    if request.method == 'OPTIONS': return jsonify({"success": True}), 200
     if request.headers.get('x-api-key') != MASTER_API_KEY:
         return jsonify({"success": False, "error": "Unauthorized Access"}), 401
     
@@ -88,13 +99,14 @@ def api_get_active_groups():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
-
-@api_bp.route('/api/generate-keys', methods=['POST'])
+@api_bp.route('/api/generate-keys', methods=['POST', 'OPTIONS'])
 def api_generate_keys():
+    if request.method == 'OPTIONS': return jsonify({"success": True}), 200
     if request.headers.get('x-api-key') != MASTER_API_KEY:
         return jsonify({"success": False, "error": "Unauthorized Access"}), 401
 
-    req_data = request.json
+    # 🚀 JSON Header လွဲခဲ့လျှင်တောင် အတင်း ဖတ်ခိုင်းမည် (force=True)
+    req_data = request.get_json(force=True, silent=True)
     if not req_data: return jsonify({"success": False, "error": "Invalid JSON"}), 400
 
     group_id = req_data.get('masterGroupId')
@@ -112,7 +124,13 @@ def api_generate_keys():
     if group_id not in groups:
         return jsonify({"success": False, "error": "Group not found"}), 404
 
-    # 🚀 Data အစမှ အဆုံးထိ သံသော့ခတ်ထားမည်
+    # 🚀 Deadlock (သော့ငြိခြင်း) မဖြစ်စေရန် Lock အပြင်ဘက်တွင် အရင်ရှာမည်
+    from core_auto import find_available_node
+    target_node, _ = find_available_node(group_id, 1)
+    if not target_node:
+        return jsonify({"success": False, "error": "Limit Reached! No space available."}), 400
+
+    # 🚀 Database ထဲသို့ ရေးမည့်အပိုင်းကိုသာ သီးသန့် Lock ချမည်
     with db_lock:
         if os.path.exists(USERS_DB):
             try:
@@ -124,10 +142,9 @@ def api_generate_keys():
         if username in db:
             return jsonify({"success": False, "error": "User already exists"}), 400
 
-        from core_auto import find_available_node
-        target_node, _ = find_available_node(group_id, 1, current_db=db)
-        if not target_node:
-            return jsonify({"success": False, "error": "Limit Reached! No space available."}), 400
+        target_ip = get_target_ip(target_node)
+        if not target_ip:
+            return jsonify({"success": False, "error": "Active Node offline!"}), 500
 
         uid = str(uuid.uuid4()).strip()
         token = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(32))
@@ -184,12 +201,13 @@ def api_generate_keys():
     })
 
 
-@api_bp.route('/api/webhook/switch', methods=['POST'])
+@api_bp.route('/api/webhook/switch', methods=['POST', 'OPTIONS'])
 def webhook_switch():
+    if request.method == 'OPTIONS': return jsonify({"success": True}), 200
     if request.headers.get('x-api-key') != MASTER_API_KEY:
         return jsonify({"success": False, "error": "Unauthorized Access"}), 401
 
-    req_data = request.json
+    req_data = request.get_json(force=True, silent=True)
     if not req_data: return jsonify({"success": False, "error": "Invalid JSON"}), 400
 
     token = req_data.get('token')
@@ -226,7 +244,6 @@ def webhook_switch():
         return jsonify({"success": False, "error": "Target node offline or invalid IP"}), 500
     new_ip = str(new_ip).strip()
 
-    # 🚀 Database Read & Write အစ-အဆုံးကို Lock ချထားမည် (Monitor ဝင်မရှုပ်နိုင်ရန်)
     with db_lock:
         if not os.path.exists(USERS_DB): return jsonify({"success": False, "error": "DB not found"}), 404
         with open(USERS_DB, 'r') as f: db = json.load(f)
@@ -260,18 +277,18 @@ def webhook_switch():
         uinfo['node'] = target_node  
         uinfo['key'] = new_key
         
-        # 🚀 အပြောင်းအလဲများကို ချက်ချင်း Save မည်
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
     return jsonify({"success": True, "message": f"Successfully switched to {target_node}"})
 
 
-@api_bp.route('/api/user-action', methods=['POST'])
+@api_bp.route('/api/user-action', methods=['POST', 'OPTIONS'])
 def api_user_action():
+    if request.method == 'OPTIONS': return jsonify({"success": True}), 200
     if request.headers.get('x-api-key') != MASTER_API_KEY:
         return jsonify({"success": False, "error": "Unauthorized Access"}), 401
 
-    req_data = request.json
+    req_data = request.get_json(force=True, silent=True)
     if not req_data: return jsonify({"success": False, "error": "Invalid JSON"}), 400
 
     token = req_data.get('token')
@@ -280,7 +297,6 @@ def api_user_action():
     if not token or not action: 
         return jsonify({"success": False, "error": "Missing token or action"}), 400
 
-    # 🚀 Action များကိုလည်း Lock အတွင်းမှသာ လုပ်မည်
     with db_lock:
         if not os.path.exists(USERS_DB): return jsonify({"success": False, "error": "DB not found"}), 404
         with open(USERS_DB, 'r') as f: db = json.load(f)
@@ -307,9 +323,12 @@ def api_user_action():
             nip = get_target_ip(nid)
             if not nip: continue
 
+            prefix = "systemctl() { true; }; export -f systemctl; "
+            suffix = " ; unset -f systemctl; systemctl restart xray"
+
             if action == "suspend" or action == "delete":
                 cmd_del = get_safe_delete_cmd(username, proto, port)
-                full_del = f"{cmd_del} ; systemctl restart xray"
+                full_del = f"{cmd_del} ; systemctl restart xray" if proto == 'v2' else f"{prefix}{cmd_del}{suffix}"
                 threading.Thread(target=run_ssh_task, args=(nip, full_del), daemon=True).start()
 
             elif action == "resume":
