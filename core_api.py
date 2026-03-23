@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-import json, os, urllib.parse, base64, uuid, random, string
+import json, os, urllib.parse, base64, uuid, random, string, time
 from datetime import datetime, timedelta
 
 from utils import get_all_servers, db_lock
@@ -195,19 +195,16 @@ def webhook_switch():
     if not token or not target_node_raw: 
         return jsonify({"success": False, "error": "Missing token or activeServer"}), 400
 
-    # 🚀 Smart Node Resolver: ဟိုဘက်က Name ပို့ပို့၊ ID ပို့ပို့ တိကျသော ID ကို ပြန်ရှာပေးမည်
+    # 🚀 Smart Node Resolver
     target_node = None
-    new_ip = None
     nodes = get_all_servers()
     
     for nid, ndata in nodes.items():
         if nid == target_node_raw or str(ndata.get('name', '')).strip() == target_node_raw:
             target_node = nid
-            new_ip = str(ndata.get('ip', '')).strip()
             break
             
-    if not target_node or not new_ip:
-        # NODES_LIST ထဲတွင် ထပ်ရှာမည်
+    if not target_node:
         if os.path.exists(NODES_LIST):
             with open(NODES_LIST, 'r') as f:
                 for line in f:
@@ -217,11 +214,16 @@ def webhook_switch():
                     if len(parts) >= 3:
                         if parts[0] == target_node_raw or parts[1] == target_node_raw:
                             target_node = parts[0]
-                            new_ip = parts[-1].strip()
                             break
                             
-    if not target_node or not new_ip:
-        return jsonify({"success": False, "error": f"Target node '{target_node_raw}' not found or offline"}), 500
+    if not target_node:
+        return jsonify({"success": False, "error": f"Target node '{target_node_raw}' not found"}), 404
+
+    # 🚀 Get Clean Target IP
+    new_ip = get_target_ip(target_node)
+    if not new_ip:
+        return jsonify({"success": False, "error": "Target node offline or invalid IP"}), 500
+    new_ip = str(new_ip).strip()
 
     with db_lock:
         if not os.path.exists(USERS_DB): return jsonify({"success": False, "error": "DB not found"}), 404
@@ -242,14 +244,14 @@ def webhook_switch():
         return jsonify({"success": True, "message": f"Already connected to {target_node}"})
         
     old_ip = get_target_ip(old_node)
-    if not old_ip: old_ip = None # For safety
+    old_ip = str(old_ip).strip() if old_ip else None
     
     proto = uinfo.get('protocol', 'v2')
-    uid = uinfo.get('uuid')
+    uid = uinfo.get('uuid') or str(uuid.uuid4()).strip() # Safeguard UUID
     old_port = uinfo.get('port')
     safe_u = urllib.parse.quote(username)
     
-    # 🚀 ဆာဗာအဟောင်းမှ ဖြုတ်မည်
+    # 🚀 ၁။ ဆာဗာအဟောင်းမှ ဖြုတ်မည်
     if old_ip:
         cmd_del = get_safe_delete_cmd(username, proto, old_port)
         if proto == 'v2':
@@ -259,7 +261,10 @@ def webhook_switch():
             suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
             execute_ssh_bg(old_ip, [prefix + cmd_del + suffix])
             
-    # 🚀 ဆာဗာအသစ်သို့ ပြောင်းထည့်မည်
+    # SSH Race Condition မဖြစ်စေရန် အဟောင်းဖျက်ပြီး အနည်းငယ် စောင့်မည်
+    time.sleep(0.5)
+            
+    # 🚀 ၂။ ဆာဗာအသစ်သို့ ပြောင်းထည့်မည်
     if proto == 'v2':
         new_port = "443"
         new_key = f"vless://{uid}@{new_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
@@ -272,13 +277,16 @@ def webhook_switch():
         new_key = f"ss://{b64_creds}@{new_ip}:{new_port}#{safe_u}"
         cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {new_port} ; ufw allow {new_port}/tcp >/dev/null 2>&1 || true ; ufw allow {new_port}/udp >/dev/null 2>&1 || true"
         
-    uinfo['node'] = target_node  # 🎯 မှန်ကန်သော ID ကိုသာ Save မည်
+    # Update DB
+    uinfo['node'] = target_node
     uinfo['port'] = new_port
     uinfo['key'] = new_key
+    if 'uuid' not in uinfo: uinfo['uuid'] = uid
     
     with db_lock:
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
+    # Execute on new server
     if proto == 'v2':
         execute_ssh_bg(new_ip, [f"{cmd_add} ; systemctl restart xray"])
     else:
