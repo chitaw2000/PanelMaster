@@ -1135,6 +1135,34 @@ def api_switch_node(token, target_node):
         "status": "success", 
         "new_node": target_node
     })
+    # 🚀 ၄။ Sub-Panel မှ Active Group စာရင်းများကို လှမ်းဆွဲမည့် API
+@app.route('/api/active-groups', methods=['GET'])
+def api_get_active_groups():
+    # 🔒 Security Check (ဟိုဘက်က ပို့မယ့် x-api-key နဲ့ တိုက်စစ်ပါမည်)
+    api_key = request.headers.get('x-api-key')
+    if api_key != "My_Super_Secret_VPN_Key_2026":
+        return jsonify({"success": False, "error": "Unauthorized Access"}), 401
+    
+    try:
+        # Group များကို ဆွဲထုတ်ခြင်း
+        groups = load_auto_groups()
+        group_list = []
+        
+        for gid, gdata in groups.items():
+            group_list.append({
+                "id": gid,
+                "name": gdata.get("name", gid),
+                "serverCount": len(gdata.get("nodes", {}))
+            })
+            
+        # ဟိုဘက်က တောင်းထားသော JSON Format အတိုင်း အတိအကျ ပြန်ပို့ပေးခြင်း
+        return jsonify({
+            "success": True,
+            "groups": group_list
+        })
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8888)
