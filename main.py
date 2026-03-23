@@ -31,7 +31,7 @@ def check_auth():
     allowed_endpoints = [
         'login', 'static', 'api_stats', 'api_user_ip', 
         'api_get_ssconf', 'api_switch_node', 'api_get_nodes', 
-        'api_get_active_groups', 'webhook_switch'
+        'api_get_active_groups', 'webhook_switch', 'api_generate_keys'
     ]
     if request.endpoint not in allowed_endpoints and not session.get('logged_in'): 
         return redirect(url_for('login'))
@@ -1018,6 +1018,7 @@ def api_switch_node(token, target_node):
             suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
             execute_ssh_bg(old_ip, [prefix + cmd_del + suffix])
             
+    import base64
     if proto == 'v2':
         new_port = "443"
         new_key = f"vless://{uid}@{new_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
@@ -1049,7 +1050,6 @@ def api_switch_node(token, target_node):
         "new_node": target_node
     })
 
-# 🚀 ၄။ Sub-Panel မှ Active Group စာရင်းများကို လှမ်းဆွဲမည့် API
 @app.route('/api/active-groups', methods=['GET'])
 def api_get_active_groups():
     api_key = request.headers.get('x-api-key')
@@ -1073,10 +1073,8 @@ def api_get_active_groups():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
-# 🚀 ၅။ Sub-Panel မှ Server ပြောင်းချိတ်ရန် လှမ်းခေါ်မည့် Webhook API
 @app.route('/api/webhook/switch', methods=['POST'])
 def webhook_switch():
-    # မှတ်ချက်: ဟိုဘက်က Headers ထဲမှာ 'x-api-key' မပို့ထားရင်တောင် အလုပ်လုပ်အောင် ရေးပေးထားပါတယ်
     req_data = request.json
     if not req_data: return jsonify({"error": "Invalid JSON"}), 400
 
@@ -1113,7 +1111,6 @@ def webhook_switch():
     old_port = uinfo.get('port')
     safe_u = urllib.parse.quote(username)
     
-    # ဆာဗာအဟောင်းမှ ဖြုတ်မည်
     if old_ip:
         cmd_del = get_safe_delete_cmd(username, proto, old_port)
         if proto == 'v2':
@@ -1123,7 +1120,6 @@ def webhook_switch():
             suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
             execute_ssh_bg(old_ip, [prefix + cmd_del + suffix])
             
-    # ဆာဗာအသစ်သို့ ပြောင်းထည့်မည်
     import base64
     if proto == 'v2':
         new_port = "443"
@@ -1152,6 +1148,104 @@ def webhook_switch():
         execute_ssh_bg(new_ip, [prefix + cmd_add + suffix])
         
     return jsonify({"success": True, "message": f"Successfully switched to {target_node}"})
+
+# 🚀 ၆။ Sub-Panel မှ User အသစ်ဆောက်ပြီး Key များ လှမ်းတောင်းမည့် API (အသစ်)
+@app.route('/api/generate-keys', methods=['POST'])
+def api_generate_keys():
+    api_key = request.headers.get('x-api-key')
+    if api_key != "My_Super_Secret_VPN_Key_2026":
+        return jsonify({"success": False, "error": "Unauthorized Access"}), 401
+
+    req_data = request.json
+    if not req_data:
+        return jsonify({"success": False, "error": "Invalid JSON"}), 400
+
+    group_id = req_data.get('masterGroupId')
+    raw_username = req_data.get('userName')
+    try: total_gb = float(req_data.get('totalGB', 0))
+    except: total_gb = 0.0
+    expire_date = req_data.get('expireDate')
+    
+    if not group_id or not raw_username:
+        return jsonify({"success": False, "error": "Missing masterGroupId or userName"}), 400
+
+    username = str(raw_username).strip().replace(" ", "_")
+
+    groups = load_auto_groups()
+    if group_id not in groups:
+        return jsonify({"success": False, "error": "Group not found"}), 404
+
+    with db_lock:
+        if os.path.exists(USERS_DB):
+            try:
+                with open(USERS_DB, 'r') as f: db = json.load(f)
+            except: db = {}
+        else:
+            db = {}
+
+        if username in db:
+            return jsonify({"success": False, "error": "User already exists"}), 400
+
+        from core_auto import find_available_node
+        target_node, target_ip = find_available_node(group_id, 1, current_db=db)
+        if not target_node:
+            return jsonify({"success": False, "error": "Limit Reached! No space available."}), 400
+
+        target_ip = get_target_ip(target_node)
+        if not target_ip:
+            return jsonify({"success": False, "error": "Active Node offline!"}), 500
+
+        import uuid, random, string
+        uid = str(uuid.uuid4()).strip()
+        token = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(32))
+        safe_u = urllib.parse.quote(username)
+
+        # Port တွက်ချက်ခြင်း
+        max_p = 10000
+        for uinfo in db.values():
+            if isinstance(uinfo, dict) and uinfo.get('protocol') == 'out' and uinfo.get('node') == target_node:
+                try: p = int(uinfo.get('port', 10000))
+                except: p = 10000
+                if p > max_p: max_p = p
+        port = str(max_p + 1)
+
+        # 🚀 ဆာဗာ ၅ ခုလုံး (Group ထဲရှိသမျှ Node အားလုံး) စာ Key များ စုစည်းခြင်း
+        keys_dict = {}
+        g_nodes = groups[group_id].get("nodes", {})
+        for nid in g_nodes:
+            nip = get_target_ip(nid)
+            if not nip: continue
+            credentials = f"chacha20-ietf-poly1305:{uid}"
+            import base64
+            b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
+            keys_dict[nid] = f"ss://{b64_creds}@{nip}:{port}#{safe_u}"
+
+        active_key = keys_dict[target_node]
+
+        existing_ids = [int(u.get('key_id', 0)) for u in db.values() if isinstance(u, dict) and str(u.get('key_id', '')).isdigit()]
+        next_id = max(existing_ids) + 1 if existing_ids else 1
+
+        db[username] = {
+            "node": target_node, "group": group_id, "protocol": "out", "uuid": uid,
+            "port": port, "total_gb": total_gb, "expire_date": expire_date,
+            "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False,
+            "key": active_key, "key_id": next_id, "token": token
+        }
+
+        with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
+
+    # SSH Command Add to active node
+    cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
+    prefix = "systemctl() { true; }; export -f systemctl; "
+    suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+    execute_ssh_bg(str(target_ip).strip(), [prefix + cmd_add + suffix])
+
+    # 🚀 ဟိုဘက်မှ တောင်းဆိုထားသော Response Format အတိအကျ ပြန်ပို့ပေးခြင်း
+    return jsonify({
+        "success": True,
+        "keys": keys_dict,
+        "token": token
+    })
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8888)
