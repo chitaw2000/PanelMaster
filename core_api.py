@@ -29,43 +29,19 @@ def get_target_ip(node_id):
                     return parts[-1]
     return None
 
-# 🚀 တိုက်ရိုက် SSH Run မည့်စနစ်
-def run_ssh_sync(ip, cmd):
+# 🚀 Parallel SSH Execution (ဆာဗာများကို အချင်းချင်း မစောင့်ခိုင်းဘဲ ပြိုင်တူ Run မည့်စနစ်)
+def fire_ssh(ip, cmd):
     if not ip: return
-    try:
-        export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
-        safe_cmd = cmd.replace("'", "'\\''")
-        full_ssh = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} '{export_path} {safe_cmd}'"
-        subprocess.run(full_ssh, shell=True)
-    except Exception as e:
-        print(f"SSH Sync Error on {ip}: {e}")
-
-# 🚀 Background Threads (API မြန်စေရန်)
-def bg_create_all_nodes(g_nodes_ips, username, uid, port):
-    # ညိုကီပြောသည့်အတိုင်း Node အားလုံးတွင် တစ်ပြိုင်နက် သွားဆောက်မည် (လုံးဝ မဖျက်တော့ပါ)
-    for ip in g_nodes_ips:
-        cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-        run_ssh_sync(ip, cmd_add)
-
-def bg_switch_nodes(g_nodes_ips, new_ip, username, port, uid):
-    # ညိုကီပြောသည့်အတိုင်း အသစ်တွင်ဖွင့်၊ ကျန်သည့် Node အားလုံးတွင် လိုက်ပိတ်မည်
-    for ip in g_nodes_ips:
-        if ip == new_ip:
-            cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-            run_ssh_sync(ip, cmd_add)
-        else:
-            cmd_del = get_safe_delete_cmd(username, 'out', port)
-            run_ssh_sync(ip, f"{cmd_del} ; systemctl restart xray")
-
-def bg_action_nodes(g_nodes_ips, action, username, port, uid, active_ip):
-    for ip in g_nodes_ips:
-        if action in ["suspend", "delete"]:
-            cmd_del = get_safe_delete_cmd(username, 'out', port)
-            run_ssh_sync(ip, f"{cmd_del} ; systemctl restart xray")
-        elif action == "resume":
-            if ip == active_ip: # Resume ဆိုပါက ရွေးထားသည့် Target (Active) Node တွင်သာ ပြန်ဖွင့်ပေးမည်
-                cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                run_ssh_sync(ip, cmd_add)
+    def _run():
+        try:
+            export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
+            safe_cmd = cmd.replace("'", "'\\''")
+            full_ssh = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} '{export_path} {safe_cmd}'"
+            subprocess.run(full_ssh, shell=True)
+        except Exception as e:
+            print(f"Parallel SSH Error on {ip}: {e}")
+    # ချက်ချင်း Thread ခွဲ၍ Run မည်
+    threading.Thread(target=_run, daemon=True).start()
 
 @api_bp.after_request
 def add_cors_headers(response):
@@ -75,7 +51,7 @@ def add_cors_headers(response):
     return response
 
 # ==========================================
-# EXTERNAL API ROUTES (OUTLINE ONLY)
+# EXTERNAL API ROUTES (OUTLINE သီးသန့်)
 # ==========================================
 
 @api_bp.route('/conf/<token>.json', methods=['GET', 'OPTIONS'])
@@ -139,7 +115,6 @@ def api_generate_keys():
         return jsonify({"success": False, "error": "Group not found"}), 404
 
     from core_auto import find_available_node
-    g_nodes_ips = []
     
     with db_lock:
         if os.path.exists(USERS_DB):
@@ -164,6 +139,7 @@ def api_generate_keys():
         token = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(32))
         safe_u = urllib.parse.quote(username)
 
+        # Port ကို အစဉ်လိုက်ယူမည်
         max_p = 10000
         for uinfo in db.values():
             if isinstance(uinfo, dict) and uinfo.get('protocol') == 'out':
@@ -175,13 +151,11 @@ def api_generate_keys():
         api_keys_dict = {} 
         g_nodes = groups[group_id].get("nodes", {})
         
+        # 🚀 ၁။ ညိုကီ့ Logic အတိုင်း ဆာဗာ "အားလုံး" ဆီသို့ ပြိုင်တူ သွားဖွင့်မည်
         for nid in g_nodes:
             nip = get_target_ip(nid)
             if not nip: continue
             nip = str(nip).strip()
-            g_nodes_ips.append(nip)
-            
-            b64_creds = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
             
             api_keys_dict[nid] = {
                 "server": nip,
@@ -190,7 +164,12 @@ def api_generate_keys():
                 "method": "chacha20-ietf-poly1305",
                 "prefix": "\u0016\u0003\u0001\u0005\u00f2\u0001\u0000\u0005\u00ee\u0003\u0003"
             }
+            
+            # Parallel Create
+            cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+            fire_ssh(nip, cmd_add)
 
+        # Database တွင် မှတ်မည်
         b64_creds_active = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
         active_key = f"ss://{b64_creds_active}@{target_ip.strip()}:{port}#{safe_u}"
 
@@ -205,9 +184,6 @@ def api_generate_keys():
         }
 
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
-
-    # 🚀 Background မှနေ၍ Group ထဲရှိ ဆာဗာ "အားလုံး" တွင် တစ်ပြိုင်နက် Create လုပ်မည်
-    threading.Thread(target=bg_create_all_nodes, args=(g_nodes_ips, username, uid, port), daemon=True).start()
 
     return jsonify({
         "success": True,
@@ -259,8 +235,6 @@ def webhook_switch():
         return jsonify({"success": False, "error": "Target node offline or invalid IP"}), 500
     new_ip = str(new_ip).strip()
 
-    g_nodes_ips = []
-    
     with db_lock:
         if not os.path.exists(USERS_DB): return jsonify({"success": False, "error": "DB not found"}), 404
         with open(USERS_DB, 'r') as f: db = json.load(f)
@@ -282,7 +256,7 @@ def webhook_switch():
         group_id = uinfo.get('group')
         is_blocked = uinfo.get('is_blocked', False)
         
-        # 🚀 (၁) မချိန်းခင် အဟောင်း Node က GB ကို ယူလာပြီး ပေါင်းထည့်မည်
+        # 🚀 (၁) အဟောင်း Node က GB ကို ယူလာပြီး ပေါင်းထည့်မည် (Synchronous / ချက်ချင်းလုပ်မည်)
         if old_ip:
             try:
                 full_ssh = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{old_ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\""
@@ -296,14 +270,8 @@ def webhook_switch():
             except Exception as e:
                 print(f"GB Sync Error from old node: {e}")
 
-        uinfo['last_raw_bytes'] = 0 # အသစ်တွင် စတွက်ရန် Reset
+        uinfo['last_raw_bytes'] = 0 # အသစ်တွင် စတွက်ရန်
         
-        groups = load_auto_groups()
-        g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {old_node: {}}
-        for nid in g_nodes:
-            nip = get_target_ip(nid)
-            if nip: g_nodes_ips.append(str(nip).strip())
-            
         # Update DB Key
         b64_creds = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
         uinfo['node'] = target_node  
@@ -311,9 +279,24 @@ def webhook_switch():
         
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    # 🚀 (၂) Background ဖြင့် အသစ်တွင် ဖွင့်၊ ကျန်သည့် Node အားလုံးတွင် ပိတ်မည်
+    # 🚀 (၂) ညိုကီ့ Logic အတိုင်း: အသစ်တွင် ဖွင့်ပေးပြီး၊ ကျန်သည့် Node အားလုံးကို ပြိုင်တူ ပိတ်မည် (Parallel Execution)
     if not is_blocked:
-        threading.Thread(target=bg_switch_nodes, args=(g_nodes_ips, new_ip, username, port, uid), daemon=True).start()
+        groups = load_auto_groups()
+        g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
+        
+        for nid in g_nodes:
+            nip = get_target_ip(nid)
+            if not nip: continue
+            nip = str(nip).strip()
+
+            if nip == new_ip:
+                # အသစ်တွင် ဖွင့်မည်
+                cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+                fire_ssh(nip, cmd_add)
+            else:
+                # အခြားကောင်များ အားလုံးတွင် ပိတ်မည်
+                cmd_del = get_safe_delete_cmd(username, 'out', port)
+                fire_ssh(nip, f"{cmd_del} ; systemctl restart xray")
         
     return jsonify({"success": True, "message": f"Successfully switched to {target_node} and synced GB"})
 
@@ -333,8 +316,6 @@ def api_user_action():
     if not token or not action: 
         return jsonify({"success": False, "error": "Missing token or action"}), 400
 
-    g_nodes_ips = []
-    
     with db_lock:
         if not os.path.exists(USERS_DB): return jsonify({"success": False, "error": "DB not found"}), 404
         with open(USERS_DB, 'r') as f: db = json.load(f)
@@ -354,9 +335,19 @@ def api_user_action():
         groups = load_auto_groups()
         g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
 
+        # 🚀 Action များကို Group ထဲရှိ ဆာဗာအားလုံးတွင် ပြိုင်တူ လုပ်ဆောင်မည် (Parallel)
         for nid in g_nodes:
             nip = get_target_ip(nid)
-            if nip: g_nodes_ips.append(str(nip).strip())
+            if not nip: continue
+            nip = str(nip).strip()
+
+            if action in ["suspend", "delete"]:
+                cmd_del = get_safe_delete_cmd(username, 'out', port)
+                fire_ssh(nip, f"{cmd_del} ; systemctl restart xray")
+            elif action == "resume":
+                if nip == active_ip: # Active ဖြစ်သော (DB ရှိ) ဆာဗာတွင်သာ ပြန်ဖွင့်မည်
+                    cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+                    fire_ssh(nip, cmd_add)
 
         if action == "suspend":
             uinfo['is_blocked'] = True
@@ -368,8 +359,5 @@ def api_user_action():
             return jsonify({"success": False, "error": "Invalid action type"}), 400
 
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
-
-    # 🚀 Action ကို Group ထဲရှိ Node အားလုံးတွင် သွားရောက် လုပ်ဆောင်မည်
-    threading.Thread(target=bg_action_nodes, args=(g_nodes_ips, action, username, port, uid, active_ip), daemon=True).start()
 
     return jsonify({"success": True, "message": f"User {action} applied to nodes successfully"})
