@@ -29,7 +29,7 @@ def get_target_ip(node_id):
                     return parts[-1]
     return None
 
-# 🚀 SSH ကို တိုက်ရိုက် စောင့်ပြီး Run မည့် Function (Thread မသုံးတော့ပါ)
+# 🚀 SSH ကို တိုက်ရိုက် စောင့်ပြီး Run မည့် Function
 def run_ssh_sync(ip, cmd):
     try:
         export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
@@ -147,7 +147,6 @@ def api_generate_keys():
         token = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(32))
         safe_u = urllib.parse.quote(username)
 
-        # Port ယူမည့်စနစ်
         max_p = 10000
         for uinfo in db.values():
             if isinstance(uinfo, dict) and uinfo.get('protocol') == 'out':
@@ -159,7 +158,7 @@ def api_generate_keys():
         api_keys_dict = {} 
         g_nodes = groups[group_id].get("nodes", {})
         
-        # 🚀 ၁။ ဆာဗာအားလုံးဆီသို့ Add ပြီး ပြန်ပိတ်မည့် အစီအစဉ် (Initialization)
+        # 🚀 ညိုကီ့ Logic အတိုင်း Group ထဲရှိ ဆာဗာ "အားလုံး" တွင် ပြိုင်တူ Create လုပ်မည်
         for nid in g_nodes:
             nip = get_target_ip(nid)
             if not nip: continue
@@ -176,14 +175,9 @@ def api_generate_keys():
                 "prefix": "\u0016\u0003\u0001\u0005\u00f2\u0001\u0000\u0005\u00ee\u0003\u0003"
             }
             
-            # Initial Creation on ALL nodes
+            # Physical Create (မဖျက်တော့ပါ၊ ဆာဗာတိုင်းတွင် ပေါ်နေစေမည်)
             cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
             run_ssh_sync(nip, f"{cmd_add} ; systemctl restart xray")
-            
-            # သတ်မှတ်ထားသော Target Node မဟုတ်ပါက ချက်ချင်းပြန်ပိတ် (Delete) ထားမည်
-            if nid != target_node:
-                cmd_del = get_safe_delete_cmd(username, 'out', port)
-                run_ssh_sync(nip, f"systemctl() {{ true; }}; export -f systemctl; {cmd_del} ; unset -f systemctl; systemctl restart xray")
 
         active_key = f"ss://{b64_creds}@{target_ip.strip()}:{port}#{safe_u}"
 
@@ -274,6 +268,7 @@ def webhook_switch():
         uid = uinfo.get('uuid')
         port = uinfo.get('port')
         safe_u = urllib.parse.quote(username)
+        group_id = uinfo.get('group')
         
         # 🚀 (၁) အဟောင်း ဆာဗာမှ နောက်ဆုံး သုံးခဲ့သော GB ကို လှမ်းယူပြီး DB တွင် ပေါင်းထည့်မည်
         if old_ip:
@@ -291,27 +286,38 @@ def webhook_switch():
         # Monitor အသစ်အတွက် Zero မှ ပြန်စတွက်ရန် Reset ချမည်
         uinfo['last_raw_bytes'] = 0
         
-        # 🚀 (၂) ဆာဗာအသစ်သို့ ဖွင့်ပေးမည် (Synchronous)
+        # 🚀 (၂) ညိုကီ့ Logic အတိုင်း Group ထဲရှိ ဆာဗာအားလုံးကို ပတ်ပြီး အသစ်မှာ ဖွင့်၊ ကျန်တာတွေ အကုန်ပိတ်မည်
+        groups = load_auto_groups()
+        g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {old_node: {}}
+        
+        for nid in g_nodes:
+            nip = get_target_ip(nid)
+            if not nip: continue
+            nip = str(nip).strip()
+
+            if nip == new_ip:
+                # 🚀 ရွေးချယ်လိုက်သော ဆာဗာအသစ်တွင် အသေအချာ ဖွင့်ပေးမည်
+                if proto == 'v2':
+                    cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
+                else:
+                    cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
+                run_ssh_sync(nip, f"{cmd_add} ; systemctl restart xray")
+            else:
+                # 🚀 ကျန်သော ဆာဗာအားလုံးမှ သေချာပေါက် ပိတ် (ဖျက်) ထားမည် (Clean Up)
+                cmd_del = get_safe_delete_cmd(username, proto, port)
+                if proto == 'v2':
+                    run_ssh_sync(nip, f"{cmd_del} ; systemctl restart xray")
+                else:
+                    run_ssh_sync(nip, f"systemctl() {{ true; }}; export -f systemctl; {cmd_del} ; unset -f systemctl; systemctl restart xray")
+                
+        # 🚀 (၃) DB သို့ အပြီးသတ် သိမ်းမည်
         if proto == 'v2':
-            cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
-            run_ssh_sync(new_ip, f"{cmd_add} ; systemctl restart xray")
             new_key = f"vless://{uid}@{new_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
         else:
-            cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
-            run_ssh_sync(new_ip, f"{cmd_add} ; systemctl restart xray")
             credentials = f"chacha20-ietf-poly1305:{uid}"
             b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
             new_key = f"ss://{b64_creds}@{new_ip}:{port}#{safe_u}"
-            
-        # 🚀 (၃) ဆာဗာအဟောင်းမှ ပိတ် (ဖျက်) မည် (Synchronous)
-        if old_ip and old_ip != new_ip:
-            cmd_del = get_safe_delete_cmd(username, proto, port)
-            if proto == 'v2':
-                run_ssh_sync(old_ip, f"{cmd_del} ; systemctl restart xray")
-            else:
-                run_ssh_sync(old_ip, f"systemctl() {{ true; }}; export -f systemctl; {cmd_del} ; unset -f systemctl; systemctl restart xray")
-                
-        # 🚀 (၄) DB သို့ အပြီးသတ် သိမ်းမည်
+
         uinfo['node'] = target_node  
         uinfo['key'] = new_key
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
@@ -354,20 +360,29 @@ def api_user_action():
         proto = uinfo.get('protocol', 'v2')
         port = uinfo.get('port')
         uid = uinfo.get('uuid')
+        group_id = uinfo.get('group')
+        
+        groups = load_auto_groups()
+        g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {uinfo.get('node'): {}}
 
-        if node_ip:
+        # User Action (Suspend / Delete) လုပ်ပါက Group ထဲရှိ ဆာဗာ "အားလုံး" မှ သွားပိတ်မည်
+        for nid in g_nodes:
+            nip = get_target_ip(nid)
+            if not nip: continue
+
             if action == "suspend" or action == "delete":
                 cmd_del = get_safe_delete_cmd(username, proto, port)
                 full_del = f"{cmd_del} ; systemctl restart xray" if proto == 'v2' else f"systemctl() {{ true; }}; export -f systemctl; {cmd_del} ; unset -f systemctl; systemctl restart xray"
-                run_ssh_sync(node_ip, full_del)
+                run_ssh_sync(nip, full_del)
 
             elif action == "resume":
-                if proto == 'v2':
-                    cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
-                    run_ssh_sync(node_ip, f"{cmd_add} ; systemctl restart xray")
-                else:
-                    cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
-                    run_ssh_sync(node_ip, f"{cmd_add} ; systemctl restart xray")
+                # Resume လုပ်ပါက Active ဖြစ်နေသော (DB ရှိ) ဆာဗာ (၁) ခုတည်းတွင်သာ ပြန်ဖွင့်မည်
+                if nip == node_ip:
+                    if proto == 'v2':
+                        cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
+                    else:
+                        cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
+                    run_ssh_sync(nip, f"{cmd_add} ; systemctl restart xray")
 
         if action == "suspend":
             uinfo['is_blocked'] = True
