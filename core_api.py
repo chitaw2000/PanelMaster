@@ -1,10 +1,10 @@
 from flask import Blueprint, request, jsonify
-import json, os, urllib.parse, base64, uuid, random, string
+import json, os, urllib.parse, base64, uuid, random, string, subprocess, threading
 from datetime import datetime, timedelta
 
 from utils import get_all_servers, db_lock
 from core_auto import load_auto_groups
-from core_engine import execute_ssh_bg, get_safe_delete_cmd
+from core_engine import get_safe_delete_cmd
 
 try:
     from config import USERS_DB, NODES_LIST
@@ -12,10 +12,7 @@ except ImportError:
     USERS_DB = "/root/PanelMaster/users_db.json"
     NODES_LIST = "/root/PanelMaster/nodes_list.txt"
 
-# Blueprint တည်ဆောက်ခြင်း
 api_bp = Blueprint('api_bp', __name__)
-
-# 🚀 Security Key
 MASTER_API_KEY = "My_Super_Secret_VPN_Key_2026"
 
 def get_target_ip(node_id):
@@ -32,9 +29,16 @@ def get_target_ip(node_id):
                     return parts[-1]
     return None
 
-# ==========================================
-# EXTERNAL API ROUTES FOR SUB-PANEL
-# ==========================================
+# 🚀 API အတွက် သီးသန့် Direct SSH Function (Queue မသုံးတော့ဘဲ ချက်ချင်း ပစ်ထည့်မည်)
+def direct_ssh_bg(ip, cmd):
+    def _run():
+        try:
+            full_cmd = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} '{cmd}'"
+            subprocess.run(full_cmd, shell=True)
+        except Exception as e:
+            print(f"Direct SSH Error on {ip}: {e}")
+    threading.Thread(target=_run, daemon=True).start()
+
 
 @api_bp.route('/conf/<token>.json', methods=['GET'])
 def api_get_ssconf(token):
@@ -77,7 +81,6 @@ def api_get_active_groups():
                 "name": gdata.get("name", gid),
                 "serverCount": len(gdata.get("nodes", {}))
             })
-            
         return jsonify({"success": True, "groups": group_list})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
@@ -170,12 +173,11 @@ def api_generate_keys():
 
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
+    # 🚀 Direct SSH
     cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
     prefix = "systemctl() { true; }; export -f systemctl; "
     suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-    
-    # 🚀 မူရင်း execute_ssh_bg ကို ပြန်သုံးခြင်း
-    execute_ssh_bg(str(target_ip).strip(), [prefix + cmd_add + suffix])
+    direct_ssh_bg(str(target_ip).strip(), prefix + cmd_add + suffix)
 
     return jsonify({
         "success": True,
@@ -197,7 +199,7 @@ def webhook_switch():
     if not token or not target_node_raw: 
         return jsonify({"success": False, "error": "Missing token or activeServer"}), 400
 
-    # 🚀 Smart Node Resolver
+    # Smart Node Resolver
     target_node = None
     nodes = get_all_servers()
     
@@ -252,17 +254,17 @@ def webhook_switch():
     old_port = uinfo.get('port')
     safe_u = urllib.parse.quote(username)
     
-    # 🚀 ၁။ ဆာဗာအဟောင်းမှ ဖြုတ်မည် (execute_ssh_bg ကို တိုက်ရိုက်သုံးခြင်း)
+    # ၁။ ဆာဗာအဟောင်းမှ ဖြုတ်မည် (Direct SSH)
     if old_ip:
         cmd_del = get_safe_delete_cmd(username, proto, old_port)
         if proto == 'v2':
-            execute_ssh_bg(old_ip, [f"{cmd_del} ; systemctl restart xray"])
+            direct_ssh_bg(old_ip, f"{cmd_del} ; systemctl restart xray")
         else:
             prefix = "systemctl() { true; }; export -f systemctl; "
             suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-            execute_ssh_bg(old_ip, [prefix + cmd_del + suffix])
+            direct_ssh_bg(old_ip, prefix + cmd_del + suffix)
             
-    # 🚀 ၂။ ဆာဗာအသစ်သို့ ပြောင်းထည့်မည်
+    # ၂။ ဆာဗာအသစ်သို့ ပြောင်းထည့်မည်
     if proto == 'v2':
         new_port = "443"
         new_key = f"vless://{uid}@{new_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
@@ -275,7 +277,6 @@ def webhook_switch():
         new_key = f"ss://{b64_creds}@{new_ip}:{new_port}#{safe_u}"
         cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {new_port} ; ufw allow {new_port}/tcp >/dev/null 2>&1 || true ; ufw allow {new_port}/udp >/dev/null 2>&1 || true"
         
-    # Database သို့ သိမ်းဆည်းခြင်း
     uinfo['node'] = target_node  
     uinfo['port'] = new_port
     uinfo['key'] = new_key
@@ -284,13 +285,13 @@ def webhook_switch():
     with db_lock:
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    # 🚀 ၃။ ဆာဗာအသစ်သို့ Add သည့် Command ပို့ခြင်း
+    # ၃။ ဆာဗာအသစ်သို့ Add သည့် Command ပို့ခြင်း (Direct SSH)
     if proto == 'v2':
-        execute_ssh_bg(new_ip, [f"{cmd_add} ; systemctl restart xray"])
+        direct_ssh_bg(new_ip, f"{cmd_add} ; systemctl restart xray")
     else:
         prefix = "systemctl() { true; }; export -f systemctl; "
         suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-        execute_ssh_bg(new_ip, [prefix + cmd_add + suffix])
+        direct_ssh_bg(new_ip, prefix + cmd_add + suffix)
         
     return jsonify({"success": True, "message": f"Successfully switched to {target_node}"})
 
@@ -333,33 +334,33 @@ def api_user_action():
         if node_ip:
             cmd_del = get_safe_delete_cmd(username, proto, port)
             if proto == 'v2':
-                execute_ssh_bg(node_ip, [f"{cmd_del} ; systemctl restart xray"])
+                direct_ssh_bg(node_ip, f"{cmd_del} ; systemctl restart xray")
             else:
                 prefix = "systemctl() { true; }; export -f systemctl; "
-                suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-                execute_ssh_bg(node_ip, [prefix + cmd_del + suffix])
+                suffix = " ; unset -f systemctl; systemctl restart xray"
+                direct_ssh_bg(node_ip, f"{prefix}{cmd_del}{suffix}")
 
     elif action == "resume":
         uinfo['is_blocked'] = False
         if node_ip:
             if proto == 'v2':
                 cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
-                execute_ssh_bg(node_ip, [f"{cmd_add} ; systemctl restart xray"])
+                direct_ssh_bg(node_ip, f"{cmd_add} ; systemctl restart xray")
             else:
                 cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
                 prefix = "systemctl() { true; }; export -f systemctl; "
-                suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-                execute_ssh_bg(node_ip, [prefix + cmd_add + suffix])
+                suffix = " ; unset -f systemctl; systemctl restart xray"
+                direct_ssh_bg(node_ip, f"{prefix}{cmd_add}{suffix}")
 
     elif action == "delete":
         if node_ip:
             cmd_del = get_safe_delete_cmd(username, proto, port)
             if proto == 'v2':
-                execute_ssh_bg(node_ip, [f"{cmd_del} ; systemctl restart xray"])
+                direct_ssh_bg(node_ip, f"{cmd_del} ; systemctl restart xray")
             else:
                 prefix = "systemctl() { true; }; export -f systemctl; "
-                suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-                execute_ssh_bg(node_ip, [prefix + cmd_del + suffix])
+                suffix = " ; unset -f systemctl; systemctl restart xray"
+                direct_ssh_bg(node_ip, f"{prefix}{cmd_del}{suffix}")
         del db[username]
     
     else:
