@@ -1,10 +1,10 @@
 from flask import Blueprint, request, jsonify
-import json, os, urllib.parse, base64, uuid, random, string, time, threading
+import json, os, urllib.parse, base64, uuid, random, string, subprocess, threading, time
 from datetime import datetime, timedelta
 
 from utils import get_all_servers, db_lock
 from core_auto import load_auto_groups
-from core_engine import execute_ssh_bg, get_safe_delete_cmd
+from core_engine import get_safe_delete_cmd
 
 try:
     from config import USERS_DB, NODES_LIST
@@ -29,33 +29,18 @@ def get_target_ip(node_id):
                     return parts[-1]
     return None
 
-# 🚀 အဟောင်းဖျက်၊ အသစ်ထည့် အလုပ်ကို Race Condition မဖြစ်အောင် စောင့်ပြီး Run မည့် Function
-def switch_node_bg_task(old_ip, new_ip, username, proto, port, uid):
-    prefix = "systemctl() { true; }; export -f systemctl; "
-    suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-
-    # ၁။ ဆာဗာအဟောင်းမှ ဖျက်မည်
-    if old_ip:
-        cmd_del = get_safe_delete_cmd(username, proto, port)
-        if proto == 'v2':
-            execute_ssh_bg(old_ip, [f"{cmd_del} ; systemctl restart xray"])
-        else:
-            execute_ssh_bg(old_ip, [f"{prefix}{cmd_del}{suffix}"])
-
-    # ၂။ ဆာဗာအသစ်သို့ ချက်ချင်းမသွားဘဲ ၁ စက္ကန့် စောင့်မည် (Queue မထစ်စေရန်)
-    time.sleep(1)
-
-    # ၃။ ဆာဗာအသစ်သို့ Add မည် (မူရင်း Port အတိုင်း တသတ်မတ်တည်း သုံးမည်)
-    if new_ip:
-        if proto == 'v2':
-            cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
-            execute_ssh_bg(new_ip, [f"{cmd_add} ; systemctl restart xray"])
-        else:
-            cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
-            execute_ssh_bg(new_ip, [f"{prefix}{cmd_add}{suffix}"])
+# SSH ကို သေချာပေါက် Run မည့်စနစ်
+def run_ssh_task(ip, cmd):
+    try:
+        export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
+        safe_cmd = cmd.replace("'", "'\\''")
+        full_ssh = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} '{export_path} {safe_cmd}'"
+        subprocess.run(full_ssh, shell=True)
+    except Exception as e:
+        print(f"SSH Error on {ip}: {e}")
 
 # ==========================================
-# EXTERNAL API ROUTES FOR SUB-PANEL
+# EXTERNAL API ROUTES
 # ==========================================
 
 @api_bp.route('/conf/<token>.json', methods=['GET'])
@@ -99,11 +84,12 @@ def api_get_active_groups():
                 "name": gdata.get("name", gid),
                 "serverCount": len(gdata.get("nodes", {}))
             })
-            
         return jsonify({"success": True, "groups": group_list})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
+
+# 🌟 User သစ်ဆောက်လျှင် Group ထဲရှိ Node "အားလုံး" တွင် တစ်ပြိုင်နက် Create လုပ်မည်
 @api_bp.route('/api/generate-keys', methods=['POST'])
 def api_generate_keys():
     if request.headers.get('x-api-key') != MASTER_API_KEY:
@@ -139,32 +125,38 @@ def api_generate_keys():
             return jsonify({"success": False, "error": "User already exists"}), 400
 
         from core_auto import find_available_node
-        target_node, target_ip = find_available_node(group_id, 1, current_db=db)
+        # Initial Node (UI တွင်ပေါ်စေရန်)
+        target_node, _ = find_available_node(group_id, 1, current_db=db)
         if not target_node:
             return jsonify({"success": False, "error": "Limit Reached! No space available."}), 400
-
-        target_ip = get_target_ip(target_node)
-        if not target_ip:
-            return jsonify({"success": False, "error": "Active Node offline!"}), 500
 
         uid = str(uuid.uuid4()).strip()
         token = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(32))
         safe_u = urllib.parse.quote(username)
 
+        # Port ကို Group အလိုက် အစဉ်လိုက် အသစ်ယူမည်
         max_p = 10000
         for uinfo in db.values():
-            if isinstance(uinfo, dict) and uinfo.get('protocol') == 'out' and uinfo.get('node') == target_node:
+            if isinstance(uinfo, dict) and uinfo.get('protocol') == 'out':
                 try: p = int(uinfo.get('port', 10000))
                 except: p = 10000
                 if p > max_p: max_p = p
         port = str(max_p + 1)
 
+        db_keys_dict = {}
         api_keys_dict = {} 
+        
         g_nodes = groups[group_id].get("nodes", {})
+        
+        # 🚀 ၁။ Group ထဲရှိ ဆာဗာ "အားလုံး" ဆီသို့ Add Command များကို ပြိုင်တူ ပို့မည်
         for nid in g_nodes:
             nip = get_target_ip(nid)
             if not nip: continue
             
+            credentials = f"chacha20-ietf-poly1305:{uid}"
+            b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
+            
+            db_keys_dict[nid] = f"ss://{b64_creds}@{nip}:{port}#{safe_u}"
             api_keys_dict[nid] = {
                 "server": str(nip),
                 "server_port": int(port),
@@ -172,11 +164,14 @@ def api_generate_keys():
                 "method": "chacha20-ietf-poly1305",
                 "prefix": "\u0016\u0003\u0001\u0005\u00f2\u0001\u0000\u0005\u00ee\u0003\u0003"
             }
+            
+            # Run SSH creation on EACH node in background
+            cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
+            prefix = "systemctl() { true; }; export -f systemctl; "
+            suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+            threading.Thread(target=run_ssh_task, args=(nip, f"{prefix}{cmd_add}{suffix}"), daemon=True).start()
 
-        credentials = f"chacha20-ietf-poly1305:{uid}"
-        b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
-        active_key = f"ss://{b64_creds}@{target_ip}:{port}#{safe_u}"
-
+        active_key = db_keys_dict.get(target_node, "")
         existing_ids = [int(u.get('key_id', 0)) for u in db.values() if isinstance(u, dict) and str(u.get('key_id', '')).isdigit()]
         next_id = max(existing_ids) + 1 if existing_ids else 1
 
@@ -189,18 +184,14 @@ def api_generate_keys():
 
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
-    cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
-    prefix = "systemctl() { true; }; export -f systemctl; "
-    suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-    
-    execute_ssh_bg(str(target_ip).strip(), [prefix + cmd_add + suffix])
-
     return jsonify({
         "success": True,
         "keys": api_keys_dict,
         "token": token
     })
 
+
+# 🌟 Switch Server လုပ်လျှင် နေရာပြောင်းမှတ်ရုံသာ (SSH ဖြင့် ပိတ်/ဖွင့် လုံးဝမလိုတော့ပါ)
 @api_bp.route('/api/webhook/switch', methods=['POST'])
 def webhook_switch():
     if request.headers.get('x-api-key') != MASTER_API_KEY:
@@ -215,7 +206,6 @@ def webhook_switch():
     if not token or not target_node_raw: 
         return jsonify({"success": False, "error": "Missing token or activeServer"}), 400
 
-    # Smart Node Resolver
     target_node = None
     nodes = get_all_servers()
     
@@ -261,19 +251,13 @@ def webhook_switch():
     old_node = uinfo.get('node')
     if old_node == target_node:
         return jsonify({"success": True, "message": f"Already connected to {target_node}"})
-        
-    old_ip = get_target_ip(old_node)
-    old_ip = str(old_ip).strip() if old_ip else None
     
+    # 🚀 Update Database Only (No SSH needed anymore since key is active on all nodes)
     proto = uinfo.get('protocol', 'v2')
-    uid = uinfo.get('uuid') or str(uuid.uuid4()).strip() 
-    
-    # 🚀 မူရင်း Port ကို အတိအကျ ပြန်ယူမည် (ပြောင်းလဲခြင်း လုံးဝမပြုလုပ်ပါ)
+    uid = uinfo.get('uuid')
     port = uinfo.get('port')
     safe_u = urllib.parse.quote(username)
-    is_blocked = uinfo.get('is_blocked', False)
     
-    # Update Keys & DB
     if proto == 'v2':
         new_key = f"vless://{uid}@{new_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
     else:
@@ -283,26 +267,14 @@ def webhook_switch():
         
     uinfo['node'] = target_node  
     uinfo['key'] = new_key
-    if 'uuid' not in uinfo: uinfo['uuid'] = uid
     
     with db_lock:
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    # 🚀 Background ဖြင့် အဟောင်းဖျက်/အသစ်ထည့် အလုပ်ကို လုပ်မည်
-    if not is_blocked:
-        threading.Thread(target=switch_node_bg_task, args=(old_ip, new_ip, username, proto, port, uid), daemon=True).start()
-    else:
-        if old_ip:
-            cmd_del = get_safe_delete_cmd(username, proto, port)
-            prefix = "systemctl() { true; }; export -f systemctl; "
-            suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-            if proto == 'v2':
-                execute_ssh_bg(old_ip, [f"{cmd_del} ; systemctl restart xray"])
-            else:
-                execute_ssh_bg(old_ip, [f"{prefix}{cmd_del}{suffix}"])
-        
     return jsonify({"success": True, "message": f"Successfully switched to {target_node}"})
 
+
+# 🌟 User Action လာပါက Group ထဲရှိ Node အားလုံးတွင် သွားရောက် လုပ်ဆောင်မည်
 @api_bp.route('/api/user-action', methods=['POST'])
 def api_user_action():
     if request.headers.get('x-api-key') != MASTER_API_KEY:
@@ -331,48 +303,46 @@ def api_user_action():
             
     if not username: return jsonify({"success": False, "error": "Invalid token"}), 404
 
-    target_node = uinfo.get('node')
-    node_ip = get_target_ip(target_node)
-    if node_ip: node_ip = str(node_ip).strip()
+    group_id = uinfo.get('group')
     proto = uinfo.get('protocol', 'v2')
     port = uinfo.get('port')
     uid = uinfo.get('uuid')
     
-    prefix = "systemctl() { true; }; export -f systemctl; "
-    suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+    # Get all nodes in the group
+    groups = load_auto_groups()
+    g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {uinfo.get('node'): {}}
+
+    for nid in g_nodes:
+        nip = get_target_ip(nid)
+        if not nip: continue
+        
+        prefix = "systemctl() { true; }; export -f systemctl; "
+        suffix = " ; unset -f systemctl; systemctl restart xray"
+
+        if action == "suspend" or action == "delete":
+            cmd_del = get_safe_delete_cmd(username, proto, port)
+            full_del = f"{cmd_del} ; systemctl restart xray" if proto == 'v2' else f"{prefix}{cmd_del}{suffix}"
+            threading.Thread(target=run_ssh_task, args=(nip, full_del), daemon=True).start()
+
+        elif action == "resume":
+            if proto == 'v2':
+                cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
+                full_add = f"{cmd_add} ; systemctl restart xray"
+            else:
+                cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
+                full_add = f"{prefix}{cmd_add}{suffix}"
+            threading.Thread(target=run_ssh_task, args=(nip, full_add), daemon=True).start()
 
     if action == "suspend":
         uinfo['is_blocked'] = True
-        if node_ip:
-            cmd_del = get_safe_delete_cmd(username, proto, port)
-            if proto == 'v2':
-                execute_ssh_bg(node_ip, [f"{cmd_del} ; systemctl restart xray"])
-            else:
-                execute_ssh_bg(node_ip, [f"{prefix}{cmd_del}{suffix}"])
-
     elif action == "resume":
         uinfo['is_blocked'] = False
-        if node_ip:
-            if proto == 'v2':
-                cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
-                execute_ssh_bg(node_ip, [f"{cmd_add} ; systemctl restart xray"])
-            else:
-                cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
-                execute_ssh_bg(node_ip, [f"{prefix}{cmd_add}{suffix}"])
-
     elif action == "delete":
-        if node_ip:
-            cmd_del = get_safe_delete_cmd(username, proto, port)
-            if proto == 'v2':
-                execute_ssh_bg(node_ip, [f"{cmd_del} ; systemctl restart xray"])
-            else:
-                execute_ssh_bg(node_ip, [f"{prefix}{cmd_del}{suffix}"])
         del db[username]
-    
     else:
         return jsonify({"success": False, "error": "Invalid action type"}), 400
 
     with db_lock:
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
-    return jsonify({"success": True, "message": f"User {action} successful"})
+    return jsonify({"success": True, "message": f"User {action} applied to all nodes successfully"})
