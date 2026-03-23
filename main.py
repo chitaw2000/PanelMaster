@@ -11,6 +11,9 @@ from core_monitor import start_background_monitor
 from core_node import add_keys, toggle_key, delete_key, bulk_delete_keys, renew_key, edit_key, rebalance_auto_node
 from core_ip import get_active_ips
 
+# 🚀 Security Key for External Sub-Panel integration
+MASTER_API_KEY = "Qito_Master_Key_2026"
+
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 BACKUP_DIR = "/root/PanelMaster/backups"
@@ -22,7 +25,9 @@ start_background_monitor()
 
 @app.before_request
 def check_auth():
-    if request.endpoint not in ['login', 'static', 'api_stats', 'api_user_ip'] and not session.get('logged_in'): 
+    # External API လမ်းကြောင်းများကို လွတ်လပ်စွာ ဖတ်ခွင့်ပြုမည်
+    allowed_endpoints = ['login', 'static', 'api_stats', 'api_user_ip', 'api_get_ssconf', 'api_switch_node', 'api_get_nodes']
+    if request.endpoint not in allowed_endpoints and not session.get('logged_in'): 
         return redirect(url_for('login'))
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -208,7 +213,8 @@ def dashboard():
         g_nodes = gdata.get("nodes", {})
         g_keys = sum(1 for i in db.values() if isinstance(i, dict) and i.get("group") == gid)
         g_used_gb = group_used_bytes.get(gid, 0) / (1024**3)
-        group_stats.append({"id": gid, "name": gdata.get("name", gid), "limit": limit, "node_count": len(g_nodes), "total_keys": g_keys, "used_gb": g_used_gb})
+        api_domain = gdata.get("api_domain", "")
+        group_stats.append({"id": gid, "name": gdata.get("name", gid), "limit": limit, "api_domain": api_domain, "node_count": len(g_nodes), "total_keys": g_keys, "used_gb": g_used_gb})
 
     raw_backups = get_node_backups()
     custom_backups = {}
@@ -239,9 +245,11 @@ def add_auto_group():
     gid = request.form.get('group_id', '').strip().replace(" ", "_")
     gname = request.form.get('group_name', '').strip()
     limit = int(request.form.get('limit', 30))
+    api_domain = request.form.get('api_domain', '').strip()
+    
     if gid and gname:
         groups = load_auto_groups()
-        groups[gid] = {"name": gname, "limit": limit, "nodes": {}}
+        groups[gid] = {"name": gname, "limit": limit, "api_domain": api_domain, "nodes": {}}
         save_auto_groups(groups)
     return redirect(url_for('dashboard'))
 
@@ -287,7 +295,6 @@ def group_view(group_id):
         if not isinstance(info, dict): continue
         if info.get('group') == group_id:
             
-            # 🚀 Auto-Heal IP Sync System
             nid = info.get('node')
             node_ip = get_target_ip(nid)
             
@@ -320,7 +327,9 @@ def group_view(group_id):
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             
             info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
-            is_expired = True if (info.get('expire_date') and current_date_str > info.get('expire_date')) else False
+            
+            exp_str = info.get('expire_date')
+            is_expired = True if (exp_str and current_date_str > exp_str) else False
             
             if is_expired: info['status_label'] = "Expired"
             elif info.get('is_blocked'): info['status_label'] = "Blocked"
@@ -479,7 +488,6 @@ def node_view(node_id):
         if not isinstance(info, dict): continue 
         if info.get('node') == node_id:
             
-            # 🚀 Auto-Heal System for Node view
             uid = info.get('uuid')
             port = info.get('port')
             proto = info.get('protocol', 'v2')
@@ -508,7 +516,9 @@ def node_view(node_id):
             info['is_active'] = uname in active_users and not info.get('is_blocked')
             
             info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
-            is_expired = True if (info.get('expire_date') and current_date_str > info.get('expire_date')) else False
+            
+            exp_str = info.get('expire_date')
+            is_expired = True if (exp_str and current_date_str > exp_str) else False
             
             if is_expired: info['status_label'] = "Expired"
             elif info.get('is_blocked'): info['status_label'] = "Blocked"
@@ -921,7 +931,6 @@ def upload_backup():
                     with open(USERS_DB, 'r') as f: db = json.load(f)
                 except: pass
             
-            # Merge uploaded data
             for uname, uinfo in uploaded_data.items():
                 db[uname] = uinfo
             
@@ -938,7 +947,6 @@ def upload_backup():
                 proto = uinfo.get('protocol', 'v2')
                 safe_u = urllib.parse.quote(uname)
                 
-                # 🚀 Auto-Sync logic
                 if proto == 'v2':
                     expected_key = f"vless://{uid}@{node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
                     cmd = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
@@ -955,7 +963,6 @@ def upload_backup():
             with open(USERS_DB, 'w') as f:
                 json.dump(db, f, indent=4)
                 
-        # Force sync to nodes
         for ip, cmds in cmds_by_ip.items():
             prefix = "systemctl() { true; }; export -f systemctl; "
             suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
@@ -992,6 +999,142 @@ def config_action():
             
     save_config(config)
     return redirect(url_for('dashboard'))
+
+# ==========================================
+# 🚀 SSCONF & EXTERNAL PANEL API SECTIONS
+# ==========================================
+
+@app.route('/conf/<token>.json', methods=['GET'])
+def api_get_ssconf(token):
+    with db_lock:
+        if not os.path.exists(USERS_DB): return jsonify({"error": "DB not found"}), 404
+        with open(USERS_DB, 'r') as f: db = json.load(f)
+        
+    user_info = None
+    for uname, uinfo in db.items():
+        if isinstance(uinfo, dict) and uinfo.get('token') == token:
+            user_info = uinfo
+            break
+            
+    if not user_info or user_info.get('is_blocked', False):
+        return jsonify({"error": "Invalid token or key is blocked/expired"}), 403
+        
+    node_ip = get_target_ip(user_info.get('node'))
+    if not node_ip: return jsonify({"error": "Target node offline"}), 500
+    
+    data = {
+        "server": node_ip,
+        "server_port": int(user_info.get('port', 443)),
+        "password": user_info.get('uuid'),
+        "method": "chacha20-ietf-poly1305",
+        "prefix": "\u0016\u0003\u0001\u0005\u00f2\u0001\u0000\u0005\u00ee\u0003\u0003"
+    }
+    return jsonify(data)
+
+@app.route('/api/get_nodes/<token>', methods=['GET'])
+def api_get_nodes(token):
+    if request.headers.get('x-master-key') != "Qito_Master_Key_2026":
+        return jsonify({"error": "Unauthorized"}), 401
+
+    with db_lock:
+        if not os.path.exists(USERS_DB): return jsonify({"error": "DB not found"}), 404
+        with open(USERS_DB, 'r') as f: db = json.load(f)
+        
+    user_info = None
+    for uname, uinfo in db.items():
+        if isinstance(uinfo, dict) and uinfo.get('token') == token:
+            user_info = uinfo
+            break
+            
+    if not user_info: return jsonify({"error": "Invalid token"}), 403
+    
+    group_id = user_info.get('group')
+    groups = load_auto_groups()
+    if group_id not in groups: return jsonify({"error": "User is not in an auto group"}), 404
+    
+    available_nodes = list(groups[group_id].get("nodes", {}).keys())
+    return jsonify({
+        "status": "success",
+        "current_node": user_info.get('node'),
+        "available_nodes": available_nodes
+    })
+
+@app.route('/api/switch_node/<token>/<target_node>', methods=['POST'])
+def api_switch_node(token, target_node):
+    if request.headers.get('x-master-key') != "Qito_Master_Key_2026":
+        return jsonify({"error": "Unauthorized"}), 401
+
+    with db_lock:
+        if not os.path.exists(USERS_DB): return jsonify({"error": "DB not found"}), 404
+        with open(USERS_DB, 'r') as f: db = json.load(f)
+        
+    username = None
+    uinfo = None
+    for uname, info in db.items():
+        if isinstance(info, dict) and info.get('token') == token:
+            username = uname
+            uinfo = info
+            break
+            
+    if not username: return jsonify({"error": "Invalid token"}), 403
+    
+    group_id = uinfo.get('group')
+    groups = load_auto_groups()
+    if group_id not in groups or target_node not in groups[group_id].get("nodes", {}):
+        return jsonify({"error": "Invalid target node"}), 400
+        
+    old_node = uinfo.get('node')
+    if old_node == target_node:
+        return jsonify({"status": "success", "msg": "Already connected to this node"})
+        
+    old_ip = get_target_ip(old_node)
+    new_ip = get_target_ip(target_node)
+    if not new_ip: return jsonify({"error": "Target node offline"}), 500
+    
+    proto = uinfo.get('protocol', 'v2')
+    uid = uinfo.get('uuid')
+    old_port = uinfo.get('port')
+    safe_u = urllib.parse.quote(username)
+    
+    if old_ip:
+        cmd_del = get_safe_delete_cmd(username, proto, old_port)
+        if proto == 'v2':
+            execute_ssh_bg(old_ip, [f"{cmd_del} ; systemctl restart xray"])
+        else:
+            prefix = "systemctl() { true; }; export -f systemctl; "
+            suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+            execute_ssh_bg(old_ip, [prefix + cmd_del + suffix])
+            
+    if proto == 'v2':
+        new_port = "443"
+        new_key = f"vless://{uid}@{new_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
+        cmd_add = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
+    else:
+        used_ports = [int(i.get('port', 10000)) for i in db.values() if isinstance(i, dict) and i.get('protocol') == 'out' and i.get('node') == target_node]
+        new_port = str(max(used_ports) + 1) if used_ports else "10001"
+        credentials = f"chacha20-ietf-poly1305:{uid}"
+        b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
+        new_key = f"ss://{b64_creds}@{new_ip}:{new_port}#{safe_u}"
+        cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {new_port} ; ufw allow {new_port}/tcp >/dev/null 2>&1 || true ; ufw allow {new_port}/udp >/dev/null 2>&1 || true"
+        
+    uinfo['node'] = target_node
+    uinfo['port'] = new_port
+    uinfo['key'] = new_key
+    
+    with db_lock:
+        with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
+        
+    if proto == 'v2':
+        execute_ssh_bg(new_ip, [f"{cmd_add} ; systemctl restart xray"])
+    else:
+        prefix = "systemctl() { true; }; export -f systemctl; "
+        suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
+        execute_ssh_bg(new_ip, [prefix + cmd_add + suffix])
+        
+    return jsonify({
+        "status": "success", 
+        "new_node": target_node
+    })
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8888)
