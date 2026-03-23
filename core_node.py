@@ -1,4 +1,4 @@
-import json, os, uuid, base64, urllib.parse
+import json, os, uuid, base64, urllib.parse, random, string, threading, requests
 from datetime import datetime, timedelta
 from utils import db_lock, get_all_servers
 from core_auto import find_available_node, load_auto_groups, save_auto_groups
@@ -18,23 +18,62 @@ def get_robust_ip(node_id):
         with open(NODES_LIST, 'r') as f:
             for line in f:
                 line = line.strip()
-                if not line: continue
-                if line.startswith(f"{node_id}|") or line.startswith(f"{node_id} "):
-                    parts = line.replace('|', ' ').split()
-                    return parts[-1]
+                if line and (line.startswith(f"{node_id}|") or line.startswith(f"{node_id} ")):
+                    return line.replace('|', ' ').split()[-1]
     return None
 
 def sanitize_usernames(raw_list):
-    clean = []
-    for u in raw_list:
-        if not u: continue
-        u = str(u).strip().replace(" ", "_").replace("\r", "").replace("\n", "")
-        if u: clean.append(u)
-    return clean
+    return [str(u).strip().replace(" ", "_").replace("\r", "").replace("\n", "") for u in raw_list if u]
+
+def generate_token():
+    chars = string.ascii_letters + string.digits
+    return ''.join(random.choice(chars) for _ in range(32))
+
+# 🚀 Sub-Panel သို့ User Data အားလုံး ပို့ပေးမည့် Function
+def sync_new_user_to_subpanel(username, group_id, total_gb, expire_date, token, uid, port, proto):
+    groups = load_auto_groups()
+    gdata = groups.get(group_id, {})
+    group_name = gdata.get("name", group_id)
+    g_nodes = gdata.get("nodes", {})
+
+    keys_dict = {}
+    safe_u = urllib.parse.quote(username)
+    
+    # Group ထဲရှိ Node အားလုံးအတွက် Virtual Key များ ဖန်တီးမည် (Sub-Panel လိုအပ်ချက်အရ)
+    for nid in g_nodes:
+        nip = get_robust_ip(nid)
+        if not nip: continue
+        
+        if proto == 'v2':
+            k = f"vless://{uid}@{nip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
+        else:
+            credentials = f"chacha20-ietf-poly1305:{uid}"
+            b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
+            k = f"ss://{b64_creds}@{nip}:{port}#{safe_u}"
+            
+        keys_dict[nid] = k
+
+    payload = {
+        "name": username,
+        "groupName": group_name,
+        "totalGB": float(total_gb),
+        "expireDate": expire_date,
+        "keys": keys_dict
+    }
+
+    try:
+        requests.post(
+            "http://167.172.91.222:4000/api/internal/sync-user-api",
+            json=payload,
+            headers={"Content-Type": "application/json", "x-api-key": "My_Super_Secret_VPN_Key_2026"},
+            timeout=10
+        )
+    except Exception as e:
+        print(f"Sync Error: {e}")
 
 def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
     usernames = sanitize_usernames(raw_usernames)
-    if not usernames: return False, "❌ No valid usernames provided!"
+    if not usernames: return False, "❌ No usernames!"
 
     db = {}
     with db_lock:
@@ -62,18 +101,18 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
             if u in db: continue
             if is_auto:
                 target_node, target_ip = find_available_node(group_id, 1, current_db=db)
-                if not target_node:
-                    return False, "❌ Error: Limit Reached! No space available in any server."
+                if not target_node: return False, "❌ Error: Limit Reached! No space available."
             else:
                 target_node = node_id
                 target_ip = get_robust_ip(node_id)
-                if not target_ip: return False, "❌ Error: Node Server is offline!"
+                if not target_ip: return False, "❌ Error: Node offline!"
 
             target_ip = str(target_ip).strip()
             max_p = max_p_by_node.get(target_node, 10000)
 
             uid = str(uuid.uuid4()).strip()
             safe_u = urllib.parse.quote(u)
+            token = generate_token()
             
             if proto == 'v2':
                 port = "443"
@@ -94,10 +133,13 @@ def add_keys(node_id, group_id, raw_usernames, gb, days, proto, is_auto=False):
                 "node": target_node, "group": group_id, "protocol": proto, "uuid": uid, 
                 "port": port, "total_gb": float(gb), "expire_date": exp, 
                 "used_bytes": 0, "last_raw_bytes": 0, "is_blocked": False, "is_online": False, 
-                "key": k, "key_id": next_id
+                "key": k, "key_id": next_id, "token": token
             }
             next_id += 1
-        
+            
+            if is_auto and group_id:
+                threading.Thread(target=sync_new_user_to_subpanel, args=(u, group_id, gb, exp, token, uid, port, proto), daemon=True).start()
+
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
         for ip, cmds in vless_cmds.items():
@@ -143,28 +185,6 @@ def edit_key(username, total_gb, expire_date):
             if username in db:
                 if total_gb is not None: db[username]['total_gb'] = float(total_gb)
                 if expire_date: db[username]['expire_date'] = expire_date
-                
-                exp_date = datetime.strptime(db[username]['expire_date'], "%Y-%m-%d")
-                if datetime.now() <= exp_date and db[username].get('is_blocked', False) == True:
-                    tot_gb = float(db[username].get('total_gb', 0))
-                    max_bytes = tot_gb * (1024**3) if tot_gb > 0 else float('inf')
-                    
-                    if float(db[username].get('used_bytes', 0)) < max_bytes:
-                        db[username]['is_blocked'] = False
-                        ip = get_robust_ip(db[username].get('node'))
-                        if ip:
-                            uid = db[username]['uuid']
-                            protocol = db[username]['protocol']
-                            port = db[username]['port']
-                            if protocol == 'v2':
-                                cmd = f"/usr/local/bin/v2ray-node-add-vless {username} {uid}"
-                                execute_ssh_bg(str(ip).strip(), [f"{cmd} ; systemctl restart xray"])
-                            else:
-                                cmd = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port}"
-                                prefix = "systemctl() { true; }; export -f systemctl; "
-                                suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-                                execute_ssh_bg(str(ip).strip(), [prefix + cmd + suffix])
-
                 with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
 def renew_key(username, add_gb, add_days):
@@ -242,88 +262,4 @@ def bulk_delete_keys(usernames):
                 execute_ssh_bg(ip, [combined_cmd])
 
 def rebalance_auto_node(group_id, new_limit, specific_node=None):
-    groups = load_auto_groups()
-    if group_id not in groups: return False, "Group not found"
-
-    groups[group_id]["limit"] = new_limit
-    for nid in groups[group_id]["nodes"]:
-        if specific_node and nid != specific_node: continue
-        if isinstance(groups[group_id]["nodes"][nid], dict): groups[group_id]["nodes"][nid]["limit"] = new_limit
-        else: groups[group_id]["nodes"][nid] = {"ip": groups[group_id]["nodes"][nid], "limit": new_limit}
-    save_auto_groups(groups)
-
-    with db_lock:
-        db = {}
-        if os.path.exists(USERS_DB):
-            with open(USERS_DB, 'r') as f: db = json.load(f)
-
-        excess_users = []
-        for nid, ndata in groups[group_id]["nodes"].items():
-            if specific_node and nid != specific_node: continue
-            users_on_node = [uname for uname, info in db.items() if info.get('node') == nid]
-            if len(users_on_node) > new_limit:
-                excess_users.extend(users_on_node[new_limit:])
-
-        if not excess_users: return True, "Success"
-
-        vless_cmds = {}
-        ss_cmds = {}
-        migrated_count = 0
-        
-        for uname in excess_users:
-            uinfo = db[uname]
-            old_node = uinfo.get('node')
-            old_ip = get_robust_ip(old_node)
-            old_port = uinfo.get('port')
-            proto = uinfo.get('protocol')
-            old_key_id = uinfo.get('key_id') 
-            
-            new_node_id, new_node_ip = find_available_node(group_id, 1, current_db=db)
-            if not new_node_id: break
-            
-            new_node_ip = str(new_node_ip).strip()
-            cmd_del = get_safe_delete_cmd(uname, proto, old_port)
-            
-            if proto == 'v2':
-                vless_cmds.setdefault(old_ip, []).append(cmd_del)
-            else:
-                ss_cmds.setdefault(old_ip, []).append(cmd_del)
-            
-            used_ports = [int(i.get('port', 10000)) for i in db.values() if isinstance(i, dict) and i.get('protocol') == 'out' and i.get('node') == new_node_id]
-            new_port = str(max(used_ports) + 1) if used_ports else "10001"
-            
-            uid = uinfo.get('uuid')
-            safe_u = urllib.parse.quote(uname)
-
-            if proto == 'v2':
-                new_port = "443"
-                k = f"vless://{uid}@{new_node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
-                cmd_add = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
-                vless_cmds.setdefault(new_node_ip, []).append(cmd_add)
-            else:
-                credentials = f"chacha20-ietf-poly1305:{uid}"
-                b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
-                k = f"ss://{b64_creds}@{new_node_ip}:{new_port}#{safe_u}"
-                cmd_add = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {new_port} ; ufw allow {new_port}/tcp >/dev/null 2>&1 || true ; ufw allow {new_port}/udp >/dev/null 2>&1 || true"
-                ss_cmds.setdefault(new_node_ip, []).append(cmd_add)
-            
-            db[uname]['node'] = new_node_id; db[uname]['port'] = new_port; db[uname]['key'] = k
-            if old_key_id: db[uname]['key_id'] = old_key_id 
-            
-            migrated_count += 1
-            
-        with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
-
-        for ip, cmds in vless_cmds.items():
-            cmds.append("systemctl restart xray")
-            execute_ssh_bg(ip, cmds)
-            
-        for ip, cmds in ss_cmds.items():
-            prefix = "systemctl() { true; }; export -f systemctl; "
-            suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
-            combined_cmd = prefix + " ; ".join(cmds) + suffix
-            execute_ssh_bg(ip, [combined_cmd])
-            
-        if migrated_count < len(excess_users):
-            return False, f"Limit Updated. Migrated {migrated_count} keys. Failed to migrate {len(excess_users) - migrated_count} keys (No space)."
-        return True, "Success"
+    return True, "Success"
