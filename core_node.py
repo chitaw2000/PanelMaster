@@ -29,7 +29,7 @@ def generate_token():
     chars = string.ascii_letters + string.digits
     return ''.join(random.choice(chars) for _ in range(32))
 
-# 🚀 Sub-Panel သို့ User Data အားလုံး ပို့ပေးမည့် Function
+# 🚀 Sub-Panel သို့ User Data ပို့မည့် Function (JSON Object ပြင်ဆင်ချက်)
 def sync_new_user_to_subpanel(username, group_id, total_gb, expire_date, token, uid, port, proto):
     groups = load_auto_groups()
     gdata = groups.get(group_id, {})
@@ -39,19 +39,21 @@ def sync_new_user_to_subpanel(username, group_id, total_gb, expire_date, token, 
     keys_dict = {}
     safe_u = urllib.parse.quote(username)
     
-    # Group ထဲရှိ Node အားလုံးအတွက် Virtual Key များ ဖန်တီးမည် (Sub-Panel လိုအပ်ချက်အရ)
     for nid in g_nodes:
         nip = get_robust_ip(nid)
         if not nip: continue
         
         if proto == 'v2':
-            k = f"vless://{uid}@{nip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
+            keys_dict[nid] = f"vless://{uid}@{nip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
         else:
-            credentials = f"chacha20-ietf-poly1305:{uid}"
-            b64_creds = base64.urlsafe_b64encode(credentials.encode('utf-8')).decode('utf-8').rstrip('=')
-            k = f"ss://{b64_creds}@{nip}:{port}#{safe_u}"
-            
-        keys_dict[nid] = k
+            # 🚀 Shadowsocks အတွက် JSON Object အတိုင်း ပို့ပေးမည်
+            keys_dict[nid] = {
+                "server": str(nip),
+                "server_port": int(port),
+                "password": str(uid),
+                "method": "chacha20-ietf-poly1305",
+                "prefix": "\u0016\u0003\u0001\u0005\u00f2\u0001\u0000\u0005\u00ee\u0003\u0003"
+            }
 
     payload = {
         "name": username,
