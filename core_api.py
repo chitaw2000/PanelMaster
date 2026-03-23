@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-import json, os, urllib.parse, base64, uuid, random, string, subprocess, threading
+import json, os, urllib.parse, base64, uuid, random, string, subprocess
 from datetime import datetime, timedelta
 
 from utils import get_all_servers, db_lock
@@ -29,19 +29,14 @@ def get_target_ip(node_id):
                     return parts[-1]
     return None
 
-# 🚀 Parallel SSH Execution (ဆာဗာများကို အချင်းချင်း မစောင့်ခိုင်းဘဲ ပြိုင်တူ Run မည့်စနစ်)
-def fire_ssh(ip, cmd):
+# 🚀 OS-Level Process (Flask API ပြီးသွားလည်း လုံးဝမသေဘဲ ဆာဗာဆီ သေချာပေါက် ဆက်သွားမည့်စနစ်)
+def fire_ssh_os(ip, cmd):
     if not ip: return
-    def _run():
-        try:
-            export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
-            safe_cmd = cmd.replace("'", "'\\''")
-            full_ssh = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} '{export_path} {safe_cmd}'"
-            subprocess.run(full_ssh, shell=True)
-        except Exception as e:
-            print(f"Parallel SSH Error on {ip}: {e}")
-    # ချက်ချင်း Thread ခွဲ၍ Run မည်
-    threading.Thread(target=_run, daemon=True).start()
+    export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
+    safe_cmd = cmd.replace("'", "'\\''")
+    full_ssh = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} '{export_path} {safe_cmd}'"
+    # Popen ဖြင့် နောက်ကွယ်မှ သီးသန့် Run မည် (Thread မဟုတ်ပါ)
+    subprocess.Popen(full_ssh, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 @api_bp.after_request
 def add_cors_headers(response):
@@ -51,7 +46,7 @@ def add_cors_headers(response):
     return response
 
 # ==========================================
-# EXTERNAL API ROUTES (OUTLINE သီးသန့်)
+# EXTERNAL API ROUTES (OUTLINE ONLY)
 # ==========================================
 
 @api_bp.route('/conf/<token>.json', methods=['GET', 'OPTIONS'])
@@ -139,7 +134,7 @@ def api_generate_keys():
         token = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(32))
         safe_u = urllib.parse.quote(username)
 
-        # Port ကို အစဉ်လိုက်ယူမည်
+        # Port ယူမည်
         max_p = 10000
         for uinfo in db.values():
             if isinstance(uinfo, dict) and uinfo.get('protocol') == 'out':
@@ -151,7 +146,7 @@ def api_generate_keys():
         api_keys_dict = {} 
         g_nodes = groups[group_id].get("nodes", {})
         
-        # 🚀 ၁။ ညိုကီ့ Logic အတိုင်း ဆာဗာ "အားလုံး" ဆီသို့ ပြိုင်တူ သွားဖွင့်မည်
+        # 🚀 ၁။ ဆာဗာအားလုံးဆီသို့ OS Process ဖြင့် ပြိုင်တူ ပစ်ထည့်မည် (လုံးဝ မသေပါ)
         for nid in g_nodes:
             nip = get_target_ip(nid)
             if not nip: continue
@@ -165,11 +160,9 @@ def api_generate_keys():
                 "prefix": "\u0016\u0003\u0001\u0005\u00f2\u0001\u0000\u0005\u00ee\u0003\u0003"
             }
             
-            # Parallel Create
             cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-            fire_ssh(nip, cmd_add)
+            fire_ssh_os(nip, cmd_add)
 
-        # Database တွင် မှတ်မည်
         b64_creds_active = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
         active_key = f"ss://{b64_creds_active}@{target_ip.strip()}:{port}#{safe_u}"
 
@@ -256,7 +249,7 @@ def webhook_switch():
         group_id = uinfo.get('group')
         is_blocked = uinfo.get('is_blocked', False)
         
-        # 🚀 (၁) အဟောင်း Node က GB ကို ယူလာပြီး ပေါင်းထည့်မည် (Synchronous / ချက်ချင်းလုပ်မည်)
+        # 🚀 (၁) အဟောင်းက GB ယူမည် (Sync Process - စောင့်ယူမည်)
         if old_ip:
             try:
                 full_ssh = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{old_ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\""
@@ -267,19 +260,17 @@ def webhook_switch():
                     v = s.get("value", 0)
                     if len(p) >= 4 and p[1] == username:
                         uinfo['used_bytes'] = float(uinfo.get('used_bytes', 0)) + v
-            except Exception as e:
-                print(f"GB Sync Error from old node: {e}")
+            except: pass
 
-        uinfo['last_raw_bytes'] = 0 # အသစ်တွင် စတွက်ရန်
+        uinfo['last_raw_bytes'] = 0 
         
-        # Update DB Key
         b64_creds = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
         uinfo['node'] = target_node  
         uinfo['key'] = f"ss://{b64_creds}@{new_ip}:{port}#{safe_u}"
         
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    # 🚀 (၂) ညိုကီ့ Logic အတိုင်း: အသစ်တွင် ဖွင့်ပေးပြီး၊ ကျန်သည့် Node အားလုံးကို ပြိုင်တူ ပိတ်မည် (Parallel Execution)
+    # 🚀 (၂) အသစ်မှာ ဖွင့်၊ ကျန်တာအကုန်ပိတ် (OS Process)
     if not is_blocked:
         groups = load_auto_groups()
         g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
@@ -290,13 +281,11 @@ def webhook_switch():
             nip = str(nip).strip()
 
             if nip == new_ip:
-                # အသစ်တွင် ဖွင့်မည်
                 cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                fire_ssh(nip, cmd_add)
+                fire_ssh_os(nip, cmd_add)
             else:
-                # အခြားကောင်များ အားလုံးတွင် ပိတ်မည်
                 cmd_del = get_safe_delete_cmd(username, 'out', port)
-                fire_ssh(nip, f"{cmd_del} ; systemctl restart xray")
+                fire_ssh_os(nip, f"{cmd_del} ; systemctl restart xray")
         
     return jsonify({"success": True, "message": f"Successfully switched to {target_node} and synced GB"})
 
@@ -335,7 +324,7 @@ def api_user_action():
         groups = load_auto_groups()
         g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
 
-        # 🚀 Action များကို Group ထဲရှိ ဆာဗာအားလုံးတွင် ပြိုင်တူ လုပ်ဆောင်မည် (Parallel)
+        # 🚀 Suspend/Delete/Resume ကို OS Process ဖြင့် လိုက်လုပ်မည်
         for nid in g_nodes:
             nip = get_target_ip(nid)
             if not nip: continue
@@ -343,11 +332,11 @@ def api_user_action():
 
             if action in ["suspend", "delete"]:
                 cmd_del = get_safe_delete_cmd(username, 'out', port)
-                fire_ssh(nip, f"{cmd_del} ; systemctl restart xray")
+                fire_ssh_os(nip, f"{cmd_del} ; systemctl restart xray")
             elif action == "resume":
-                if nip == active_ip: # Active ဖြစ်သော (DB ရှိ) ဆာဗာတွင်သာ ပြန်ဖွင့်မည်
+                if nip == active_ip: # Active ဆာဗာမှာပဲ ပြန်ဖွင့်မည်
                     cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                    fire_ssh(nip, cmd_add)
+                    fire_ssh_os(nip, cmd_add)
 
         if action == "suspend":
             uinfo['is_blocked'] = True
