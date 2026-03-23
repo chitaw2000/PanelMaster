@@ -190,10 +190,38 @@ def webhook_switch():
     if not req_data: return jsonify({"success": False, "error": "Invalid JSON"}), 400
 
     token = req_data.get('token')
-    target_node = req_data.get('activeServer')
+    target_node_raw = str(req_data.get('activeServer', '')).strip()
 
-    if not token or not target_node: 
+    if not token or not target_node_raw: 
         return jsonify({"success": False, "error": "Missing token or activeServer"}), 400
+
+    # 🚀 Smart Node Resolver: ဟိုဘက်က Name ပို့ပို့၊ ID ပို့ပို့ တိကျသော ID ကို ပြန်ရှာပေးမည်
+    target_node = None
+    new_ip = None
+    nodes = get_all_servers()
+    
+    for nid, ndata in nodes.items():
+        if nid == target_node_raw or str(ndata.get('name', '')).strip() == target_node_raw:
+            target_node = nid
+            new_ip = str(ndata.get('ip', '')).strip()
+            break
+            
+    if not target_node or not new_ip:
+        # NODES_LIST ထဲတွင် ထပ်ရှာမည်
+        if os.path.exists(NODES_LIST):
+            with open(NODES_LIST, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line: continue
+                    parts = line.split('|') if '|' in line else line.split()
+                    if len(parts) >= 3:
+                        if parts[0] == target_node_raw or parts[1] == target_node_raw:
+                            target_node = parts[0]
+                            new_ip = parts[-1].strip()
+                            break
+                            
+    if not target_node or not new_ip:
+        return jsonify({"success": False, "error": f"Target node '{target_node_raw}' not found or offline"}), 500
 
     with db_lock:
         if not os.path.exists(USERS_DB): return jsonify({"success": False, "error": "DB not found"}), 404
@@ -214,14 +242,14 @@ def webhook_switch():
         return jsonify({"success": True, "message": f"Already connected to {target_node}"})
         
     old_ip = get_target_ip(old_node)
-    new_ip = get_target_ip(target_node)
-    if not new_ip: return jsonify({"success": False, "error": "Target node offline or invalid"}), 500
+    if not old_ip: old_ip = None # For safety
     
     proto = uinfo.get('protocol', 'v2')
     uid = uinfo.get('uuid')
     old_port = uinfo.get('port')
     safe_u = urllib.parse.quote(username)
     
+    # 🚀 ဆာဗာအဟောင်းမှ ဖြုတ်မည်
     if old_ip:
         cmd_del = get_safe_delete_cmd(username, proto, old_port)
         if proto == 'v2':
@@ -231,6 +259,7 @@ def webhook_switch():
             suffix = " ; unset -f systemctl; systemctl reset-failed xray; systemctl restart xray"
             execute_ssh_bg(old_ip, [prefix + cmd_del + suffix])
             
+    # 🚀 ဆာဗာအသစ်သို့ ပြောင်းထည့်မည်
     if proto == 'v2':
         new_port = "443"
         new_key = f"vless://{uid}@{new_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
@@ -243,7 +272,7 @@ def webhook_switch():
         new_key = f"ss://{b64_creds}@{new_ip}:{new_port}#{safe_u}"
         cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {new_port} ; ufw allow {new_port}/tcp >/dev/null 2>&1 || true ; ufw allow {new_port}/udp >/dev/null 2>&1 || true"
         
-    uinfo['node'] = target_node
+    uinfo['node'] = target_node  # 🎯 မှန်ကန်သော ID ကိုသာ Save မည်
     uinfo['port'] = new_port
     uinfo['key'] = new_key
     
