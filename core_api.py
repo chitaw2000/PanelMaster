@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-import json, os, urllib.parse, base64, uuid, random, string, subprocess
+import json, os, urllib.parse, base64, uuid, random, string, subprocess, threading
 from datetime import datetime, timedelta
 
 from utils import get_all_servers, db_lock
@@ -29,25 +29,15 @@ def get_target_ip(node_id):
                     return parts[-1]
     return None
 
-# 🚀 OS နောက်ကွယ်မှ သေချာပေါက် သွားအလုပ်လုပ်မည် (API လုံးဝ Hang မဖြစ်ပါ)
+# 🚀 OS Level ပျောက်မသွားစေရန် Thread ဖြင့် ခွဲ၍ သေချာပေါက် Run မည်
 def fire_ssh_bg(ip, cmd):
-    if not ip: return
-    export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
-    safe_cmd = cmd.replace("'", "'\\''")
-    full_ssh = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} '{export_path} {safe_cmd}'"
-    subprocess.Popen(full_ssh, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-# 🚀 GB ယူရန်အတွက် သီးသန့်စောင့်မည့်စနစ်
-def fetch_ssh_sync(ip, cmd):
-    if not ip: return ""
-    try:
+    def _run():
+        if not ip: return
         export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
         safe_cmd = cmd.replace("'", "'\\''")
-        full_ssh = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} '{export_path} {safe_cmd}'"
-        res = subprocess.run(full_ssh, shell=True, capture_output=True, text=True, timeout=8)
-        return res.stdout
-    except:
-        return ""
+        full_ssh = f"ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} '{export_path} {safe_cmd}'"
+        subprocess.run(full_ssh, shell=True, capture_output=True)
+    threading.Thread(target=_run, daemon=True).start()
 
 @api_bp.after_request
 def add_cors_headers(response):
@@ -148,7 +138,7 @@ def api_generate_keys():
         api_keys_dict = {} 
         g_nodes = groups[group_id].get("nodes", {})
         
-        # 🚀 ၁။ ညိုကီပြောသည့်အတိုင်း Group ထဲရှိ Node "အားလုံး" တွင် Create သွားလုပ်မည် (အကုန်ပွင့်နေမည်)
+        # 🚀 ၁။ Group ထဲရှိ Node "အားလုံး" တွင် Create လုပ်မည်
         for nid in g_nodes:
             nip = get_target_ip(nid)
             if not nip: continue
@@ -229,17 +219,23 @@ def webhook_switch():
         group_id = uinfo.get('group')
         is_blocked = uinfo.get('is_blocked', False)
         
-        # 🚀 (၂) ညိုကီ့ Logic: Node အဟောင်းက GB ကို ဆွဲယူမည် (သေချာပေါက် စောင့်ယူမည်)
+        # 🚀 (၂) ညိုကီ့ Logic: Node အဟောင်းက GB ကို ဆွဲယူမည် 
         if old_ip:
-            stats_out = fetch_ssh_sync(old_ip, "xray api statsquery --server=127.0.0.1:10085")
-            if stats_out:
-                try:
-                    stats = json.loads(stats_out).get("stat", [])
+            try:
+                full_ssh = f"ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{old_ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\""
+                res = subprocess.run(full_ssh, shell=True, capture_output=True, text=True, timeout=8)
+                if res.stdout:
+                    stats = json.loads(res.stdout).get("stat", [])
+                    stat_dict = {}
                     for s in stats:
                         p = s.get("name", "").split(">>>")
-                        if len(p) >= 4 and p[1] == username:
-                            uinfo['used_bytes'] = float(uinfo.get('used_bytes', 0)) + s.get("value", 0)
-                except: pass
+                        if len(p) >= 4:
+                            uname = p[1]
+                            stat_dict[uname] = stat_dict.get(uname, 0.0) + float(s.get("value", 0))
+                    
+                    if username in stat_dict:
+                        uinfo['used_bytes'] = float(uinfo.get('used_bytes', 0)) + stat_dict[username]
+            except: pass
 
         uinfo['last_raw_bytes'] = 0 
         b64_creds = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
@@ -248,7 +244,7 @@ def webhook_switch():
         
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    # 🚀 (၃) ညိုကီ့ Logic: အသစ်ကို ဖွင့်ပြီး ကျန်တာအကုန် ပိတ်ချမည် (OS Background ဖြင့် လုံခြုံစွာ လုပ်မည်)
+    # 🚀 (၃) ညိုကီ့ Logic: အသစ်မှာ ဖွင့်၊ ကျန်တဲ့ Node အားလုံးမှာ အသေအချာ သွားပိတ်မည်
     if not is_blocked:
         groups = load_auto_groups()
         g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
@@ -302,6 +298,7 @@ def api_user_action():
 
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
+    # 🚀 Manual ပိတ်လျှင် Group ထဲရှိ Node အားလုံးတွင် သေချာပေါက် သွားပိတ်မည်
     groups = load_auto_groups()
     g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
 
