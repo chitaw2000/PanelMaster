@@ -1,11 +1,10 @@
 from flask import Blueprint, request, jsonify
-import json, os, urllib.parse, base64, uuid, random, string, subprocess
+import json, os, urllib.parse, base64, uuid, random, string, subprocess, threading
 from datetime import datetime, timedelta
 
 from utils import get_all_servers, db_lock
 from core_auto import load_auto_groups
-# Manual ခလုတ်က သုံးတဲ့ execute_ssh_bg ကိုပဲ အတိအကျ ပြန်သုံးမည်
-from core_engine import get_safe_delete_cmd, execute_ssh_bg
+from core_engine import get_safe_delete_cmd
 
 try:
     from config import USERS_DB, NODES_LIST
@@ -29,6 +28,13 @@ def get_target_ip(node_id):
                     parts = line.replace('|', ' ').split()
                     return parts[-1]
     return None
+
+# 🚀 အရင်က အလုပ်လုပ်ခဲ့သော ရိုးရှင်းသည့် နောက်ကွယ်မှ SSH Run သည့်စနစ် ပြန်သုံးထားသည်
+def fire_ssh_bg(ip, cmd):
+    if not ip: return
+    safe_cmd = cmd.replace('"', '\\"')
+    full_ssh = f'ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; {safe_cmd}"'
+    subprocess.Popen(full_ssh, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 @api_bp.after_request
 def add_cors_headers(response):
@@ -129,7 +135,7 @@ def api_generate_keys():
         api_keys_dict = {} 
         g_nodes = groups[group_id].get("nodes", {})
         
-        # 🚀 ညိုကီ့ Logic: Create လုပ်လျှင် Group ထဲရှိ Node အားလုံးတွင် Key Create လုပ်မည်
+        # 🚀 ညိုကီ့ Logic: Create လုပ်လျှင် Active တွင်ဖွင့်၍ ကျန်ရာတွင် ပိတ်မည်
         for nid in g_nodes:
             nip = get_target_ip(nid)
             if not nip: continue
@@ -143,8 +149,13 @@ def api_generate_keys():
                 "prefix": "\u0016\u0003\u0001\u0005\u00f2\u0001\u0000\u0005\u00ee\u0003\u0003"
             }
             
-            cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-            execute_ssh_bg(nip, [cmd_add])
+            if nid == target_node:
+                cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+                fire_ssh_bg(nip, cmd_add)
+            else:
+                cmd_del = get_safe_delete_cmd(username, 'out', port)
+                cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+                fire_ssh_bg(nip, cmd_full_del)
 
         b64_creds_active = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
         active_key = f"ss://{b64_creds_active}@{target_ip.strip()}:{port}#{safe_u}"
@@ -210,16 +221,16 @@ def webhook_switch():
         group_id = uinfo.get('group')
         is_blocked = uinfo.get('is_blocked', False)
         
-        # 🚀 ညိုကီ့ Logic: အဟောင်းက GB ကို ရိုးရှင်းစွာ လှမ်းဆွဲမည်
+        # 🚀 ညိုကီ့ Logic: အဟောင်းက GB ကို တောင်းယူမည်
         if old_ip:
             try:
-                cmd_stats = f"ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{old_ip} 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; xray api statsquery --server=127.0.0.1:10085'"
+                cmd_stats = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{old_ip} '/usr/local/bin/xray api statsquery --server=127.0.0.1:10085'"
                 res = subprocess.run(cmd_stats, shell=True, capture_output=True, text=True, timeout=8)
                 if res.stdout:
                     stats = json.loads(res.stdout).get("stat", [])
                     for s in stats:
                         p = s.get("name", "").split(">>>")
-                        if len(p) >= 4 and p[1] == username:
+                        if len(p) >= 4 and p[0] == "user" and p[1] == username:
                             uinfo['used_bytes'] = float(uinfo.get('used_bytes', 0)) + float(s.get("value", 0))
             except: pass
 
@@ -230,7 +241,7 @@ def webhook_switch():
         
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    # 🚀 ညိုကီ့ Logic: အသစ်တွင်ဖွင့်၊ ကျန်တာအကုန်ပိတ်မည်
+    # 🚀 ညိုကီ့ Logic: အသစ်တွင်ဖွင့်၊ အဟောင်းနှင့်ကျန်တာအကုန်ပိတ်မည်
     if not is_blocked:
         groups = load_auto_groups()
         g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
@@ -242,11 +253,11 @@ def webhook_switch():
 
             if nip == new_ip:
                 cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                execute_ssh_bg(nip, [cmd_add])
+                fire_ssh_bg(nip, cmd_add)
             else:
                 cmd_del = get_safe_delete_cmd(username, 'out', port)
-                cmd_full_del = f"systemctl() {{ true; }}; export -f systemctl; {cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; unset -f systemctl; systemctl restart xray"
-                execute_ssh_bg(nip, [cmd_full_del])
+                cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+                fire_ssh_bg(nip, cmd_full_del)
         
     return jsonify({"success": True, "message": "Successfully switched and synced GB"})
 
@@ -294,10 +305,10 @@ def api_user_action():
 
         if action in ["suspend", "delete"]:
             cmd_del = get_safe_delete_cmd(username, 'out', port)
-            cmd_full_del = f"systemctl() {{ true; }}; export -f systemctl; {cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; unset -f systemctl; systemctl restart xray"
-            execute_ssh_bg(nip, [cmd_full_del])
+            cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+            fire_ssh_bg(nip, cmd_full_del)
         elif action == "resume" and nip == active_ip: 
             cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-            execute_ssh_bg(nip, [cmd_add])
+            fire_ssh_bg(nip, cmd_add)
 
     return jsonify({"success": True})
