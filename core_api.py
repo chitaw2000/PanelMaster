@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 from utils import get_all_servers, db_lock
 from core_auto import load_auto_groups
-from core_engine import get_safe_delete_cmd
+from core_engine import get_safe_delete_cmd, execute_ssh_bg
 
 try:
     from config import USERS_DB, NODES_LIST
@@ -28,19 +28,6 @@ def get_target_ip(node_id):
                     parts = line.replace('|', ' ').split()
                     return parts[-1]
     return None
-
-# 🚀 API မ Hang စေရန် သီးသန့် Thread ဖြင့် SSH ကို အသေအချာ Run မည့် Function (ဒီထဲမှာပဲ ပြည့်စုံအောင် ရေးထားသည်)
-def execute_ssh_command(ip, cmd):
-    if not ip: return
-    def _run():
-        try:
-            export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
-            safe_cmd = cmd.replace("'", "'\\''")
-            full_ssh = f"ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} '{export_path} {safe_cmd}'"
-            subprocess.run(full_ssh, shell=True, capture_output=True)
-        except Exception as e:
-            print(f"SSH Error on {ip}: {e}")
-    threading.Thread(target=_run, daemon=True).start()
 
 @api_bp.after_request
 def add_cors_headers(response):
@@ -141,7 +128,7 @@ def api_generate_keys():
         api_keys_dict = {} 
         g_nodes = groups[group_id].get("nodes", {})
         
-        # 🚀 ညိုကီ့ Logic အတိုင်း: ဆာဗာ "အားလုံး" တွင် သေချာပေါက် Create သွားလုပ်မည် (အကုန်ပွင့်နေမည်)
+        # 🚀 Group ထဲရှိ Node အားလုံးတွင် Create လုပ်မည်
         for nid in g_nodes:
             nip = get_target_ip(nid)
             if not nip: continue
@@ -156,7 +143,7 @@ def api_generate_keys():
             }
             
             cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-            execute_ssh_command(nip, cmd_add)
+            execute_ssh_bg(nip, [cmd_add])
 
         b64_creds_active = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
         active_key = f"ss://{b64_creds_active}@{target_ip.strip()}:{port}#{safe_u}"
@@ -222,7 +209,7 @@ def webhook_switch():
         group_id = uinfo.get('group')
         is_blocked = uinfo.get('is_blocked', False)
         
-        # 🚀 ညိုကီ့ Logic: အဟောင်းက GB ကို သေချာပေါက် ဆွဲယူပြီးမှ အသစ်ပြောင်းမည်
+        # 🚀 အဟောင်းက GB ကို ဆွဲယူမည်
         if old_ip:
             try:
                 cmd_stats = f"ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{old_ip} 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; xray api statsquery --server=127.0.0.1:10085'"
@@ -242,7 +229,7 @@ def webhook_switch():
         
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    # 🚀 ညိုကီ့ Logic: ပြောင်းလိုက်သော အသစ်တွင် ဖွင့်၊ ကျန်သည့် Node အားလုံးတွင် လိုက်ပိတ်မည်
+    # 🚀 အသစ်တွင်ဖွင့်၊ ကျန်တာအကုန်ပိတ်မည်
     if not is_blocked:
         groups = load_auto_groups()
         g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
@@ -254,11 +241,11 @@ def webhook_switch():
 
             if nip == new_ip:
                 cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                execute_ssh_command(nip, cmd_add)
+                execute_ssh_bg(nip, [cmd_add])
             else:
                 cmd_del = get_safe_delete_cmd(username, 'out', port)
-                cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                execute_ssh_command(nip, cmd_full_del)
+                cmd_full_del = f"systemctl() {{ true; }}; export -f systemctl; {cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; unset -f systemctl; systemctl restart xray"
+                execute_ssh_bg(nip, [cmd_full_del])
         
     return jsonify({"success": True, "message": "Successfully switched and synced GB"})
 
@@ -294,4 +281,23 @@ def api_user_action():
         elif action == "resume": uinfo['is_blocked'] = False
         elif action == "delete": del db[username]
 
-        with open(
+        with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
+        
+    # 🚀 Action ကို ဆာဗာအားလုံးတွင် သွားလုပ်မည်
+    groups = load_auto_groups()
+    g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
+
+    for nid in g_nodes:
+        nip = get_target_ip(nid)
+        if not nip: continue
+        nip = str(nip).strip()
+
+        if action in ["suspend", "delete"]:
+            cmd_del = get_safe_delete_cmd(username, 'out', port)
+            cmd_full_del = f"systemctl() {{ true; }}; export -f systemctl; {cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; unset -f systemctl; systemctl restart xray"
+            execute_ssh_bg(nip, [cmd_full_del])
+        elif action == "resume" and nip == active_ip: 
+            cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+            execute_ssh_bg(nip, [cmd_add])
+
+    return jsonify({"success": True})
