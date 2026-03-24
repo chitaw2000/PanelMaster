@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-import json, os, urllib.parse, base64, uuid, random, string, subprocess
+import json, os, urllib.parse, base64, uuid, random, string, subprocess, threading
 from datetime import datetime, timedelta
 
 from utils import get_all_servers, db_lock
@@ -29,17 +29,39 @@ def get_target_ip(node_id):
                     return parts[-1]
     return None
 
-# 🚀 SSH ကို နောက်ကွယ်မှ မဟုတ်ဘဲ "တစ်လုံးပြီးမှ တစ်လုံး" အသေအချာ စောင့်၍ Run မည့်စနစ်
-def run_ssh_sync_block(ip, cmd):
-    if not ip: return
-    try:
-        export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
-        safe_cmd = cmd.replace('"', '\\"') 
-        # ချက်ချင်း ပြီးဆုံးသည်အထိ စောင့်မည် 
-        full_ssh = f'ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} "{export_path} {safe_cmd}"'
-        subprocess.run(full_ssh, shell=True, capture_output=True)
-    except Exception as e:
-        print(f"SSH Error on {ip}: {e}")
+# 🚀 ဆာဗာအားလုံးဆီသို့ အချိန်မဆွဲဘဲ ပြိုင်တူ Run ပြီး၊ အားလုံးပြီးဆုံးသည်အထိ စောင့်မည့်စနစ် (Parallel Sync)
+def execute_ssh_batch(tasks):
+    def _worker(ip, cmd):
+        try:
+            export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
+            safe_cmd = cmd.replace('"', '\\"')
+            full_ssh = f'ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} "{export_path} {safe_cmd}"'
+            subprocess.run(full_ssh, shell=True, capture_output=True, timeout=15)
+        except Exception as e:
+            print(f"SSH Error on {ip}: {e}")
+
+    threads = []
+    for ip, cmd in tasks:
+        if not ip: continue
+        t = threading.Thread(target=_worker, args=(ip, cmd))
+        t.start()
+        threads.append(t)
+
+    # ဆာဗာအားလုံး Command Run ပြီးသည်အထိ သေချာပေါက် စောင့်မည်
+    for t in threads:
+        t.join()
+
+# 🚀 Group ထဲမှ Node စာရင်းကို အတိအကျ ဆွဲထုတ်မည့် Function
+def get_node_ids_from_group(group_id):
+    groups = load_auto_groups()
+    g_data = groups.get(group_id, {})
+    g_nodes_raw = g_data.get("nodes", {})
+    
+    if isinstance(g_nodes_raw, dict):
+        return list(g_nodes_raw.keys())
+    elif isinstance(g_nodes_raw, list):
+        return g_nodes_raw
+    return []
 
 @api_bp.after_request
 def add_cors_headers(response):
@@ -49,7 +71,7 @@ def add_cors_headers(response):
     return response
 
 # ==========================================
-# EXTERNAL API ROUTES (OUTLINE သီးသန့်)
+# EXTERNAL API ROUTES (OUTLINE ONLY)
 # ==========================================
 
 @api_bp.route('/conf/<token>.json', methods=['GET', 'OPTIONS'])
@@ -108,11 +130,6 @@ def api_generate_keys():
         return jsonify({"success": False, "error": "Missing masterGroupId or userName"}), 400
 
     username = str(raw_username).strip().replace(" ", "_")
-    groups = load_auto_groups()
-    if group_id not in groups:
-        return jsonify({"success": False, "error": "Group not found"}), 404
-
-    from core_auto import find_available_node
     
     with db_lock:
         if os.path.exists(USERS_DB):
@@ -125,19 +142,16 @@ def api_generate_keys():
         if username in db:
             return jsonify({"success": False, "error": "User already exists"}), 400
 
+        from core_auto import find_available_node
         target_node, _ = find_available_node(group_id, 1, current_db=db)
         if not target_node:
             return jsonify({"success": False, "error": "Limit Reached! No space available."}), 400
 
         target_ip = get_target_ip(target_node)
-        if not target_ip:
-            return jsonify({"success": False, "error": "Active Node offline!"}), 500
-
         uid = str(uuid.uuid4()).strip()
         token = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(32))
         safe_u = urllib.parse.quote(username)
 
-        # Port ယူမည်
         max_p = 10000
         for uinfo in db.values():
             if isinstance(uinfo, dict) and uinfo.get('protocol') == 'out':
@@ -147,10 +161,11 @@ def api_generate_keys():
         port = str(max_p + 1)
 
         api_keys_dict = {} 
-        g_nodes = groups[group_id].get("nodes", {})
+        nids = get_node_ids_from_group(group_id)
+        ssh_tasks = []
         
-        # 🚀 ၁။ ညိုကီတောင်းဆိုချက်အတိုင်း ဆာဗာ "အားလုံး" တွင် သေချာပေါက် Create လုပ်မည် (Blocking)
-        for nid in g_nodes:
+        # 🚀 ၁။ ညိုကီပြောသည့်အတိုင်း Group ထဲရှိ ဆာဗာ "အားလုံး" တွင် Create လုပ်မည်
+        for nid in nids:
             nip = get_target_ip(nid)
             if not nip: continue
             nip = str(nip).strip()
@@ -164,7 +179,10 @@ def api_generate_keys():
             }
             
             cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-            run_ssh_sync_block(nip, cmd_add) # Thread မသုံးတော့ပါ
+            ssh_tasks.append((nip, cmd_add))
+
+        # Parallel ဖြင့် ဆာဗာအားလုံးသို့ တစ်ပြိုင်နက် Run မည်
+        execute_ssh_batch(ssh_tasks)
 
         b64_creds_active = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
         active_key = f"ss://{b64_creds_active}@{target_ip.strip()}:{port}#{safe_u}"
@@ -181,7 +199,6 @@ def api_generate_keys():
 
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
-    # ဆာဗာအားလုံး အလုပ်လုပ်ပြီးမှသာ ဟိုဘက်ကို လှမ်းပို့မည် (UI တွင် တစ်ခုတည်းပေါ်သော်လည်း VPS အားလုံးတွင် ရောက်သွားမည်)
     return jsonify({
         "success": True,
         "keys": api_keys_dict,
@@ -253,11 +270,11 @@ def webhook_switch():
         group_id = uinfo.get('group')
         is_blocked = uinfo.get('is_blocked', False)
         
-        # 🚀 (၁) အဟောင်းက GB ယူမည် (Synchronous Block)
+        # 🚀 (၁) ညိုကီပြောသည့်အတိုင်း အဟောင်းဆီမှ GB ကို ယူလာပြီး Database ထဲ ပေါင်းထည့်မည်
         if old_ip:
             try:
                 full_ssh = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{old_ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\""
-                res = subprocess.run(full_ssh, shell=True, capture_output=True, text=True)
+                res = subprocess.run(full_ssh, shell=True, capture_output=True, text=True, timeout=8)
                 stats = json.loads(res.stdout).get("stat", [])
                 for s in stats:
                     p = s.get("name", "").split(">>>")
@@ -266,6 +283,7 @@ def webhook_switch():
                         uinfo['used_bytes'] = float(uinfo.get('used_bytes', 0)) + v
             except: pass
 
+        # အသစ်တွင် သုညမှ ပြန်စမည် (သို့သော် DB တွင် အဟောင်းစာများ သိမ်းထားပြီးဖြစ်၍ Panel တွင် ဆက်ပေါင်းပြမည်)
         uinfo['last_raw_bytes'] = 0 
         
         b64_creds = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
@@ -274,22 +292,26 @@ def webhook_switch():
         
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    # 🚀 (၂) အသစ်မှာ ဖွင့်၊ ကျန်တာအကုန်ပိတ် (Synchronous Block)
+    # 🚀 (၂) ညိုကီပြောသည့်အတိုင်း အသစ်ကို ဖွင့်ပေးပြီး၊ ကျန်သည့် Node အားလုံးကို ပိတ်မည်
     if not is_blocked:
-        groups = load_auto_groups()
-        g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
+        nids = get_node_ids_from_group(group_id) if group_id else [target_node]
+        ssh_tasks = []
         
-        for nid in g_nodes:
+        for nid in nids:
             nip = get_target_ip(nid)
             if not nip: continue
             nip = str(nip).strip()
 
             if nip == new_ip:
+                # အသစ်တွင်ဖွင့်မည်
                 cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                run_ssh_sync_block(nip, cmd_add)
+                ssh_tasks.append((nip, cmd_add))
             else:
-                cmd_del = get_safe_delete_cmd(username, 'out', port)
-                run_ssh_sync_block(nip, f"{cmd_del} ; systemctl restart xray")
+                # အဟောင်းနှင့် အခြားအရာများတွင် ပိတ်မည်
+                cmd_del = f"{get_safe_delete_cmd(username, 'out', port)} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+                ssh_tasks.append((nip, cmd_del))
+                
+        execute_ssh_batch(ssh_tasks)
         
     return jsonify({"success": True, "message": f"Successfully switched to {target_node} and synced GB"})
 
@@ -336,21 +358,23 @@ def api_user_action():
 
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    # 🚀 Action များကို ဆာဗာအားလုံးတွင် တစ်လုံးပြီးမှ တစ်လုံး သေချာပေါက် လုပ်ဆောင်မည် (Synchronous Block)
-    groups = load_auto_groups()
-    g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
+    # 🚀 Action များကို ဆာဗာအားလုံးတွင် တစ်ပြိုင်နက် လုပ်ဆောင်မည်
+    nids = get_node_ids_from_group(group_id) if group_id else [target_node]
+    ssh_tasks = []
 
-    for nid in g_nodes:
+    for nid in nids:
         nip = get_target_ip(nid)
         if not nip: continue
         nip = str(nip).strip()
 
         if action in ["suspend", "delete"]:
-            cmd_del = get_safe_delete_cmd(username, 'out', port)
-            run_ssh_sync_block(nip, f"{cmd_del} ; systemctl restart xray")
+            cmd_del = f"{get_safe_delete_cmd(username, 'out', port)} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+            ssh_tasks.append((nip, cmd_del))
         elif action == "resume":
-            if nip == active_ip: # Active ဖြစ်သော ဆာဗာတွင်သာ ပြန်ဖွင့်မည်
+            if nip == active_ip: # Active ဖြစ်နေသော ပြောင်းထားသည့် ဆာဗာတွင်သာ ပြန်ဖွင့်မည်
                 cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                run_ssh_sync_block(nip, cmd_add)
+                ssh_tasks.append((nip, cmd_add))
+
+    execute_ssh_batch(ssh_tasks)
 
     return jsonify({"success": True, "message": f"User {action} applied to nodes successfully"})
