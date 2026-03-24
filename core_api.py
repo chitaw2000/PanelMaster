@@ -1,11 +1,10 @@
 from flask import Blueprint, request, jsonify
-import json, os, urllib.parse, base64, uuid, random, string, subprocess
+import json, os, urllib.parse, base64, uuid, random, string, subprocess, threading
 from datetime import datetime, timedelta
 
 from utils import get_all_servers, db_lock
 from core_auto import load_auto_groups
-# 🚀 Manual လုပ်သကဲ့သို့ အသေအချာ အလုပ်လုပ်ရန် core_engine မှ ခေါ်သုံးသည်
-from core_engine import get_safe_delete_cmd, execute_ssh_bg
+from core_engine import get_safe_delete_cmd
 
 try:
     from config import USERS_DB, NODES_LIST
@@ -29,6 +28,19 @@ def get_target_ip(node_id):
                     parts = line.replace('|', ' ').split()
                     return parts[-1]
     return None
+
+# 🚀 API မ Hang စေရန် သီးသန့် Thread ဖြင့် SSH ကို အသေအချာ Run မည့် Function (ဒီထဲမှာပဲ ပြည့်စုံအောင် ရေးထားသည်)
+def execute_ssh_command(ip, cmd):
+    if not ip: return
+    def _run():
+        try:
+            export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
+            safe_cmd = cmd.replace("'", "'\\''")
+            full_ssh = f"ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} '{export_path} {safe_cmd}'"
+            subprocess.run(full_ssh, shell=True, capture_output=True)
+        except Exception as e:
+            print(f"SSH Error on {ip}: {e}")
+    threading.Thread(target=_run, daemon=True).start()
 
 @api_bp.after_request
 def add_cors_headers(response):
@@ -129,7 +141,7 @@ def api_generate_keys():
         api_keys_dict = {} 
         g_nodes = groups[group_id].get("nodes", {})
         
-        # 🚀 ညိုကီပြောသည့်အတိုင်း Group ထဲရှိ Node "အားလုံး" ကို ချက်ချင်း Create လုပ်မည်
+        # 🚀 ညိုကီ့ Logic အတိုင်း: ဆာဗာ "အားလုံး" တွင် သေချာပေါက် Create သွားလုပ်မည် (အကုန်ပွင့်နေမည်)
         for nid in g_nodes:
             nip = get_target_ip(nid)
             if not nip: continue
@@ -143,9 +155,8 @@ def api_generate_keys():
                 "prefix": "\u0016\u0003\u0001\u0005\u00f2\u0001\u0000\u0005\u00ee\u0003\u0003"
             }
             
-            # မူလ execute_ssh_bg ကို သုံးထားသဖြင့် လုံးဝ သေချာပေါက် ပေါ်လာမည်
             cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-            execute_ssh_bg(nip, [cmd_add])
+            execute_ssh_command(nip, cmd_add)
 
         b64_creds_active = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
         active_key = f"ss://{b64_creds_active}@{target_ip.strip()}:{port}#{safe_u}"
@@ -211,11 +222,11 @@ def webhook_switch():
         group_id = uinfo.get('group')
         is_blocked = uinfo.get('is_blocked', False)
         
-        # 🚀 ညိုကီ့ Logic: အဟောင်းက GB ကို ယူလာပြီး အသစ်မှာ ပေါင်းထည့်မည် (ရိုးရှင်းသော Subprocess ဖြင့်)
+        # 🚀 ညိုကီ့ Logic: အဟောင်းက GB ကို သေချာပေါက် ဆွဲယူပြီးမှ အသစ်ပြောင်းမည်
         if old_ip:
             try:
-                cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{old_ip} 'xray api statsquery --server=127.0.0.1:10085'"
-                res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                cmd_stats = f"ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{old_ip} 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; xray api statsquery --server=127.0.0.1:10085'"
+                res = subprocess.run(cmd_stats, shell=True, capture_output=True, text=True, timeout=8)
                 if res.stdout:
                     stats = json.loads(res.stdout).get("stat", [])
                     for s in stats:
@@ -231,7 +242,56 @@ def webhook_switch():
         
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    # 🚀 ညိုကီ့ Logic: ပြောင်းလိုက်သော အသစ်တွင် ဖွင့်၊ ကျန်သည့် Node အားလုံးတွင် အသေအချာ ပိတ်မည်
+    # 🚀 ညိုကီ့ Logic: ပြောင်းလိုက်သော အသစ်တွင် ဖွင့်၊ ကျန်သည့် Node အားလုံးတွင် လိုက်ပိတ်မည်
     if not is_blocked:
         groups = load_auto_groups()
-        g_nodes = groups.get(group_id, {}).get("nodes", {}) if group
+        g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
+        
+        for nid in g_nodes:
+            nip = get_target_ip(nid)
+            if not nip: continue
+            nip = str(nip).strip()
+
+            if nip == new_ip:
+                cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+                execute_ssh_command(nip, cmd_add)
+            else:
+                cmd_del = get_safe_delete_cmd(username, 'out', port)
+                cmd_full_del = f"{cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+                execute_ssh_command(nip, cmd_full_del)
+        
+    return jsonify({"success": True, "message": "Successfully switched and synced GB"})
+
+@api_bp.route('/api/user-action', methods=['POST', 'OPTIONS'])
+def api_user_action():
+    if request.method == 'OPTIONS': return jsonify({"success": True}), 200
+    if request.headers.get('x-api-key') != MASTER_API_KEY:
+        return jsonify({"success": False, "error": "Unauthorized Access"}), 401
+
+    req_data = request.get_json(force=True, silent=True)
+    if not req_data: return jsonify({"success": False, "error": "Invalid JSON"}), 400
+
+    token = req_data.get('token')
+    action = req_data.get('action')
+
+    with db_lock:
+        if not os.path.exists(USERS_DB): return jsonify({"success": False}), 404
+        with open(USERS_DB, 'r') as f: db = json.load(f)
+        
+        username = next((uname for uname, info in db.items() if isinstance(info, dict) and info.get('token') == token), None)
+        if not username: return jsonify({"success": False}), 404
+
+        uinfo = db[username]
+        target_node = uinfo.get('node')
+        node_ip = get_target_ip(target_node)
+        active_ip = str(node_ip).strip() if node_ip else None
+        
+        port = uinfo.get('port')
+        uid = uinfo.get('uuid')
+        group_id = uinfo.get('group')
+
+        if action == "suspend": uinfo['is_blocked'] = True
+        elif action == "resume": uinfo['is_blocked'] = False
+        elif action == "delete": del db[username]
+
+        with open(
