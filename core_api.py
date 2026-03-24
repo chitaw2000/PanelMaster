@@ -29,16 +29,17 @@ def get_target_ip(node_id):
                     return parts[-1]
     return None
 
-# 🚀 SSH ကို သေချာပေါက် စောင့်ပြီး Run မည့်စနစ်
+# 🚀 SSH ကို နောက်ကွယ်မှ မဟုတ်ဘဲ "တစ်လုံးပြီးမှ တစ်လုံး" အသေအချာ စောင့်၍ Run မည့်စနစ်
 def run_ssh_sync_block(ip, cmd):
     if not ip: return
     try:
         export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
         safe_cmd = cmd.replace('"', '\\"') 
+        # ချက်ချင်း ပြီးဆုံးသည်အထိ စောင့်မည် 
         full_ssh = f'ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} "{export_path} {safe_cmd}"'
         subprocess.run(full_ssh, shell=True, capture_output=True)
     except Exception as e:
-        print(f"SSH Sync Error on {ip}: {e}")
+        print(f"SSH Error on {ip}: {e}")
 
 @api_bp.after_request
 def add_cors_headers(response):
@@ -136,7 +137,7 @@ def api_generate_keys():
         token = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(32))
         safe_u = urllib.parse.quote(username)
 
-        # Port ကို သေချာပေါက် အသစ်ယူမည်
+        # Port ယူမည်
         max_p = 10000
         for uinfo in db.values():
             if isinstance(uinfo, dict) and uinfo.get('protocol') == 'out':
@@ -148,7 +149,7 @@ def api_generate_keys():
         api_keys_dict = {} 
         g_nodes = groups[group_id].get("nodes", {})
         
-        # 🚀 ၁။ ညိုကီ့ Logic အတိုင်း ဆာဗာ "အားလုံး" ဆီသို့ အတိအကျ Create လုပ်မည် (Outline Only)
+        # 🚀 ၁။ ညိုကီတောင်းဆိုချက်အတိုင်း ဆာဗာ "အားလုံး" တွင် သေချာပေါက် Create လုပ်မည် (Blocking)
         for nid in g_nodes:
             nip = get_target_ip(nid)
             if not nip: continue
@@ -163,7 +164,7 @@ def api_generate_keys():
             }
             
             cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-            run_ssh_sync_block(nip, cmd_add)
+            run_ssh_sync_block(nip, cmd_add) # Thread မသုံးတော့ပါ
 
         b64_creds_active = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
         active_key = f"ss://{b64_creds_active}@{target_ip.strip()}:{port}#{safe_u}"
@@ -180,6 +181,7 @@ def api_generate_keys():
 
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
+    # ဆာဗာအားလုံး အလုပ်လုပ်ပြီးမှသာ ဟိုဘက်ကို လှမ်းပို့မည် (UI တွင် တစ်ခုတည်းပေါ်သော်လည်း VPS အားလုံးတွင် ရောက်သွားမည်)
     return jsonify({
         "success": True,
         "keys": api_keys_dict,
@@ -251,7 +253,7 @@ def webhook_switch():
         group_id = uinfo.get('group')
         is_blocked = uinfo.get('is_blocked', False)
         
-        # 🚀 (၁) အဟောင်းက GB ယူမည် (Outline Xray Stats)
+        # 🚀 (၁) အဟောင်းက GB ယူမည် (Synchronous Block)
         if old_ip:
             try:
                 full_ssh = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{old_ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\""
@@ -272,7 +274,7 @@ def webhook_switch():
         
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    # 🚀 (၂) အသစ်မှာ ဖွင့်၊ ကျန်တာအကုန်ပိတ်မည် (Outline သီးသန့်)
+    # 🚀 (၂) အသစ်မှာ ဖွင့်၊ ကျန်တာအကုန်ပိတ် (Synchronous Block)
     if not is_blocked:
         groups = load_auto_groups()
         g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
@@ -334,7 +336,7 @@ def api_user_action():
 
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    # 🚀 Action များကို ဆာဗာအားလုံးတွင် အသေအချာ လုပ်ဆောင်မည်
+    # 🚀 Action များကို ဆာဗာအားလုံးတွင် တစ်လုံးပြီးမှ တစ်လုံး သေချာပေါက် လုပ်ဆောင်မည် (Synchronous Block)
     groups = load_auto_groups()
     g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
 
