@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 from utils import get_all_servers, db_lock
 from core_auto import load_auto_groups
-# 🚀 Manual ခလုတ်က သုံးတဲ့ ဖန်ရှင်ကိုပဲ အတိအကျ ပြန်သုံးမည်
+# Manual ခလုတ်က သုံးတဲ့ execute_ssh_bg ကိုပဲ အတိအကျ ပြန်သုံးမည်
 from core_engine import get_safe_delete_cmd, execute_ssh_bg
 
 try:
@@ -129,7 +129,7 @@ def api_generate_keys():
         api_keys_dict = {} 
         g_nodes = groups[group_id].get("nodes", {})
         
-        # 🚀 ညိုကီ့ Logic အတိုင်း: အကုန် Create မယ်၊ ဒါပေမယ့် Active မှာပဲ ဖွင့်ပြီး ကျန်တာအကုန် Manual အတိုင်း ပိတ်မယ်
+        # 🚀 ညိုကီ့ Logic: Create လုပ်လျှင် Group ထဲရှိ Node အားလုံးတွင် Key Create လုပ်မည်
         for nid in g_nodes:
             nip = get_target_ip(nid)
             if not nip: continue
@@ -143,15 +143,8 @@ def api_generate_keys():
                 "prefix": "\u0016\u0003\u0001\u0005\u00f2\u0001\u0000\u0005\u00ee\u0003\u0003"
             }
             
-            if nid == target_node:
-                # Active ဖြစ်မည့် ဆာဗာတွင် ဖွင့်မည်
-                cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                execute_ssh_bg(nip, [cmd_add])
-            else:
-                # ကျန်သည့် ဆာဗာများတွင် Manual ခလုတ်အတိုင်း အသေအချာ ပိတ်မည်
-                cmd_del = get_safe_delete_cmd(username, 'out', port)
-                cmd_full_del = f"systemctl() {{ true; }}; export -f systemctl; {cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; unset -f systemctl; systemctl restart xray"
-                execute_ssh_bg(nip, [cmd_full_del])
+            cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+            execute_ssh_bg(nip, [cmd_add])
 
         b64_creds_active = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
         active_key = f"ss://{b64_creds_active}@{target_ip.strip()}:{port}#{safe_u}"
@@ -217,7 +210,7 @@ def webhook_switch():
         group_id = uinfo.get('group')
         is_blocked = uinfo.get('is_blocked', False)
         
-        # 🚀 ညိုကီ့ Logic: အဟောင်းက GB ကို ယူပြီး အသစ်မှာ ပေါင်းထည့်မယ်
+        # 🚀 ညိုကီ့ Logic: အဟောင်းက GB ကို ရိုးရှင်းစွာ လှမ်းဆွဲမည်
         if old_ip:
             try:
                 cmd_stats = f"ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{old_ip} 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; xray api statsquery --server=127.0.0.1:10085'"
@@ -237,7 +230,7 @@ def webhook_switch():
         
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    # 🚀 ညိုကီ့ Logic: အသစ်မှာ ဖွင့်၊ ကျန်တာအကုန် Manual ခလုတ်သုံးတဲ့ ဖန်ရှင်နဲ့ ပိတ်မယ်
+    # 🚀 ညိုကီ့ Logic: အသစ်တွင်ဖွင့်၊ ကျန်တာအကုန်ပိတ်မည်
     if not is_blocked:
         groups = load_auto_groups()
         g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
