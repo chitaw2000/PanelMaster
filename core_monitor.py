@@ -25,19 +25,6 @@ def get_target_ip(node_id):
                     return parts[-1]
     return None
 
-# 🚀 Monitor Hang မဖြစ်စေရန် BatchMode=yes ဖြင့် အသေအချာ ခေါ်မည်
-def fetch_xray_stats(ip):
-    try:
-        export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
-        cmd = f"ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} '{export_path} xray api statsquery --server=127.0.0.1:10085'"
-        res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
-        if res.returncode == 0 and res.stdout:
-            data = json.loads(res.stdout)
-            return data.get("stat", [])
-    except:
-        pass # Hang မဖြစ်ဘဲ ကျော်သွားမည်
-    return None
-
 def suspend_user_everywhere(username, uinfo):
     port = uinfo.get('port')
     group_id = uinfo.get('group')
@@ -50,8 +37,7 @@ def suspend_user_everywhere(username, uinfo):
         if not nip: continue
         export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
         cmd_del = get_safe_delete_cmd(username, 'out', port)
-        # BatchMode=yes ထည့်၍ အပိတ် (Delete) သေချာစေမည်
-        full_del = f"ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{nip} '{export_path} {cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray'"
+        full_del = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{nip} '{export_path} {cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray'"
         subprocess.Popen(full_del, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def monitor_traffic():
@@ -64,7 +50,7 @@ def monitor_traffic():
 
             if not db: continue
 
-            # ၁။ User များ လက်ရှိ Active ဖြစ်နေသော ဆာဗာ IP ကိုသာ ယူမည်
+            # ၁။ ညိုကီ့ Logic: Active ဖြစ်နေသော (ပြောင်းထားသော) Node များ၏ IP များကိုသာ စစ်မည်
             users_by_ip = {}
             for uname, uinfo in db.items():
                 if not isinstance(uinfo, dict) or uinfo.get('is_blocked', False): continue
@@ -77,49 +63,50 @@ def monitor_traffic():
             db_changed = False
             current_date = datetime.now().strftime("%Y-%m-%d")
 
-            # ၂။ ဆာဗာတစ်ခုချင်းစီဆီမှ ဆွဲမည် (Pending မဖြစ်စေရန် try-except ခံထားသည်)
+            # ၂။ ဆာဗာတစ်ခုချင်းစီမှ ဒေတာများကို ပုံမှန်အတိုင်း လှမ်းဆွဲမည် (Pending မဖြစ်စေရန် Try-Except အသေခံထားသည်)
             for ip, user_list in users_by_ip.items():
-                ip_stats = fetch_xray_stats(ip)
-                if ip_stats is None:
-                    continue # ဒေတာ မရလျှင် ကျော်သွားမည်
+                try:
+                    full_ssh = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; xray api statsquery --server=127.0.0.1:10085'"
+                    res = subprocess.run(full_ssh, shell=True, capture_output=True, text=True, timeout=8)
+                    
+                    if res.returncode != 0 or not res.stdout:
+                        continue # Error တက်လျှင် ဒီဆာဗာကို ကျော်သွားမည် (Monitor ကြီး လုံးဝ ရပ်မသွားပါ)
 
-                stat_dict = {}
-                for s in ip_stats:
-                    p = s.get("name", "").split(">>>")
-                    if len(p) >= 4:
-                        stat_dict[p[1]] = stat_dict.get(p[1], 0) + s.get("value", 0)
+                    stats = json.loads(res.stdout).get("stat", [])
+                    stat_dict = { s.get("name").split(">>>")[1]: s.get("value", 0) for s in stats if len(s.get("name", "").split(">>>")) >= 4 }
 
-                for uname, uinfo in user_list:
-                    current_val = stat_dict.get(uname, 0)
-                    last_val = float(uinfo.get('last_raw_bytes', 0))
+                    for uname, uinfo in user_list:
+                        current_val = stat_dict.get(uname, 0)
+                        last_val = float(uinfo.get('last_raw_bytes', 0))
 
-                    diff = 0
-                    if current_val > last_val:
-                        diff = current_val - last_val
-                    elif current_val < last_val and current_val > 0:
-                        diff = current_val 
+                        diff = 0
+                        if current_val > last_val:
+                            diff = current_val - last_val
+                        elif current_val < last_val and current_val > 0:
+                            diff = current_val 
 
-                    if diff > 0:
-                        uinfo['used_bytes'] = float(uinfo.get('used_bytes', 0)) + diff
-                        db_changed = True
+                        if diff > 0:
+                            uinfo['used_bytes'] = float(uinfo.get('used_bytes', 0)) + diff
+                            db_changed = True
 
-                    if uinfo.get('last_raw_bytes') != current_val:
-                        uinfo['last_raw_bytes'] = current_val
-                        db_changed = True
+                        if uinfo.get('last_raw_bytes') != current_val:
+                            uinfo['last_raw_bytes'] = current_val
+                            db_changed = True
 
-                    # Limit စစ်ဆေးခြင်း
-                    limit_bytes = float(uinfo.get('total_gb', 0)) * (1024**3)
-                    if limit_bytes > 0 and float(uinfo.get('used_bytes', 0)) >= limit_bytes:
-                        uinfo['is_blocked'] = True
-                        db_changed = True
-                        threading.Thread(target=suspend_user_everywhere, args=(uname, uinfo), daemon=True).start()
+                        # Limit နှင့် Expire စစ်ဆေးခြင်း
+                        limit_bytes = float(uinfo.get('total_gb', 0)) * (1024**3)
+                        is_over_limit = limit_bytes > 0 and float(uinfo.get('used_bytes', 0)) >= limit_bytes
+                        exp = uinfo.get('expire_date')
+                        is_expired = exp and current_date > exp
 
-                    # Expire Date စစ်ဆေးခြင်း
-                    exp = uinfo.get('expire_date')
-                    if exp and current_date > exp:
-                        uinfo['is_blocked'] = True
-                        db_changed = True
-                        threading.Thread(target=suspend_user_everywhere, args=(uname, uinfo), daemon=True).start()
+                        if is_over_limit or is_expired:
+                            uinfo['is_blocked'] = True
+                            db_changed = True
+                            threading.Thread(target=suspend_user_everywhere, args=(uname, uinfo), daemon=True).start()
+
+                except Exception as ex:
+                    # ဆာဗာတစ်လုံး Error တက်လျှင် ကျန်သည့် ဆာဗာများ ဆက်လုပ်မည်
+                    pass
 
             # ၃။ Database သိမ်းမည်
             if db_changed:
