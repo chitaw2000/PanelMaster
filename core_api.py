@@ -29,14 +29,17 @@ def get_target_ip(node_id):
                     return parts[-1]
     return None
 
-# 🚀 OS-Level Process (Flask API ပြီးသွားလည်း လုံးဝမသေဘဲ ဆာဗာဆီ သေချာပေါက် ဆက်သွားမည့်စနစ်)
-def fire_ssh_os(ip, cmd):
+# 🚀 SSH ကို နောက်ကွယ်မှ မဟုတ်ဘဲ "တစ်လုံးပြီးမှ တစ်လုံး" အသေအချာ စောင့်၍ Run မည့်စနစ်
+def run_ssh_sync_block(ip, cmd):
     if not ip: return
-    export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
-    safe_cmd = cmd.replace("'", "'\\''")
-    full_ssh = f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@{ip} '{export_path} {safe_cmd}'"
-    # Popen ဖြင့် နောက်ကွယ်မှ သီးသန့် Run မည် (Thread မဟုတ်ပါ)
-    subprocess.Popen(full_ssh, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
+        safe_cmd = cmd.replace('"', '\\"') # Quote ပြဿနာ မဖြစ်စေရန်
+        # ချက်ချင်း ပြီးဆုံးသည်အထိ စောင့်မည် (Timeout 10s)
+        full_ssh = f'ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} "{export_path} {safe_cmd}"'
+        subprocess.run(full_ssh, shell=True, capture_output=True)
+    except Exception as e:
+        print(f"SSH Sync Error on {ip}: {e}")
 
 @api_bp.after_request
 def add_cors_headers(response):
@@ -46,7 +49,7 @@ def add_cors_headers(response):
     return response
 
 # ==========================================
-# EXTERNAL API ROUTES (OUTLINE ONLY)
+# EXTERNAL API ROUTES (OUTLINE သီးသန့်)
 # ==========================================
 
 @api_bp.route('/conf/<token>.json', methods=['GET', 'OPTIONS'])
@@ -146,7 +149,7 @@ def api_generate_keys():
         api_keys_dict = {} 
         g_nodes = groups[group_id].get("nodes", {})
         
-        # 🚀 ၁။ ဆာဗာအားလုံးဆီသို့ OS Process ဖြင့် ပြိုင်တူ ပစ်ထည့်မည် (လုံးဝ မသေပါ)
+        # 🚀 ၁။ ဆာဗာအားလုံးဆီသို့ "တစ်လုံးပြီးမှ တစ်လုံး" အသေအချာ Add မည် (Synchronous)
         for nid in g_nodes:
             nip = get_target_ip(nid)
             if not nip: continue
@@ -161,7 +164,7 @@ def api_generate_keys():
             }
             
             cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-            fire_ssh_os(nip, cmd_add)
+            run_ssh_sync_block(nip, cmd_add) # Thread မသုံးတော့ပါ
 
         b64_creds_active = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
         active_key = f"ss://{b64_creds_active}@{target_ip.strip()}:{port}#{safe_u}"
@@ -178,6 +181,7 @@ def api_generate_keys():
 
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
+    # ဆာဗာအားလုံး အလုပ်လုပ်ပြီးမှသာ ဟိုဘက်ကို လှမ်းပို့မည်
     return jsonify({
         "success": True,
         "keys": api_keys_dict,
@@ -249,7 +253,7 @@ def webhook_switch():
         group_id = uinfo.get('group')
         is_blocked = uinfo.get('is_blocked', False)
         
-        # 🚀 (၁) အဟောင်းက GB ယူမည် (Sync Process - စောင့်ယူမည်)
+        # 🚀 (၁) အဟောင်းက GB ယူမည် (Synchronous Block)
         if old_ip:
             try:
                 full_ssh = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{old_ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\""
@@ -270,7 +274,7 @@ def webhook_switch():
         
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    # 🚀 (၂) အသစ်မှာ ဖွင့်၊ ကျန်တာအကုန်ပိတ် (OS Process)
+    # 🚀 (၂) အသစ်မှာ ဖွင့်၊ ကျန်တာအကုန်ပိတ် (Synchronous Block)
     if not is_blocked:
         groups = load_auto_groups()
         g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
@@ -282,10 +286,10 @@ def webhook_switch():
 
             if nip == new_ip:
                 cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                fire_ssh_os(nip, cmd_add)
+                run_ssh_sync_block(nip, cmd_add)
             else:
                 cmd_del = get_safe_delete_cmd(username, 'out', port)
-                fire_ssh_os(nip, f"{cmd_del} ; systemctl restart xray")
+                run_ssh_sync_block(nip, f"{cmd_del} ; systemctl restart xray")
         
     return jsonify({"success": True, "message": f"Successfully switched to {target_node} and synced GB"})
 
@@ -320,23 +324,6 @@ def api_user_action():
         port = uinfo.get('port')
         uid = uinfo.get('uuid')
         group_id = uinfo.get('group')
-        
-        groups = load_auto_groups()
-        g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
-
-        # 🚀 Suspend/Delete/Resume ကို OS Process ဖြင့် လိုက်လုပ်မည်
-        for nid in g_nodes:
-            nip = get_target_ip(nid)
-            if not nip: continue
-            nip = str(nip).strip()
-
-            if action in ["suspend", "delete"]:
-                cmd_del = get_safe_delete_cmd(username, 'out', port)
-                fire_ssh_os(nip, f"{cmd_del} ; systemctl restart xray")
-            elif action == "resume":
-                if nip == active_ip: # Active ဆာဗာမှာပဲ ပြန်ဖွင့်မည်
-                    cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-                    fire_ssh_os(nip, cmd_add)
 
         if action == "suspend":
             uinfo['is_blocked'] = True
@@ -348,5 +335,22 @@ def api_user_action():
             return jsonify({"success": False, "error": "Invalid action type"}), 400
 
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
+        
+    # 🚀 Action များကို ဆာဗာအားလုံးတွင် တစ်လုံးပြီးမှ တစ်လုံး သေချာပေါက် လုပ်ဆောင်မည် (Synchronous Block)
+    groups = load_auto_groups()
+    g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
+
+    for nid in g_nodes:
+        nip = get_target_ip(nid)
+        if not nip: continue
+        nip = str(nip).strip()
+
+        if action in ["suspend", "delete"]:
+            cmd_del = get_safe_delete_cmd(username, 'out', port)
+            run_ssh_sync_block(nip, f"{cmd_del} ; systemctl restart xray")
+        elif action == "resume":
+            if nip == active_ip: # Active ဖြစ်သော ဆာဗာတွင်သာ ပြန်ဖွင့်မည်
+                cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
+                run_ssh_sync_block(nip, cmd_add)
 
     return jsonify({"success": True, "message": f"User {action} applied to nodes successfully"})
