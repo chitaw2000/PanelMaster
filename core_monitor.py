@@ -3,7 +3,7 @@ from datetime import datetime
 
 from utils import get_all_servers, db_lock
 from core_auto import load_auto_groups
-# 🚀 Manual ခလုတ်က သုံးတဲ့ ဖန်ရှင်ကိုပဲ အတိအကျ ပြန်သုံးမည်
+# Manual ခလုတ်က သုံးတဲ့ execute_ssh_bg ကိုပဲ အတိအကျ ပြန်သုံးမည်
 from core_engine import get_safe_delete_cmd, execute_ssh_bg
 
 try:
@@ -37,7 +37,6 @@ def suspend_user_everywhere(username, uinfo):
         nip = get_target_ip(nid)
         if not nip: continue
         cmd_del = get_safe_delete_cmd(username, 'out', port)
-        # 🚀 execute_ssh_bg ဖြင့် သေချာပေါက် ပိတ်မည်
         cmd_full_del = f"systemctl() {{ true; }}; export -f systemctl; {cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; unset -f systemctl; systemctl restart xray"
         execute_ssh_bg(nip, [cmd_full_del])
 
@@ -57,7 +56,7 @@ def monitor_traffic():
 
             if not db: continue
 
-            # 🚀 ညိုကီ့ Logic အတိုင်း: User တွေ လက်ရှိသုံးနေတဲ့ (Active) Node တွေကိုပဲ ယူမယ်
+            # 🚀 ညိုကီ့ Logic အတိုင်း: Active Node (User သုံးနေသော Node) များ၏ IP ကိုသာ ယူမည်
             users_by_ip = {}
             for uname, uinfo in db.items():
                 if not isinstance(uinfo, dict) or uinfo.get('is_blocked', False): continue
@@ -77,7 +76,7 @@ def monitor_traffic():
                     res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
                     
                     if res.returncode != 0 or not res.stdout:
-                        continue 
+                        continue # Error ဖြစ်လျှင် ကျော်သွားမည်
 
                     stats = json.loads(res.stdout).get("stat", [])
                     stat_dict = {}
