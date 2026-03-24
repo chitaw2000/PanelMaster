@@ -3,7 +3,8 @@ from datetime import datetime
 
 from utils import get_all_servers, db_lock
 from core_auto import load_auto_groups
-from core_engine import get_safe_delete_cmd
+# 🚀 Manual ခလုတ်က သုံးတဲ့ ဖန်ရှင်ကိုပဲ အတိအကျ ပြန်သုံးမည်
+from core_engine import get_safe_delete_cmd, execute_ssh_bg
 
 try:
     from config import USERS_DB, NODES_LIST, load_config
@@ -35,14 +36,20 @@ def suspend_user_everywhere(username, uinfo):
     for nid in g_nodes:
         nip = get_target_ip(nid)
         if not nip: continue
-        export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
         cmd_del = get_safe_delete_cmd(username, 'out', port)
-        full_del = f"ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{nip} '{export_path} {cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray'"
-        subprocess.Popen(full_del, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # 🚀 execute_ssh_bg ဖြင့် သေချာပေါက် ပိတ်မည်
+        cmd_full_del = f"systemctl() {{ true; }}; export -f systemctl; {cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; unset -f systemctl; systemctl restart xray"
+        execute_ssh_bg(nip, [cmd_full_del])
 
 def monitor_traffic():
     while True:
-        time.sleep(12)
+        try:
+            config = load_config()
+            interval = config.get('interval', 12)
+        except:
+            interval = 12
+
+        time.sleep(interval)
         try:
             with db_lock:
                 if not os.path.exists(USERS_DB): continue
@@ -50,7 +57,7 @@ def monitor_traffic():
 
             if not db: continue
 
-            # ၁။ Active ဖြစ်နေသော (DB တွင် မှတ်ထားသော) Node များ၏ IP များကိုသာ ယူမည်
+            # 🚀 ညိုကီ့ Logic အတိုင်း: User တွေ လက်ရှိသုံးနေတဲ့ (Active) Node တွေကိုပဲ ယူမယ်
             users_by_ip = {}
             for uname, uinfo in db.items():
                 if not isinstance(uinfo, dict) or uinfo.get('is_blocked', False): continue
@@ -63,24 +70,23 @@ def monitor_traffic():
             db_changed = False
             current_date = datetime.now().strftime("%Y-%m-%d")
 
-            # ၂။ ဆာဗာတစ်ခုချင်းစီမှ Data ဆွဲထုတ်မည် (Pending မဖြစ်စေရန် Try-Except အသေခံထားသည်)
+            # 🚀 Active ဆာဗာများဆီမှသာ Data ဆွဲထုတ်မည်
             for ip, user_list in users_by_ip.items():
                 try:
                     cmd = f"ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; xray api statsquery --server=127.0.0.1:10085'"
                     res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
                     
                     if res.returncode != 0 or not res.stdout:
-                        continue # Error ဖြစ်လျှင် ကျော်သွားမည်
+                        continue 
 
                     stats = json.loads(res.stdout).get("stat", [])
                     stat_dict = {}
                     
-                    # 🚀 The Golden Fix: Xray မှလာသော ဒေတာ (Uplink + Downlink) အကုန်လုံးကို သေချာပေါင်းထည့်မည် 🚀
+                    # 🚀 Downlink + Uplink အကုန် သေချာပေါင်းထည့်မည်
                     for s in stats:
                         p = s.get("name", "").split(">>>")
                         if len(p) >= 4:
                             uname = p[1]
-                            # သတိပြုရန်: "+=" ဖြင့် အကုန်ပေါင်းထည့်သည်
                             stat_dict[uname] = stat_dict.get(uname, 0.0) + float(s.get("value", 0))
 
                     for uname, uinfo in user_list:
@@ -111,7 +117,6 @@ def monitor_traffic():
                             threading.Thread(target=suspend_user_everywhere, args=(uname, uinfo), daemon=True).start()
 
                 except Exception as inner_e:
-                    # ဆာဗာတစ်လုံး Error တက်လျှင် နောက်ဆာဗာကို ဆက်လုပ်မည် (Monitor ကြီး လုံးဝ ရပ်မသွားပါ)
                     pass
 
             if db_changed:
@@ -123,7 +128,7 @@ def monitor_traffic():
                     with open(USERS_DB, 'w') as f: json.dump(current_db, f, indent=4)
                     
         except Exception as e:
-            print(f"Monitor loop error: {e}")
+            pass
 
 def start_background_monitor():
     t = threading.Thread(target=monitor_traffic, daemon=True)
