@@ -29,13 +29,12 @@ def get_target_ip(node_id):
                     return parts[-1]
     return None
 
-# 🚀 SSH ကို နောက်ကွယ်မှ မဟုတ်ဘဲ "တစ်လုံးပြီးမှ တစ်လုံး" အသေအချာ စောင့်၍ Run မည့်စနစ်
+# 🚀 SSH ကို သေချာပေါက် စောင့်ပြီး Run မည့်စနစ်
 def run_ssh_sync_block(ip, cmd):
     if not ip: return
     try:
         export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
-        safe_cmd = cmd.replace('"', '\\"') # Quote ပြဿနာ မဖြစ်စေရန်
-        # ချက်ချင်း ပြီးဆုံးသည်အထိ စောင့်မည် (Timeout 10s)
+        safe_cmd = cmd.replace('"', '\\"') 
         full_ssh = f'ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} "{export_path} {safe_cmd}"'
         subprocess.run(full_ssh, shell=True, capture_output=True)
     except Exception as e:
@@ -137,7 +136,7 @@ def api_generate_keys():
         token = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(32))
         safe_u = urllib.parse.quote(username)
 
-        # Port ယူမည်
+        # Port ကို သေချာပေါက် အသစ်ယူမည်
         max_p = 10000
         for uinfo in db.values():
             if isinstance(uinfo, dict) and uinfo.get('protocol') == 'out':
@@ -149,7 +148,7 @@ def api_generate_keys():
         api_keys_dict = {} 
         g_nodes = groups[group_id].get("nodes", {})
         
-        # 🚀 ၁။ ဆာဗာအားလုံးဆီသို့ "တစ်လုံးပြီးမှ တစ်လုံး" အသေအချာ Add မည် (Synchronous)
+        # 🚀 ၁။ ညိုကီ့ Logic အတိုင်း ဆာဗာ "အားလုံး" ဆီသို့ အတိအကျ Create လုပ်မည် (Outline Only)
         for nid in g_nodes:
             nip = get_target_ip(nid)
             if not nip: continue
@@ -164,7 +163,7 @@ def api_generate_keys():
             }
             
             cmd_add = f"/usr/local/bin/v2ray-node-add-out {username} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray"
-            run_ssh_sync_block(nip, cmd_add) # Thread မသုံးတော့ပါ
+            run_ssh_sync_block(nip, cmd_add)
 
         b64_creds_active = base64.urlsafe_b64encode(f"chacha20-ietf-poly1305:{uid}".encode('utf-8')).decode('utf-8').rstrip('=')
         active_key = f"ss://{b64_creds_active}@{target_ip.strip()}:{port}#{safe_u}"
@@ -181,7 +180,6 @@ def api_generate_keys():
 
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
 
-    # ဆာဗာအားလုံး အလုပ်လုပ်ပြီးမှသာ ဟိုဘက်ကို လှမ်းပို့မည်
     return jsonify({
         "success": True,
         "keys": api_keys_dict,
@@ -253,7 +251,7 @@ def webhook_switch():
         group_id = uinfo.get('group')
         is_blocked = uinfo.get('is_blocked', False)
         
-        # 🚀 (၁) အဟောင်းက GB ယူမည် (Synchronous Block)
+        # 🚀 (၁) အဟောင်းက GB ယူမည် (Outline Xray Stats)
         if old_ip:
             try:
                 full_ssh = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{old_ip} \"/usr/local/bin/xray api statsquery --server=127.0.0.1:10085\""
@@ -274,7 +272,7 @@ def webhook_switch():
         
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    # 🚀 (၂) အသစ်မှာ ဖွင့်၊ ကျန်တာအကုန်ပိတ် (Synchronous Block)
+    # 🚀 (၂) အသစ်မှာ ဖွင့်၊ ကျန်တာအကုန်ပိတ်မည် (Outline သီးသန့်)
     if not is_blocked:
         groups = load_auto_groups()
         g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
@@ -336,7 +334,7 @@ def api_user_action():
 
         with open(USERS_DB, 'w') as f: json.dump(db, f, indent=4)
         
-    # 🚀 Action များကို ဆာဗာအားလုံးတွင် တစ်လုံးပြီးမှ တစ်လုံး သေချာပေါက် လုပ်ဆောင်မည် (Synchronous Block)
+    # 🚀 Action များကို ဆာဗာအားလုံးတွင် အသေအချာ လုပ်ဆောင်မည်
     groups = load_auto_groups()
     g_nodes = groups.get(group_id, {}).get("nodes", {}) if group_id else {target_node: {}}
 
