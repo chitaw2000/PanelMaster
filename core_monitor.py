@@ -3,7 +3,7 @@ from datetime import datetime
 
 from utils import get_all_servers, db_lock
 from core_auto import load_auto_groups
-from core_engine import get_safe_delete_cmd
+from core_engine import get_safe_delete_cmd, execute_ssh_bg
 
 try:
     from config import USERS_DB, NODES_LIST, load_config
@@ -25,18 +25,6 @@ def get_target_ip(node_id):
                     return parts[-1]
     return None
 
-def fetch_xray_stats(ip):
-    try:
-        export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
-        cmd = f"ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} '{export_path} xray api statsquery --server=127.0.0.1:10085'"
-        res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
-        if res.returncode == 0 and res.stdout:
-            data = json.loads(res.stdout)
-            return data.get("stat", [])
-    except:
-        pass
-    return None
-
 def suspend_user_everywhere(username, uinfo):
     port = uinfo.get('port')
     group_id = uinfo.get('group')
@@ -47,14 +35,20 @@ def suspend_user_everywhere(username, uinfo):
     for nid in g_nodes:
         nip = get_target_ip(nid)
         if not nip: continue
-        export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
+        
         cmd_del = get_safe_delete_cmd(username, 'out', port)
-        full_del = f"ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{nip} '{export_path} {cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray'"
-        subprocess.run(full_del, shell=True, capture_output=True)
+        cmd_full_del = f"systemctl() {{ true; }}; export -f systemctl; {cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; unset -f systemctl; systemctl restart xray"
+        execute_ssh_bg(nip, [cmd_full_del])
 
 def monitor_traffic():
     while True:
-        time.sleep(12)
+        try:
+            config = load_config()
+            interval = config.get('interval', 12)
+        except:
+            interval = 12
+
+        time.sleep(interval)
         try:
             with db_lock:
                 if not os.path.exists(USERS_DB): continue
@@ -62,7 +56,7 @@ def monitor_traffic():
 
             if not db: continue
 
-            # ၁။ ညိုကီပြောသည့်အတိုင်း Active Node IP များကိုသာ ယူမည်
+            # 🚀 ၁။ ညိုကီ့ Logic အတိုင်း: Active ဖွင့်ထားသော ဆာဗာများကိုသာ စုစည်းမည်
             users_by_ip = {}
             for uname, uinfo in db.items():
                 if not isinstance(uinfo, dict) or uinfo.get('is_blocked', False): continue
@@ -75,53 +69,56 @@ def monitor_traffic():
             db_changed = False
             current_date = datetime.now().strftime("%Y-%m-%d")
 
-            # ၂။ ဆာဗာတစ်ခုချင်းစီမှ ဆွဲမည်
+            # 🚀 ၂။ Active ဆာဗာများဆီမှသာ Data ကို Timeout ခံ၍ လှမ်းဆွဲမည် (Pending မဖြစ်စေရန်)
             for ip, user_list in users_by_ip.items():
-                ip_stats = fetch_xray_stats(ip)
-                if ip_stats is None:
-                    continue
+                try:
+                    cmd = f"ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; xray api statsquery --server=127.0.0.1:10085'"
+                    res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=8)
+                    
+                    if res.returncode != 0 or not res.stdout:
+                        continue # ဆာဗာမတက်လျှင် ကျော်သွားမည်
 
-                # 🚨 THE NOOB BUG FIXED HERE: Downlink နှင့် Uplink အားလုံးကို မှန်ကန်စွာ ပေါင်းမည်
-                stat_dict = {}
-                for s in ip_stats:
-                    p = s.get("name", "").split(">>>")
-                    if len(p) >= 4:
-                        uname = p[1]
-                        stat_dict[uname] = stat_dict.get(uname, 0.0) + float(s.get("value", 0))
+                    stats = json.loads(res.stdout).get("stat", [])
+                    stat_dict = {}
+                    for s in stats:
+                        p = s.get("name", "").split(">>>")
+                        if len(p) >= 4:
+                            uname = p[1]
+                            stat_dict[uname] = stat_dict.get(uname, 0.0) + float(s.get("value", 0))
 
-                for uname, uinfo in user_list:
-                    current_val = stat_dict.get(uname, 0.0)
-                    last_val = float(uinfo.get('last_raw_bytes', 0.0))
+                    # 🚀 ၃။ User အလိုက် ဒေတာပေါင်းထည့်မည်
+                    for uname, uinfo in user_list:
+                        current_val = stat_dict.get(uname, 0.0)
+                        last_val = float(uinfo.get('last_raw_bytes', 0.0))
 
-                    diff = 0.0
-                    if current_val > last_val:
-                        diff = current_val - last_val
-                    elif current_val < last_val and current_val > 0:
-                        diff = current_val # Xray Restart ကျသွားလျှင်
+                        diff = 0.0
+                        if current_val > last_val:
+                            diff = current_val - last_val
+                        elif current_val < last_val and current_val > 0:
+                            diff = current_val 
 
-                    if diff > 0:
-                        uinfo['used_bytes'] = float(uinfo.get('used_bytes', 0)) + diff
-                        db_changed = True
+                        if diff > 0:
+                            uinfo['used_bytes'] = float(uinfo.get('used_bytes', 0)) + diff
+                            db_changed = True
 
-                    if uinfo.get('last_raw_bytes') != current_val:
-                        uinfo['last_raw_bytes'] = current_val
-                        db_changed = True
+                        if uinfo.get('last_raw_bytes') != current_val:
+                            uinfo['last_raw_bytes'] = current_val
+                            db_changed = True
 
-                    # Limit စစ်ဆေးခြင်း
-                    limit_bytes = float(uinfo.get('total_gb', 0)) * (1024**3)
-                    if limit_bytes > 0 and float(uinfo.get('used_bytes', 0)) >= limit_bytes:
-                        uinfo['is_blocked'] = True
-                        db_changed = True
-                        threading.Thread(target=suspend_user_everywhere, args=(uname, uinfo), daemon=True).start()
+                        # Limit နှင့် Expire စစ်ဆေးခြင်း
+                        limit_bytes = float(uinfo.get('total_gb', 0)) * (1024**3)
+                        is_over_limit = limit_bytes > 0 and float(uinfo.get('used_bytes', 0)) >= limit_bytes
+                        is_expired = uinfo.get('expire_date') and current_date > uinfo.get('expire_date')
 
-                    # Expire Date စစ်ဆေးခြင်း
-                    exp = uinfo.get('expire_date')
-                    if exp and current_date > exp:
-                        uinfo['is_blocked'] = True
-                        db_changed = True
-                        threading.Thread(target=suspend_user_everywhere, args=(uname, uinfo), daemon=True).start()
+                        if is_over_limit or is_expired:
+                            uinfo['is_blocked'] = True
+                            db_changed = True
+                            threading.Thread(target=suspend_user_everywhere, args=(uname, uinfo), daemon=True).start()
 
-            # ၃။ Database သိမ်းမည်
+                except Exception as inner_e:
+                    # ဆာဗာတစ်လုံး Error တက်လျှင် နောက်ဆာဗာကို ဆက်လုပ်မည် (Monitor ကြီး လုံးဝ ရပ်မသွားပါ)
+                    pass
+
             if db_changed:
                 with db_lock:
                     with open(USERS_DB, 'r') as f: current_db = json.load(f)
@@ -131,7 +128,7 @@ def monitor_traffic():
                     with open(USERS_DB, 'w') as f: json.dump(current_db, f, indent=4)
                     
         except Exception as e:
-            print(f"Monitor error: {e}")
+            print(f"Monitor loop error: {e}")
 
 def start_background_monitor():
     t = threading.Thread(target=monitor_traffic, daemon=True)
