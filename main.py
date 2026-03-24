@@ -29,10 +29,8 @@ start_background_monitor()
 
 @app.before_request
 def check_auth():
-    # /api/ နှင့် /conf/ အစရှိသော လမ်းကြောင်းများကို Login မလိုဘဲ ဝင်ခွင့်ပြုမည်
     if request.path.startswith('/api/') or request.path.startswith('/conf/'):
         return
-    # UI လမ်းကြောင်းများ
     allowed_ui_endpoints = ['login', 'static', 'api_stats', 'api_user_ip', 'api_check_ssh', 'api_check_xray']
     if request.endpoint not in allowed_ui_endpoints and not session.get('logged_in'): 
         return redirect(url_for('login'))
@@ -369,7 +367,7 @@ def group_view(group_id):
         limit_tb = float(ninfo.get("limit_tb", 0))
         used_gb = node_used_bytes.get(nid, 0) / (1024**3)
         limit_gb = limit_tb * 1024
-        is_alarm = limit_gb > 0 and used_gb >= limit_gb
+        is_alarm = limit_tb > 0 and used_gb >= limit_gb
         health = ninfo.get("health", "green")
         
         server_stats.append({"id": nid, "ip": nip, "count": counts[nid], "limit": limit, "used_gb": used_gb, "limit_tb": limit_tb, "is_alarm": is_alarm, "health": health})
@@ -503,6 +501,7 @@ def add_user_auto():
         return f"<script>alert('{msg}'); window.history.back();</script>"
     return redirect(f'/group/{gid}')
 
+# 🚀 ဒီလမ်းကြောင်းလေးက ပြဿနာရဲ့ အဓိက တရားခံပဲ! 🚀
 @app.route('/node/<node_id>')
 def node_view(node_id):
     nodes = get_all_servers()
@@ -526,6 +525,7 @@ def node_view(node_id):
             
     config = load_config()
     active_users = check_live_status(db)
+    auto_groups = load_auto_groups() # 🚀 Group များကို လှမ်းခေါ်မည်
     users = []
     node_used_bytes = 0
     current_date_str = datetime.now().strftime("%Y-%m-%d")
@@ -535,12 +535,27 @@ def node_view(node_id):
     
     for uname, info in db.items():
         if not isinstance(info, dict): continue 
-        if info.get('node') == node_id:
+        
+        # 🚀 ညိုကီ လိုချင်သည့်အတိုင်း Group ထဲမှ ဆာဗာတိုင်းတွင် လိုက်ပြရန် စစ်ဆေးခြင်း
+        user_node = info.get('node')
+        user_group = info.get('group')
+        
+        is_active_node = (user_node == node_id)
+        belongs_to_node = is_active_node
+        
+        # သတ်မှတ်ထားသော Active Node မဟုတ်ပါက၊ ၎င်း၏ Group ထဲတွင် ဤဆာဗာ ပါမပါ စစ်ဆေးမည်
+        if not belongs_to_node and user_group and user_group in auto_groups:
+            if node_id in auto_groups[user_group].get("nodes", {}):
+                belongs_to_node = True
+
+        # 🚀 ဤဆာဗာ (သို့) ဤဆာဗာပါဝင်သော Group မှ User ဖြစ်လျှင် မျက်နှာပြင်တွင် ပြပေးမည်
+        if belongs_to_node:
             uid = info.get('uuid')
             port = info.get('port')
             proto = info.get('protocol', 'v2')
             safe_u = urllib.parse.quote(uname)
             
+            # 🚀 ဝင်ကြည့်နေသော ဆာဗာ၏ IP ဖြင့်သာ Key ကို အတိအကျ ပြောင်းထုတ်ပေးမည်
             if proto == 'v2':
                 expected_key = f"vless://{uid}@{node_ip}:8080?path=%2Fvless&security=none&encryption=none&type=ws#{safe_u}"
                 cmd = f"/usr/local/bin/v2ray-node-add-vless {uname} {uid}"
@@ -550,31 +565,43 @@ def node_view(node_id):
                 expected_key = f"ss://{b64_creds}@{node_ip}:{port}#{safe_u}"
                 cmd = f"/usr/local/bin/v2ray-node-add-out {uname} {uid} {port} ; ufw allow {port}/tcp >/dev/null 2>&1 || true ; ufw allow {port}/udp >/dev/null 2>&1 || true"
                 
-            if info.get('key') != expected_key:
-                info['key'] = expected_key
-                db_changed = True
-                if not info.get('is_blocked', False):
-                    cmds_to_sync.append(cmd)
+            # Database တွင် အပြောင်းအလဲလုပ်ခြင်းကို Active ဖြစ်သော ပင်မဆာဗာ (၁) ခုတည်းအတွက်သာ လုပ်မည်
+            if is_active_node:
+                if info.get('key') != expected_key:
+                    info['key'] = expected_key
+                    db_changed = True
+                    if not info.get('is_blocked', False):
+                        cmds_to_sync.append(cmd)
             
-            info['used_bytes'] = float(info.get('used_bytes', 0))
-            info['total_gb'] = float(info.get('total_gb', 0))
-            info['used_gb_str'] = f"{(info['used_bytes'] / (1024**3)):.2f}"
-            info['username'] = uname
-            info['actual_key'] = info.get('key') or "No Key Found"
-            info['is_active'] = uname in active_users and not info.get('is_blocked')
+            # 🚀 UI တွင်ပြရန်အတွက် သီးသန့် Copy ကူး၍ ပြင်ဆင်မည် (Main DB အား မထိခိုက်စေရန်)
+            display_info = info.copy()
+            display_info['used_bytes'] = float(display_info.get('used_bytes', 0))
+            display_info['total_gb'] = float(display_info.get('total_gb', 0))
+            display_info['used_gb_str'] = f"{(display_info['used_bytes'] / (1024**3)):.2f}"
+            display_info['username'] = uname
             
-            info['protocol_label'] = "VLESS" if info.get('protocol') == 'v2' else "Outline SS"
+            # 🚀 အဓိက - ဤ Node အတွက် အတိအကျ ပြောင်းလဲထားသော Key ကို မျက်နှာပြင်တွင် ပြမည်
+            display_info['actual_key'] = expected_key
             
-            exp_str = info.get('expire_date')
+            display_info['is_active'] = uname in active_users and not display_info.get('is_blocked')
+            display_info['protocol_label'] = "VLESS" if display_info.get('protocol') == 'v2' else "Outline SS"
+            
+            exp_str = display_info.get('expire_date')
             is_expired = True if (exp_str and current_date_str > exp_str) else False
             
-            if is_expired: info['status_label'] = "Expired"
-            elif info.get('is_blocked'): info['status_label'] = "Blocked"
-            elif info['is_active']: info['status_label'] = "Online"
-            else: info['status_label'] = "Offline"
+            if is_expired: display_info['status_label'] = "Expired"
+            elif display_info.get('is_blocked'): display_info['status_label'] = "Blocked"
+            elif display_info['is_active']: display_info['status_label'] = "Online"
+            else: display_info['status_label'] = "Offline"
                 
-            users.append(info)
-            node_used_bytes += info['used_bytes']
+            if not is_active_node:
+                display_info['status_label'] += " (Synced)"
+                
+            users.append(display_info)
+            
+            # GB အသုံးပြုမှုကို Active ဖြစ်သော ဆာဗာအတွက်သာ ပေါင်းထည့်မည် (၂ ခါ မထပ်စေရန်)
+            if is_active_node:
+                node_used_bytes += display_info['used_bytes']
             
     if db_changed:
         with db_lock:
