@@ -25,17 +25,17 @@ def get_target_ip(node_id):
                     return parts[-1]
     return None
 
+# 🚀 Monitor Hang မဖြစ်စေရန် BatchMode=yes ဖြင့် အသေအချာ ခေါ်မည်
 def fetch_xray_stats(ip):
     try:
         export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
-        cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} '{export_path} xray api statsquery --server=127.0.0.1:10085'"
+        cmd = f"ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{ip} '{export_path} xray api statsquery --server=127.0.0.1:10085'"
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
-        # Error မရှိဘဲ Data ရလာမှသာ ပြန်ပို့ပေးမည် (Pending မဖြစ်စေရန်)
         if res.returncode == 0 and res.stdout:
             data = json.loads(res.stdout)
             return data.get("stat", [])
     except:
-        pass
+        pass # Hang မဖြစ်ဘဲ ကျော်သွားမည်
     return None
 
 def suspend_user_everywhere(username, uinfo):
@@ -50,7 +50,8 @@ def suspend_user_everywhere(username, uinfo):
         if not nip: continue
         export_path = "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
         cmd_del = get_safe_delete_cmd(username, 'out', port)
-        full_del = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{nip} '{export_path} {cmd_del} ; systemctl restart xray'"
+        # BatchMode=yes ထည့်၍ အပိတ် (Delete) သေချာစေမည်
+        full_del = f"ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@{nip} '{export_path} {cmd_del} ; ufw delete allow {port}/tcp >/dev/null 2>&1 || true ; ufw delete allow {port}/udp >/dev/null 2>&1 || true ; systemctl restart xray'"
         subprocess.Popen(full_del, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def monitor_traffic():
@@ -76,11 +77,11 @@ def monitor_traffic():
             db_changed = False
             current_date = datetime.now().strftime("%Y-%m-%d")
 
-            # ၂။ ဆာဗာတစ်ခုချင်းစီဆီမှ Sequential (အသေအချာ စောင့်ပြီး) ဆွဲမည်
+            # ၂။ ဆာဗာတစ်ခုချင်းစီဆီမှ ဆွဲမည် (Pending မဖြစ်စေရန် try-except ခံထားသည်)
             for ip, user_list in users_by_ip.items():
                 ip_stats = fetch_xray_stats(ip)
                 if ip_stats is None:
-                    continue # SSH ချိတ်မရလျှင် ကျော်သွားမည် (Pending မဖြစ်စေရန်)
+                    continue # ဒေတာ မရလျှင် ကျော်သွားမည်
 
                 stat_dict = {}
                 for s in ip_stats:
@@ -96,7 +97,7 @@ def monitor_traffic():
                     if current_val > last_val:
                         diff = current_val - last_val
                     elif current_val < last_val and current_val > 0:
-                        diff = current_val # Xray Restart ကျသွားလျှင်
+                        diff = current_val 
 
                     if diff > 0:
                         uinfo['used_bytes'] = float(uinfo.get('used_bytes', 0)) + diff
@@ -130,7 +131,7 @@ def monitor_traffic():
                     with open(USERS_DB, 'w') as f: json.dump(current_db, f, indent=4)
                     
         except Exception as e:
-            print(f"Monitor error: {e}")
+            print(f"Monitor loop error: {e}")
 
 def start_background_monitor():
     t = threading.Thread(target=monitor_traffic, daemon=True)
